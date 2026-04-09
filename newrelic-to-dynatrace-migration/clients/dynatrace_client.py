@@ -229,7 +229,18 @@ class DynatraceClient:
     # =========================================================================
 
     def create_dashboard(self, dashboard: Dict[str, Any]) -> ImportResult:
-        """Create a dashboard in Dynatrace."""
+        """Create a dashboard in Dynatrace.
+
+        Tries Documents API v1 first (Platform), falls back to Config API v1.
+        """
+        name = dashboard.get("dashboardMetadata", {}).get("name", "Unknown")
+
+        # Try Documents API first (newer, supports Grail dashboards)
+        result = self.create_dashboard_v2(dashboard)
+        if result.success:
+            return result
+
+        # Fallback to Config API v1
         url = f"{self.config_api}/dashboards"
         response = self.post(url, dashboard)
 
@@ -237,14 +248,78 @@ class DynatraceClient:
             dashboard_id = response.data.get("id")
             return ImportResult(
                 entity_type="dashboard",
-                entity_name=dashboard.get("dashboardMetadata", {}).get("name", "Unknown"),
+                entity_name=name,
                 success=True,
                 dynatrace_id=dashboard_id
             )
         else:
             return ImportResult(
                 entity_type="dashboard",
-                entity_name=dashboard.get("dashboardMetadata", {}).get("name", "Unknown"),
+                entity_name=name,
+                success=False,
+                error_message=response.error
+            )
+
+    def create_dashboard_v2(self, dashboard: Dict[str, Any]) -> ImportResult:
+        """Create a dashboard via Documents API v1 (Platform).
+
+        Uses /platform/document/v1/documents for Grail-compatible dashboards.
+        Requires OAuth token (Bearer auth).
+        """
+        name = dashboard.get("dashboardMetadata", {}).get("name", "Unknown")
+        platform_url = self.environment_url.replace('.live.', '.apps.')
+        url = f"{platform_url}/platform/document/v1/documents"
+
+        doc_payload = {
+            "name": name,
+            "type": "dashboard",
+            "content": json.dumps(dashboard),
+            "isPrivate": not dashboard.get("dashboardMetadata", {}).get("shared", False),
+        }
+
+        response = self.post(url, doc_payload)
+
+        if response.is_success:
+            doc_id = response.data.get("id") if response.data else None
+            return ImportResult(
+                entity_type="dashboard",
+                entity_name=name,
+                success=True,
+                dynatrace_id=doc_id
+            )
+        else:
+            return ImportResult(
+                entity_type="dashboard",
+                entity_name=name,
+                success=False,
+                error_message=response.error
+            )
+
+    def update_dashboard_v2(self, doc_id: str, dashboard: Dict[str, Any]) -> ImportResult:
+        """Update a dashboard via Documents API v1."""
+        name = dashboard.get("dashboardMetadata", {}).get("name", "Unknown")
+        platform_url = self.environment_url.replace('.live.', '.apps.')
+        url = f"{platform_url}/platform/document/v1/documents/{doc_id}"
+
+        doc_payload = {
+            "name": name,
+            "content": json.dumps(dashboard),
+            "isPrivate": not dashboard.get("dashboardMetadata", {}).get("shared", False),
+        }
+
+        response = self.put(url, doc_payload)
+
+        if response.is_success:
+            return ImportResult(
+                entity_type="dashboard",
+                entity_name=name,
+                success=True,
+                dynatrace_id=doc_id
+            )
+        else:
+            return ImportResult(
+                entity_type="dashboard",
+                entity_name=name,
                 success=False,
                 error_message=response.error
             )

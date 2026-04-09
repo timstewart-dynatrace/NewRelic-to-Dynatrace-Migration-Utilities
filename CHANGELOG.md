@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-04-09
+
+### Added (Phase 6 — API Modernization & CI/CD)
+- Documents API v2 for dashboard creation (with Config API v1 fallback)
+- GitHub Actions CI pipeline (pytest + ruff, Python 3.9-3.12 matrix)
+- Full pyproject.toml with pip-installable package (`nr-migrate` CLI entry point)
+- `batch` CLI subcommand: CSV/Excel batch compilation with results output
+- 6 new tests (Documents API, batch CLI, version flag) — 869 total across 21 files
+
+### Changed
+- Version bumped to 1.0.0 — all 6 phases complete
+
 ## [0.6.0] - 2026-04-09
 
 ### Added (Phase 5 — Migration Infrastructure)

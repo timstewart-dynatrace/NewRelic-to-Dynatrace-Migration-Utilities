@@ -210,6 +210,27 @@ class TestNotificationIntegration:
         assert "Unknown integration type" in result.error_message
 
 
+class TestCreateDashboardV2:
+    def test_should_create_via_documents_api(self, client):
+        dash = {"dashboardMetadata": {"name": "My Dash", "shared": True}, "tiles": []}
+        with patch.object(client.session, 'request', return_value=_mock_response({"id": "doc-123"}, 201)):
+            result = client.create_dashboard_v2(dash)
+            assert result.success is True
+            assert result.dynatrace_id == "doc-123"
+
+    def test_should_return_failure_on_error(self, client):
+        dash = {"dashboardMetadata": {"name": "Bad"}, "tiles": []}
+        with patch.object(client.session, 'request', return_value=_mock_response({"error": "auth"}, 403)):
+            result = client.create_dashboard_v2(dash)
+            assert result.success is False
+
+    def test_should_update_dashboard_v2(self, client):
+        dash = {"dashboardMetadata": {"name": "Updated"}, "tiles": []}
+        with patch.object(client.session, 'request', return_value=_mock_response({"id": "doc-123"}, 200)):
+            result = client.update_dashboard_v2("doc-123", dash)
+            assert result.success is True
+
+
 class TestValidateConnection:
     def test_should_return_true_on_success(self, client):
         with patch.object(client.session, 'request', return_value=_mock_response({"items": []})):

@@ -140,6 +140,49 @@ class TestReferenceCommand:
         assert "Attribute Mappings" in result.output
 
 
+class TestBatchCommand:
+    """Test batch CSV compilation."""
+
+    def test_should_compile_csv_file(self, runner):
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False) as f:
+            f.write("nrql\n")
+            f.write("SELECT count(*) FROM Transaction\n")
+            f.write("SELECT avg(duration) FROM Transaction\n")
+
+        outpath = tempfile.mktemp(suffix='.csv')
+        try:
+            result = runner.invoke(cli, ["batch", "--file", f.name, "--output", outpath])
+            assert result.exit_code == 0
+            assert "2 succeeded" in result.output
+
+            with open(outpath, 'r') as out:
+                content = out.read()
+            assert "count()" in content
+            assert "avg(" in content
+        finally:
+            os.unlink(f.name)
+            if os.path.exists(outpath):
+                os.unlink(outpath)
+
+    def test_should_handle_empty_csv(self, runner):
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False) as f:
+            f.write("nrql\n")
+        try:
+            result = runner.invoke(cli, ["batch", "--file", f.name])
+            assert result.exit_code == 0
+        finally:
+            os.unlink(f.name)
+
+
+class TestVersionFlag:
+    """Test --version flag."""
+
+    def test_should_show_version(self, runner):
+        result = runner.invoke(cli, ["--version"])
+        assert result.exit_code == 0
+        assert "1.0.0" in result.output or "nr-to-dt-migration" in result.output
+
+
 class TestCompileExampleQueries:
     """Test that the example queries file compiles successfully."""
 

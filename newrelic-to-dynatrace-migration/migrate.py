@@ -999,6 +999,83 @@ def reference(mappings: bool):
         console.print(attr_table)
 
 
+@click.command("batch")
+@click.option("--file", "-f", "input_file", required=True, type=click.Path(exists=True), help="CSV or Excel file with NRQL column")
+@click.option("--output", "-o", "output_file", type=click.Path(), help="Output file (CSV)")
+@click.option("--nrql-column", default="nrql", help="Column name containing NRQL queries (default: nrql)")
+def batch_compile(input_file: str, output_file: Optional[str], nrql_column: str):
+    """Batch compile NRQL queries from a CSV or Excel file.
+
+    Reads a file with an NRQL column, compiles each query to DQL, and writes
+    results with DQL, confidence, and warnings columns.
+
+    Example: python migrate.py batch --file queries.csv --output results.csv
+    """
+    import csv
+    from compiler import NRQLCompiler
+
+    compiler = NRQLCompiler()
+    input_path = Path(input_file)
+    rows = []
+
+    # Read input
+    if input_path.suffix in ('.xlsx', '.xls'):
+        try:
+            import openpyxl
+            wb = openpyxl.load_workbook(input_path, read_only=True)
+            ws = wb.active
+            headers = [cell.value for cell in next(ws.iter_rows(min_row=1, max_row=1))]
+            nrql_idx = headers.index(nrql_column) if nrql_column in headers else 0
+            for row in ws.iter_rows(min_row=2, values_only=True):
+                nrql = row[nrql_idx] if row[nrql_idx] else ""
+                rows.append({"nrql": str(nrql), "original_row": list(row)})
+            wb.close()
+        except ImportError:
+            console.print("[red]Error: openpyxl required for Excel files. Install with: pip install openpyxl[/red]")
+            sys.exit(1)
+    else:
+        # CSV
+        with open(input_path, 'r', newline='') as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                nrql = row.get(nrql_column, "")
+                rows.append({"nrql": nrql, "original_row": row})
+
+    if not rows:
+        console.print("[yellow]No queries found in input file[/yellow]")
+        return
+
+    # Compile each query
+    results = []
+    for item in rows:
+        nrql = item["nrql"].strip()
+        if not nrql:
+            results.append({"nrql": "", "dql": "", "confidence": "", "warnings": ""})
+            continue
+        result = compiler.compile(nrql)
+        results.append({
+            "nrql": nrql,
+            "dql": result.dql if result.success else f"ERROR: {result.error}",
+            "confidence": result.confidence if result.success else "FAILED",
+            "warnings": "; ".join(result.warnings) if result.warnings else "",
+        })
+
+    # Display summary
+    succeeded = sum(1 for r in results if r["confidence"] not in ("", "FAILED"))
+    failed = sum(1 for r in results if r["confidence"] == "FAILED")
+    console.print(f"\n[bold]Batch compiled {len(results)} queries: "
+                  f"[green]{succeeded} succeeded[/green], "
+                  f"[red]{failed} failed[/red][/bold]")
+
+    # Write output
+    out_path = output_file or str(input_path.with_suffix('.results.csv'))
+    with open(out_path, 'w', newline='') as f:
+        writer = csv.DictWriter(f, fieldnames=["nrql", "dql", "confidence", "warnings"])
+        writer.writeheader()
+        writer.writerows(results)
+    console.print(f"[green]Results saved to {out_path}[/green]")
+
+
 def _get_version():
     try:
         from _version import __version__
@@ -1023,6 +1100,7 @@ cli.add_command(compile_nrql, "compile")
 cli.add_command(convert_nrql, "convert")
 cli.add_command(reference, "reference")
 cli.add_command(audit_slos, "audit-slos")
+cli.add_command(batch_compile, "batch")
 
 
 if __name__ == "__main__":
