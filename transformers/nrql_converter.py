@@ -179,6 +179,7 @@ class ConversionResult:
     fixes: List[str] = field(default_factory=list)
     warnings: List[str] = field(default_factory=list)
     confidence: str = "HIGH"  # HIGH, MEDIUM, LOW
+    confidence_score: int = 100  # 0-100 numeric score
     success: bool = True
 
 
