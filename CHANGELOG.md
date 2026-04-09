@@ -7,7 +7,115 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [Unreleased]
+
+## [1.2.0] - 2026-04-09
+
+### Added (Phase 8 — Export Formats: Monaco & Terraform)
+- Monaco exporter: generates v2 project structure (YAML configs + JSON templates)
+- Terraform exporter: generates HCL files with dynatrace provider resources
+- CLI: `export-monaco` and `export-terraform` subcommands with --input/--output
+- 15 new tests (Monaco + Terraform exporters) — 894 total across 25 files
+
+## [1.1.0] - 2026-04-09
+
+### Added (Phase 7 — Validation, Retry & Diff)
+- Dry-run preview: summary table of what would be created + preview JSON export
+- Partial retry: save failed entities to JSON, `--retry` flag to re-import
+- Diff/preview: `--diff` flag compares transformed entities against live DT (CREATE/UPDATE/CONFLICT)
+- FailedEntities class for tracking and reloading import failures
+- DiffReport class with registry-based comparison (dashboards, management zones)
+- 10 new tests (retry, diff) — 879 total across 23 files
+
+## [1.0.0] - 2026-04-09
+
+### Added (Phase 6 — API Modernization & CI/CD)
+- Documents API v2 for dashboard creation (with Config API v1 fallback)
+- GitHub Actions CI pipeline (pytest + ruff, Python 3.9-3.12 matrix)
+- Full pyproject.toml with pip-installable package (`nr-migrate` CLI entry point)
+- `batch` CLI subcommand: CSV/Excel batch compilation with results output
+- 6 new tests (Documents API, batch CLI, version flag) — 869 total across 21 files
+
+### Changed
+- Version bumped to 1.0.0 — all 6 phases complete
+
+## [0.6.0] - 2026-04-09
+
+### Added (Phase 5 — Migration Infrastructure)
+- RollbackManifest: track created entities for rollback (save/load JSON)
+- EntityIdMap: NR GUID → DT ID mapping with persistence
+- MigrationCheckpoint: resume from last successful import point
+- IncrementalState: content-hash based change detection for incremental migration
+- ConversionReport: JSON + HTML reports with per-query confidence, side-by-side NRQL/DQL
+- CLI: `migrate --rollback`, `--resume`, `--incremental`, `--report` flags
+- CLI: `--version` flag (reads from `_version.py`)
+- 29 new tests (migration state + report) — 863 total across 21 files
+
+## [0.5.0] - 2026-04-09
+
+### Added (Phase 4 — New Entity Transformers)
+- InfrastructureTransformer: NR host-not-reporting/process-not-running → DT metric events
+- LogParsingTransformer: NR grok/regex log rules → DT processing rules with DPL patterns
+- TagTransformer: NR entity tags → DT auto-tag rules (10 entity type mappings)
+- DropRuleTransformer: NR data drop filter rules → DT metric/log ingest rules
+- 32 new tests across 4 test files — 834 total across 19 files
+
+### Changed
+- Removed dead `apm_settings` from AVAILABLE_COMPONENTS (no transformer existed)
+- Added `infrastructure`, `log_parsing`, `tags`, `drop_rules` to AVAILABLE_COMPONENTS
+
+## [0.4.0] - 2026-04-09
+
+### Added (Phase 3 — Environment Registry & Live Validation)
+- DTEnvironmentRegistry: lazy-loaded caches for metrics, entities, dashboards, management zones, synthetic locations
+- Fuzzy metric matching with 19 semantic synonym groups (error/failure, cpu/processor, etc.)
+- DQL live validation via Grail query API (submit + parse errors)
+- SLOAuditor: batch SLO audit for metric validity, invalid aggregation detection, NRQL syntax detection
+- OAuth authentication support (client credentials flow via `sso.dynatrace.com`)
+- Auth utilities: `get_auth_header()`, `get_dt_oauth_token()`, `ms_to_dql_duration()`
+- CLI: `compile --validate` flag for live DQL validation against DT environment
+- CLI: `audit-slos` subcommand for SLO metric audit
+- 55 new tests (registry, SLO auditor, auth) — 802 total across 15 files
+
+## [0.3.0] - 2026-04-09
+
+### Added (Phase 2 — Test Coverage Completion)
+- NewRelicClient unit tests: 24 tests covering all 14 public methods (mocked HTTP)
+- DynatraceClient unit tests: 26 tests covering all 22 public methods (mocked HTTP)
+- Settings unit tests: 13 tests covering config classes, endpoints, singleton, components
+- Total test count: 747 across 12 test files (was 673)
+
+## [0.2.0] - 2026-04-09
+
 ### Added
+- CLI: `compile --interactive` — interactive REPL mode for ad-hoc query conversion
+- CLI: `compile --file` / `--output` — batch compile queries from file with optional output file
+- CLI: `reference` subcommand — NRQL→DQL quick reference table with `--mappings` for full mapping tables
+- Field mappings: `memorytotal`, `memorytotalbytes` → `dt.host.memory.total`
+- Example queries file (`examples/example_queries.nrql`)
+- CLI test suite: 14 tests covering interactive, batch, reference, and example query compilation
+
+### Added (Phase 1 — Compiler Enhancements)
+- COMPARE WITH → `append` subquery for span/event queries (metric queries still use `shift:`)
+- `capture(field, regex)` → `parse(field, "DPL_PATTERN")` using RegexToDPL converter
+- Nested `filter()` in aggregations: `count(*, filter(WHERE ...))` → `countIf(...)`
+- Lexer now preserves regex escape sequences in string literals (`\w`, `\d`, `\s`, `\S`)
+- 10 new compiler regression tests (292 compiler tests, 673 total)
+
+### Changed
+- Consolidated standalone `nrql-converter/` tool into migration framework CLI
+- Fixed `hostmemorytotal` mapping (was incorrectly mapped to `dt.host.memory.used`, now `dt.host.memory.total`)
+- Standardized transformer interfaces for consistency:
+  - Renamed `TransformResult` → `DashboardTransformResult` (consistent `{Entity}TransformResult` naming)
+  - Renamed `AlertTransformer.transform_policy()` → `transform()` (consistent method name)
+  - `NotificationTransformer.transform_channel()` → `transform()`, now returns `NotificationTransformResult` dataclass instead of raw dict
+  - `DashboardTransformer.transform()` now returns single `DashboardTransformResult` (with `data` as list of dashboards) instead of `List[TransformResult]`
+  - `ConversionResult` fields aligned with `CompileResult`: `converted_dql` → `dql`, `fixes_applied` → `fixes`
+
+### Removed
+- Standalone `nrql-converter/` directory — all functionality now available via `migrate.py compile` and `migrate.py reference`
+
+### Added (prior)
 - Comprehensive test suite: 367 new tests across 8 test files (649 total with compiler tests)
   - `test_utils_validators.py` — config and structure validation tests
   - `test_dql_validator.py` — DQL syntax validation + anti-pattern detection tests
@@ -40,7 +148,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - Updated root README.md project structure to reflect current codebase (added compiler/, validators/, tests/, and new transformer files)
-- Updated newrelic-to-dynatrace-migration/README.md project structure to match actual directory layout
+- Updated README.md project structure to match actual directory layout
 - Corrected Known Limitations to accurately describe AST compiler capabilities (282 tested patterns)
 
 ## [0.1.0] - 2026-04-08

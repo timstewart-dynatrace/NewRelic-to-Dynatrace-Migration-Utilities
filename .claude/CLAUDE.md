@@ -1,49 +1,122 @@
-# Dynatrace-NewRelic Migration Tools
+# New Relic to Dynatrace Migration Tool
 
-**Last Updated:** 2026-04-08
+**ALWAYS** ask clarifying questions and **ALWAYS** provide a plan **BEFORE** making changes.
 
-## Project Overview
+## Project Summary
 
-Repository containing tools for migrating New Relic monitoring configurations to Dynatrace. Two components:
+Universal migration tool for converting New Relic monitoring configurations to Dynatrace. Migrates dashboards (with a real NRQL-to-DQL compiler), alerts, synthetic monitors, SLOs, and workloads. Three-phase pipeline: Export (NR NerdGraph) -> Transform -> Import (DT APIs). Supports config-as-code export (Monaco, Terraform).
 
-| Tool | Location | Purpose |
-|------|----------|---------|
-| **NRQL to DQL Converter** | `nrql-converter/` | Standalone query converter (lightweight) |
-| **Migration Framework** | `newrelic-to-dynatrace-migration/` | Full migration pipeline (export→transform→import) |
-
-The migration framework is the primary active project — see its `.claude/CLAUDE.md` for detailed instructions.
+**Last Updated:** 2026-04-09
+**Version:** 1.2.0
+**Phases Completed:** 0-8 (all complete)
 
 ## Quick Reference
 
 ```bash
-cd newrelic-to-dynatrace-migration
-
-# Run tests (649 total)
+# Run tests (894 total across 25 files)
 pytest tests/ -v
 
 # Compile single query
 python migrate.py compile "SELECT count(*) FROM Transaction"
 
-# Full migration (dry run)
-python migrate.py migrate --dry-run
+# Interactive REPL
+python migrate.py compile --interactive
+
+# Batch compile from file
+python migrate.py compile --file examples/example_queries.nrql
+
+# Batch CSV/Excel
+python migrate.py batch --file queries.csv --output results.csv
+
+# Reference table
+python migrate.py reference
+
+# Full migration
+python migrate.py migrate --dry-run          # Preview what would be created
+python migrate.py migrate --full             # Execute migration
+python migrate.py migrate --diff             # Compare against live DT
+python migrate.py migrate --retry failed.json # Retry failed entities
+
+# Config-as-code export
+python migrate.py export-monaco --input ./output --output ./monaco-out
+python migrate.py export-terraform --input ./output --output ./tf-out
+
+# SLO audit
+python migrate.py audit-slos
+
+# Version
+python migrate.py --version
 ```
+
+## Tech Stack
+
+| Layer | Technology | Why |
+|-------|-----------|-----|
+| Runtime | Python 3.9+ | Broad compatibility |
+| Config | Pydantic + python-dotenv | Typed settings from .env |
+| CLI | Click + Rich | Subcommands with progress display |
+| Logging | structlog | Structured logging |
+| HTTP | requests | API clients |
+| Testing | pytest | 894 tests across 25 files |
+
+## Architecture
+
+```
+EXPORT (NR NerdGraph)  ->  TRANSFORM  ->  IMPORT (DT APIs)
+                                      ->  EXPORT (Monaco / Terraform)
+
+Transformers (10):                     Targets:
+  DashboardTransformer (AST compiler)    Dashboards (Documents API)
+  AlertTransformer                       Alerting Profiles + Metric Events
+  NotificationTransformer                Problem Notifications
+  SyntheticTransformer                   HTTP/Browser Monitors
+  SLOTransformer                         SLOs
+  WorkloadTransformer                    Management Zones
+  InfrastructureTransformer              Metric Events (host/process)
+  LogParsingTransformer                  Log Processing Rules
+  TagTransformer                         Auto-Tag Rules
+  DropRuleTransformer                    Ingest Rules
+
+NRQL Compiler Pipeline:
+  NRQL string -> Lexer -> Token[] -> Parser -> AST -> DQLEmitter -> DQL string
+```
+
+### Transformer Interface Standard
+
+All transformers follow a consistent pattern:
+- **Result class**: `{Entity}TransformResult` dataclass with `success`, `warnings`, `errors`
+- **Method**: `transform(nr_entity) -> {Entity}TransformResult` (single item)
+- **Batch**: `transform_all(items) -> List[{Entity}TransformResult]`
+
+## Key Directories
+
+| Path | Purpose |
+|------|---------|
+| `compiler/` | NRQL-to-DQL AST compiler (292 tested patterns) |
+| `clients/` | NR NerdGraph + DT API clients (Config v1 + Documents v2 + Settings v2) |
+| `transformers/` | 10 entity transformers + NRQL converter + mapping tables |
+| `validators/` | DQL syntax validator + 19-rule auto-fixer |
+| `registry/` | DTEnvironmentRegistry (live validation) + SLOAuditor |
+| `migration/` | Rollback, checkpoint, incremental, reports, retry, diff |
+| `exporters/` | Monaco YAML + Terraform HCL config-as-code exporters |
+| `config/` | Pydantic BaseSettings from .env |
+| `utils/` | Logging, auth (OAuth), validators |
+| `examples/` | Sample NRQL queries for batch testing |
+| `tests/` | 894 pytest tests across 25 files |
+
+## Rules
+
+### Always active
+@.claude/rules/architecture.md
+@.claude/rules/python.md
+@.claude/rules/testing.md
+@.claude/rules/dql-reference.md
 
 ## Key Constraints
 
 - **No hardcoded credentials** — all secrets via .env / environment variables
 - **Community project** — not officially supported by Dynatrace
 - **Feature branches** — never commit features directly to main
-
-## Active Development
-
-See `newrelic-to-dynatrace-migration/.claude/phases/` for the 6-phase roadmap:
-1. Compiler Enhancements
-2. Test Coverage Completion
-3. Environment Registry & Live Validation
-4. New Entity Transformers
-5. Migration Infrastructure
-6. API Modernization & CI/CD
-
-## Sub-project Instructions
-
-@newrelic-to-dynatrace-migration/.claude/CLAUDE.md
+- **Compiler vs Converter** — `compiler/` handles pure NRQL->DQL translation. `transformers/nrql_converter.py` wraps it with post-processing and auto-fixes.
+- **DQL validation** — structurally valid DQL doesn't guarantee data returns. Field existence requires live validation against Grail API.
+- **Phase gates** — Every phase must have complete tests, documentation, and memory updates before moving to the next phase.
