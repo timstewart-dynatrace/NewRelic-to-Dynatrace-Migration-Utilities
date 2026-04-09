@@ -47,7 +47,7 @@ class AlertTransformer:
     def __init__(self):
         self.mapper = EntityMapper()
 
-    def transform_policy(self, nr_policy: Dict[str, Any]) -> AlertTransformResult:
+    def transform(self, nr_policy: Dict[str, Any]) -> AlertTransformResult:
         """
         Transform a New Relic alert policy to Dynatrace alerting profile
         and metric events.
@@ -364,7 +364,7 @@ class AlertTransformer:
         results = []
 
         for policy in policies:
-            result = self.transform_policy(policy)
+            result = self.transform(policy)
             results.append(result)
 
         successful = sum(1 for r in results if r.success)
@@ -378,110 +378,113 @@ class AlertTransformer:
         return results
 
 
+@dataclass
+class NotificationTransformResult:
+    """Result of notification channel transformation."""
+    success: bool
+    integration_type: Optional[str] = None
+    config: Optional[Dict[str, Any]] = None
+    warnings: List[str] = None
+    errors: List[str] = None
+
+    def __post_init__(self):
+        self.warnings = self.warnings or []
+        self.errors = self.errors or []
+
+
 class NotificationTransformer:
     """
     Transforms New Relic notification channels to Dynatrace integrations.
     """
 
-    def transform_channel(self, nr_channel: Dict[str, Any]) -> Dict[str, Any]:
+    def transform(self, nr_channel: Dict[str, Any]) -> NotificationTransformResult:
         """Transform a notification channel."""
         channel_type = nr_channel.get("type", "").upper()
         channel_name = nr_channel.get("name", "Unknown Channel")
         properties = {p["key"]: p["value"] for p in nr_channel.get("properties", [])}
 
-        result = {
-            "success": False,
-            "integration_type": None,
-            "config": None,
-            "warnings": [],
-            "errors": []
-        }
-
         if channel_type == "EMAIL":
-            result = self._transform_email(nr_channel, properties)
+            return self._transform_email(nr_channel, properties)
         elif channel_type == "SLACK":
-            result = self._transform_slack(nr_channel, properties)
+            return self._transform_slack(nr_channel, properties)
         elif channel_type == "PAGERDUTY":
-            result = self._transform_pagerduty(nr_channel, properties)
+            return self._transform_pagerduty(nr_channel, properties)
         elif channel_type == "WEBHOOK":
-            result = self._transform_webhook(nr_channel, properties)
+            return self._transform_webhook(nr_channel, properties)
         else:
-            result["errors"].append(
-                f"Notification type '{channel_type}' for '{channel_name}' "
-                "is not yet supported for automatic migration"
+            return NotificationTransformResult(
+                success=False,
+                errors=[
+                    f"Notification type '{channel_type}' for '{channel_name}' "
+                    "is not yet supported for automatic migration"
+                ]
             )
-
-        return result
 
     def _transform_email(
         self,
         channel: Dict[str, Any],
         properties: Dict[str, str]
-    ) -> Dict[str, Any]:
+    ) -> NotificationTransformResult:
         """Transform email notification channel."""
-        return {
-            "success": True,
-            "integration_type": "email",
-            "config": {
+        return NotificationTransformResult(
+            success=True,
+            integration_type="email",
+            config={
                 "name": f"[Migrated] {channel.get('name', 'Email')}",
                 "recipients": properties.get("recipients", "").split(","),
                 "subject": "[Dynatrace] {ProblemTitle}",
                 "body": "{ProblemDetailsText}",
                 "active": channel.get("active", True)
             },
-            "warnings": [],
-            "errors": []
-        }
+        )
 
     def _transform_slack(
         self,
         channel: Dict[str, Any],
         properties: Dict[str, str]
-    ) -> Dict[str, Any]:
+    ) -> NotificationTransformResult:
         """Transform Slack notification channel."""
-        return {
-            "success": True,
-            "integration_type": "slack",
-            "config": {
+        return NotificationTransformResult(
+            success=True,
+            integration_type="slack",
+            config={
                 "name": f"[Migrated] {channel.get('name', 'Slack')}",
                 "url": properties.get("url", ""),  # Webhook URL
                 "channel": properties.get("channel", ""),
                 "active": channel.get("active", True)
             },
-            "warnings": ["Slack webhook URL may need to be updated for Dynatrace"],
-            "errors": []
-        }
+            warnings=["Slack webhook URL may need to be updated for Dynatrace"],
+        )
 
     def _transform_pagerduty(
         self,
         channel: Dict[str, Any],
         properties: Dict[str, str]
-    ) -> Dict[str, Any]:
+    ) -> NotificationTransformResult:
         """Transform PagerDuty notification channel."""
-        return {
-            "success": True,
-            "integration_type": "pagerduty",
-            "config": {
+        return NotificationTransformResult(
+            success=True,
+            integration_type="pagerduty",
+            config={
                 "name": f"[Migrated] {channel.get('name', 'PagerDuty')}",
                 "serviceKey": properties.get("service_key", ""),
                 "active": channel.get("active", True)
             },
-            "warnings": [
+            warnings=[
                 "PagerDuty integration key may need to be regenerated for Dynatrace"
             ],
-            "errors": []
-        }
+        )
 
     def _transform_webhook(
         self,
         channel: Dict[str, Any],
         properties: Dict[str, str]
-    ) -> Dict[str, Any]:
+    ) -> NotificationTransformResult:
         """Transform generic webhook notification channel."""
-        return {
-            "success": True,
-            "integration_type": "webhook",
-            "config": {
+        return NotificationTransformResult(
+            success=True,
+            integration_type="webhook",
+            config={
                 "name": f"[Migrated] {channel.get('name', 'Webhook')}",
                 "url": properties.get("base_url", ""),
                 "acceptAnyCertificate": False,
@@ -489,8 +492,7 @@ class NotificationTransformer:
                 "headers": [],
                 "payload": "{ProblemDetailsJSON}"
             },
-            "warnings": [
+            warnings=[
                 "Webhook payload format will need adjustment for Dynatrace problem format"
             ],
-            "errors": []
-        }
+        )

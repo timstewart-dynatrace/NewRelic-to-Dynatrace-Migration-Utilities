@@ -7,51 +7,9 @@
 
 Utilities for migrating from New Relic to Dynatrace.
 
-## Tools Overview
-
-This repository contains two complementary tools:
-
-| Tool                      | Description                  | Location                                                               |
-| ------------------------- | ---------------------------- | ---------------------------------------------------------------------- |
-| **NRQL to DQL Converter** | Standalone query converter   | [`nrql-converter/`](nrql-converter/)                                   |
-| **Migration Framework**   | Full configuration migration | [`newrelic-to-dynatrace-migration/`](newrelic-to-dynatrace-migration/) |
-
----
-
-## NRQL to DQL Converter
-
-A lightweight Python tool to convert New Relic Query Language (NRQL) queries to Dynatrace Query Language (DQL).
-
-**Location:** [`nrql-converter/`](nrql-converter/)
-
-### Quick Start
-
-```bash
-cd nrql-converter
-./nrql_to_dql.py "SELECT count(*) FROM Transaction WHERE appName = 'MyApp' SINCE 1 hour ago"
-```
-
-### Quick Reference
-
-| NRQL                               | DQL                                         |
-| ---------------------------------- | ------------------------------------------- |
-| `SELECT * FROM Log`                | `fetch logs`                                |
-| `SELECT count(*) FROM Transaction` | `fetch ... \| summarize count()`            |
-| `WHERE field = 'value'`            | `\| filter field == "value"`                |
-| `WHERE field LIKE '%pattern%'`     | `\| filter matchesPhrase(field, "pattern")` |
-| `FACET fieldName`                  | `\| summarize by: {fieldName}`              |
-| `SINCE 1 hour ago`                 | `from:now()-1h`                             |
-| `LIMIT 100`                        | `\| limit 100`                              |
-| `average(field)`                   | `avg(field)`                                |
-| `uniqueCount(field)`               | `countDistinct(field)`                      |
-
-For detailed documentation, see [nrql-converter/README.md](nrql-converter/README.md)
-
----
-
 ## New Relic to Dynatrace Migration Framework
 
-A universal, comprehensive migration framework for converting New Relic monitoring configurations to Dynatrace.
+A universal, comprehensive migration framework for converting New Relic monitoring configurations to Dynatrace. Includes a built-in NRQL-to-DQL compiler with 282+ tested patterns.
 
 **Location:** [`newrelic-to-dynatrace-migration/`](newrelic-to-dynatrace-migration/)
 
@@ -96,12 +54,19 @@ python migrate.py --full            # Execute migration
 
 | Command                                            | Description                                      |
 | -------------------------------------------------- | ------------------------------------------------ |
-| `python migrate.py --full`                         | Complete migration (export → transform → import) |
-| `python migrate.py --export-only`                  | Export from New Relic only                       |
-| `python migrate.py --import-only --input ./path`   | Import to Dynatrace from previous export         |
-| `python migrate.py --components dashboards,alerts` | Migrate specific components                      |
-| `python migrate.py --dry-run`                      | Validate without making changes                  |
-| `python migrate.py --list-components`              | List available components                        |
+| `python migrate.py migrate --full`                 | Complete migration (export → transform → import) |
+| `python migrate.py migrate --export-only`          | Export from New Relic only                       |
+| `python migrate.py migrate --import-only --input ./path` | Import to Dynatrace from previous export   |
+| `python migrate.py migrate --components dashboards,alerts` | Migrate specific components              |
+| `python migrate.py migrate --dry-run`              | Validate without making changes                  |
+| `python migrate.py migrate --list-components`      | List available components                        |
+| `python migrate.py compile "SELECT ..."`           | Compile a single NRQL query to DQL               |
+| `python migrate.py compile --interactive`          | Interactive REPL for ad-hoc query conversion     |
+| `python migrate.py compile --file queries.nrql`    | Batch compile queries from file                  |
+| `python migrate.py compile --file q.nrql --output r.dql` | Batch compile with output file             |
+| `python migrate.py convert "SELECT ..."`           | Compile with post-processing and auto-fixes      |
+| `python migrate.py reference`                      | Show NRQL→DQL quick reference table              |
+| `python migrate.py reference --mappings`           | Show full mapping tables                         |
 
 ### Entity Mapping
 
@@ -134,14 +99,8 @@ Dynatrace-NewRelic/
 ├── docs/
 │   └── images/                            # SVG diagrams
 │
-├── nrql-converter/                        # Standalone NRQL→DQL converter
-│   ├── README.md
-│   ├── nrql_to_dql.py
-│   ├── test_nrql_to_dql.py
-│   └── examples.nrql
-│
-└── newrelic-to-dynatrace-migration/       # Full migration framework
-    ├── migrate.py                         # Migration CLI entry point
+└── newrelic-to-dynatrace-migration/       # Migration framework
+    ├── migrate.py                         # CLI entry point (migrate, compile, convert, reference)
     ├── pyproject.toml                     # pytest configuration
     ├── requirements.txt                   # Python dependencies
     ├── .env.example                       # Environment template
@@ -176,6 +135,9 @@ Dynatrace-NewRelic/
     │   ├── dql_validator.py               # DQL syntax validator (9 regex rules)
     │   └── dql_fixer.py                   # DQL auto-fixer (19 fix rules)
     │
+    ├── examples/
+    │   └── example_queries.nrql           # Sample NRQL queries for testing
+    │
     ├── utils/
     │   ├── logger.py                      # Structured logging (structlog)
     │   └── validators.py                  # Config & structure validators
@@ -184,6 +146,7 @@ Dynatrace-NewRelic/
         ├── conftest.py                    # Shared fixtures
         └── unit/
             ├── test_compiler.py           # 282 compiler tests (25 classes)
+            ├── test_cli.py                # CLI command tests (interactive, batch, reference)
             ├── test_transformers.py       # All 5 transformer tests
             ├── test_converters.py         # Specialized converter tests
             ├── test_mapping_rules.py      # EntityMapper + mapping dict tests

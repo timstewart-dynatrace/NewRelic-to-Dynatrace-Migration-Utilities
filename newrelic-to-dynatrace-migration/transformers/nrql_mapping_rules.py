@@ -166,6 +166,8 @@ METRIC_MAP: dict[str, str] = {
     'memoryfreepercent': 'dt.host.memory.avail.percent',
     'memoryused': 'dt.host.memory.used',
     'memoryusedbytes': 'dt.host.memory.used',       # Host context; K8s context handled separately
+    'memorytotal': 'dt.host.memory.total',
+    'memorytotalbytes': 'dt.host.memory.total',
     'swapused': 'dt.host.memory.swap.used',
     'swapfree': 'dt.host.memory.swap.avail',
     'swaptotal': 'dt.host.memory.swap.total',
@@ -324,7 +326,7 @@ METRIC_MAP: dict[str, str] = {
 
     # Host dotted metrics (NR agent)
     'hostsystemcpuutilization': 'dt.host.cpu.usage',
-    'hostmemorytotal': 'dt.host.memory.used',
+    'hostmemorytotal': 'dt.host.memory.total',
     'hostnettransmitbytes': 'dt.host.net.nic.bytes_tx',
     'hostnetreceivebytes': 'dt.host.net.nic.bytes_rx',
 

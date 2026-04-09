@@ -236,7 +236,7 @@ class MigrationOrchestrator:
                 )
                 for result in results:
                     if result.success:
-                        transformed_data["dashboards"].append(result.data)
+                        transformed_data["dashboards"].extend(result.data)
                     transformed_data["warnings"].extend(result.warnings or [])
                     transformed_data["errors"].extend(result.errors or [])
                 progress.update(task, completed=1)
@@ -673,16 +673,108 @@ def main(
         orchestrator._import_phase(transformed_data, component_list)
 
 
-@click.command("compile")
-@click.argument("nrql")
-def compile_nrql(nrql: str):
-    """Compile a single NRQL query to DQL.
+def _display_compile_result(result, show_original: str = None):
+    """Display a compile result with Rich formatting."""
+    from rich.panel import Panel
 
-    Example: python migrate.py compile "SELECT count(*) FROM Transaction FACET appName TIMESERIES"
+    if show_original:
+        console.print(f"\n[bold cyan]NRQL:[/bold cyan] {show_original}")
+
+    if result.success:
+        console.print(Panel(result.dql, border_style="green", title="DQL", title_align="left"))
+        if result.fixes:
+            for f in result.fixes:
+                console.print(f"  [green]Fix:[/green] {f}")
+        if result.warnings:
+            for w in result.warnings:
+                console.print(f"  [yellow]Warning:[/yellow] {w}")
+        console.print(f"  [dim]Confidence: {result.confidence}[/dim]")
+    else:
+        console.print(f"[red]Error:[/red] {result.error}")
+
+
+@click.command("compile")
+@click.argument("nrql", required=False)
+@click.option("--interactive", "-i", is_flag=True, help="Interactive REPL mode")
+@click.option("--file", "-f", "input_file", type=click.Path(exists=True), help="Read queries from file")
+@click.option("--output", "-o", "output_file", type=click.Path(), help="Write results to file")
+def compile_nrql(nrql: Optional[str], interactive: bool, input_file: Optional[str], output_file: Optional[str]):
+    """Compile NRQL queries to DQL.
+
+    Modes:
+
+      python migrate.py compile "SELECT count(*) FROM Transaction"
+
+      python migrate.py compile --interactive
+
+      python migrate.py compile --file queries.nrql --output results.dql
     """
     from compiler import NRQLCompiler
 
+    if not nrql and not interactive and not input_file:
+        ctx = click.get_current_context()
+        click.echo(ctx.get_help())
+        sys.exit(1)
+
     compiler = NRQLCompiler()
+
+    # Interactive REPL mode
+    if interactive:
+        console.print("[bold]NRQL to DQL Compiler — Interactive Mode[/bold]")
+        console.print("Enter NRQL queries (type 'quit' to exit, 'ref' for reference)\n")
+
+        while True:
+            try:
+                nrql_input = console.input("[cyan]NRQL>[/cyan] ")
+
+                if nrql_input.lower() in ("quit", "exit", "q"):
+                    break
+
+                if nrql_input.lower() in ("ref", "reference", "help"):
+                    _print_reference_table()
+                    continue
+
+                if not nrql_input.strip():
+                    continue
+
+                result = compiler.compile(nrql_input)
+                _display_compile_result(result)
+                console.print()
+
+            except (KeyboardInterrupt, EOFError):
+                console.print("\n[yellow]Exiting...[/yellow]")
+                break
+
+        return
+
+    # Batch file mode
+    if input_file:
+        with open(input_file, "r") as f:
+            queries = [line.strip() for line in f if line.strip() and not line.startswith("#")]
+
+        results = []
+        for q in queries:
+            result = compiler.compile(q)
+            results.append((q, result))
+            _display_compile_result(result, show_original=q)
+            console.print("─" * 60)
+
+        if output_file:
+            with open(output_file, "w") as f:
+                for original, result in results:
+                    f.write(f"-- Original: {original}\n")
+                    if result.success:
+                        f.write(f"{result.dql}\n\n")
+                    else:
+                        f.write(f"-- Error: {result.error}\n\n")
+            console.print(f"\n[green]Results saved to {output_file}[/green]")
+
+        console.print(f"\n[bold]Compiled {len(queries)} queries: "
+                      f"[green]{sum(1 for _, r in results if r.success)} succeeded[/green], "
+                      f"[red]{sum(1 for _, r in results if not r.success)} failed[/red][/bold]")
+        return
+
+    # Single query mode
     result = compiler.compile(nrql)
 
     if result.success:
@@ -707,14 +799,86 @@ def convert_nrql(nrql: str):
     converter = NRQLtoDQLConverter()
     result = converter.convert(nrql, "CLI query")
 
-    console.print(result.converted_dql)
-    if result.fixes_applied:
-        for f in result.fixes_applied:
+    console.print(result.dql)
+    if result.fixes:
+        for f in result.fixes:
             console.print(f"[green]Fix:[/green] {f}")
     if result.warnings:
         for w in result.warnings:
             console.print(f"[yellow]Warning:[/yellow] {w}")
     console.print(f"\n[dim]Confidence: {result.confidence}[/dim]")
+
+
+def _print_reference_table():
+    """Print the NRQL to DQL quick reference table."""
+    table = Table(title="NRQL to DQL Quick Reference", show_header=True, header_style="bold cyan")
+    table.add_column("NRQL", style="green")
+    table.add_column("DQL", style="blue")
+
+    references = [
+        ("SELECT * FROM Log", "fetch logs"),
+        ("SELECT count(*) FROM Transaction", "fetch ... | summarize count()"),
+        ("WHERE field = 'value'", '| filter field == "value"'),
+        ("WHERE field LIKE '%pattern%'", "| filter contains(field, \"pattern\")"),
+        ("WHERE field IN ('a', 'b')", '| filter in(field, {"a", "b"})'),
+        ("WHERE field IS NULL", "| filter isNull(field)"),
+        ("FACET fieldName", "| summarize ..., by:{fieldName}"),
+        ("SINCE 1 hour ago", "from:now()-1h"),
+        ("LIMIT 100", "| limit 100"),
+        ("TIMESERIES", "| makeTimeseries ..."),
+        ("─" * 35, "─" * 35),
+        ("count(*)", "count()"),
+        ("average(field)", "avg(field)"),
+        ("sum(field)", "sum(field)"),
+        ("max(field)", "max(field)"),
+        ("min(field)", "min(field)"),
+        ("uniqueCount(field)", "countDistinct(field)"),
+        ("percentile(field, 95)", "percentile(field, 95)"),
+        ("latest(field)", "takeLast(field)"),
+        ("earliest(field)", "takeFirst(field)"),
+    ]
+
+    for nrql, dql in references:
+        table.add_row(nrql, dql)
+
+    console.print(table)
+
+
+@click.command("reference")
+@click.option("--mappings", "-m", is_flag=True, help="Show full mapping tables (aggregations, event types, attributes)")
+def reference(mappings: bool):
+    """Show NRQL to DQL reference table.
+
+    Use --mappings to display the full mapping dictionaries.
+    """
+    _print_reference_table()
+
+    if mappings:
+        from transformers.nrql_mapping_rules import AGG_MAP, EVENT_TYPE_MAP, ATTR_MAP
+
+        console.print()
+        agg_table = Table(title="Aggregation Mappings", show_header=True, header_style="bold cyan")
+        agg_table.add_column("NRQL Function", style="green")
+        agg_table.add_column("DQL Function", style="blue")
+        for nrql_fn, dql_fn in sorted(AGG_MAP.items()):
+            agg_table.add_row(nrql_fn, dql_fn)
+        console.print(agg_table)
+
+        console.print()
+        event_table = Table(title="Event Type Mappings", show_header=True, header_style="bold cyan")
+        event_table.add_column("NR Event Type", style="green")
+        event_table.add_column("DT Data Object", style="blue")
+        for nr_type, dt_type in sorted(EVENT_TYPE_MAP.items()):
+            event_table.add_row(nr_type, dt_type)
+        console.print(event_table)
+
+        console.print()
+        attr_table = Table(title="Attribute Mappings", show_header=True, header_style="bold cyan")
+        attr_table.add_column("NR Attribute", style="green")
+        attr_table.add_column("DT Attribute", style="blue")
+        for nr_attr, dt_attr in sorted(ATTR_MAP.items()):
+            attr_table.add_row(nr_attr, dt_attr)
+        console.print(attr_table)
 
 
 # Create a click group to support both migration and compile subcommands
@@ -731,6 +895,7 @@ def cli(ctx):
 cli.add_command(main, "migrate")
 cli.add_command(compile_nrql, "compile")
 cli.add_command(convert_nrql, "convert")
+cli.add_command(reference, "reference")
 
 
 if __name__ == "__main__":

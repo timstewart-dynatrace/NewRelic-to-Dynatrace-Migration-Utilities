@@ -22,14 +22,19 @@ logger = structlog.get_logger()
 
 
 @dataclass
-class TransformResult:
-    """Result of a transformation operation."""
+class DashboardTransformResult:
+    """Result of a dashboard transformation.
+
+    A single NR dashboard may produce multiple DT dashboards (one per page),
+    so `data` is a list of dashboard dicts.
+    """
     success: bool
-    data: Optional[Dict[str, Any]] = None
+    data: List[Dict[str, Any]] = None
     warnings: List[str] = None
     errors: List[str] = None
 
     def __post_init__(self):
+        self.data = self.data or []
         self.warnings = self.warnings or []
         self.errors = self.errors or []
 
@@ -57,42 +62,50 @@ class DashboardTransformer:
         self.mapper = EntityMapper()
         self._nrql_converter = NRQLtoDQLConverter(registry=registry)
 
-    def transform(self, nr_dashboard: Dict[str, Any]) -> List[TransformResult]:
+    def transform(self, nr_dashboard: Dict[str, Any]) -> DashboardTransformResult:
         """
         Transform a New Relic dashboard to Dynatrace format.
 
-        Returns a list of TransformResults because a multi-page New Relic dashboard
-        may be converted to multiple Dynatrace dashboards.
+        A multi-page NR dashboard produces multiple DT dashboards (one per page),
+        returned in the `data` list.
         """
-        results = []
+        dashboards = []
+        all_warnings = []
 
         try:
             pages = nr_dashboard.get("pages", [])
 
             if not pages:
-                return [TransformResult(
+                return DashboardTransformResult(
                     success=False,
                     errors=["Dashboard has no pages"]
-                )]
+                )
 
             # Convert each page to a separate Dynatrace dashboard
             for page_index, page in enumerate(pages):
-                result = self._transform_page(
+                page_result = self._transform_page(
                     nr_dashboard=nr_dashboard,
                     page=page,
                     page_index=page_index,
                     total_pages=len(pages)
                 )
-                results.append(result)
+                if page_result.get("dashboard"):
+                    dashboards.append(page_result["dashboard"])
+                if page_result.get("warnings"):
+                    all_warnings.extend(page_result["warnings"])
 
         except Exception as e:
             logger.error("Dashboard transformation failed", error=str(e))
-            results.append(TransformResult(
+            return DashboardTransformResult(
                 success=False,
                 errors=[f"Transformation error: {str(e)}"]
-            ))
+            )
 
-        return results
+        return DashboardTransformResult(
+            success=True,
+            data=dashboards,
+            warnings=all_warnings
+        )
 
     def _transform_page(
         self,
@@ -100,8 +113,8 @@ class DashboardTransformer:
         page: Dict[str, Any],
         page_index: int,
         total_pages: int
-    ) -> TransformResult:
-        """Transform a single dashboard page."""
+    ) -> Dict[str, Any]:
+        """Transform a single dashboard page. Returns dict with 'dashboard' and 'warnings'."""
         warnings = []
 
         # Build dashboard name
@@ -153,11 +166,10 @@ class DashboardTransformer:
             tiles=len(dt_dashboard["tiles"])
         )
 
-        return TransformResult(
-            success=True,
-            data=dt_dashboard,
-            warnings=warnings
-        )
+        return {
+            "dashboard": dt_dashboard,
+            "warnings": warnings
+        }
 
     def _transform_widget(self, widget: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Transform a New Relic widget to a Dynatrace tile."""
@@ -313,11 +325,11 @@ class DashboardTransformer:
         result = self._nrql_converter.convert(nrql, title or "query")
 
         return {
-            "dql": result.converted_dql,
+            "dql": result.dql,
             "warnings": result.warnings,
             "fully_converted": result.success and result.confidence == "HIGH",
             "confidence": result.confidence,
-            "fixes_applied": result.fixes_applied,
+            "fixes": result.fixes,
         }
 
     def _transform_variables(self, variables: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -357,17 +369,18 @@ class DashboardTransformer:
     def transform_all(
         self,
         dashboards: List[Dict[str, Any]]
-    ) -> List[TransformResult]:
+    ) -> List[DashboardTransformResult]:
         """Transform multiple dashboards."""
-        all_results = []
+        results = []
 
         for dashboard in dashboards:
-            results = self.transform(dashboard)
-            all_results.extend(results)
+            result = self.transform(dashboard)
+            results.append(result)
 
-        successful = sum(1 for r in all_results if r.success)
+        successful = sum(1 for r in results if r.success)
+        total_pages = sum(len(r.data) for r in results if r.success)
         logger.info(
-            f"Transformed {successful}/{len(all_results)} dashboard pages"
+            f"Transformed {successful}/{len(results)} dashboards ({total_pages} pages)"
         )
 
-        return all_results
+        return results

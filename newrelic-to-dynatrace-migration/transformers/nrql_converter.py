@@ -174,8 +174,8 @@ class ConversionResult:
     """Result of a single NRQL to DQL conversion."""
 
     original_nrql: str
-    converted_dql: str
-    fixes_applied: List[str] = field(default_factory=list)
+    dql: str
+    fixes: List[str] = field(default_factory=list)
     warnings: List[str] = field(default_factory=list)
     confidence: str = "HIGH"  # HIGH, MEDIUM, LOW
     success: bool = True
@@ -335,15 +335,15 @@ class NRQLtoDQLConverter:
 
         result = ConversionResult(
             original_nrql=nrql,
-            converted_dql="",
-            fixes_applied=[],
+            dql="",
+            fixes=[],
             warnings=[],
             confidence="HIGH",
             success=True,
         )
 
         if not nrql or not nrql.strip():
-            result.converted_dql = "// Empty query"
+            result.dql = "// Empty query"
             result.confidence = "LOW"
             return result
 
@@ -359,10 +359,10 @@ class NRQLtoDQLConverter:
             ast_result = self._ast_compiler.compile(nrql_clean, title)
 
             if ast_result.success:
-                result.converted_dql = ast_result.dql
+                result.dql = ast_result.dql
                 result.confidence = ast_result.confidence
                 result.warnings = list(ast_result.warnings)
-                result.fixes_applied = list(ast_result.fixes)
+                result.fixes = list(ast_result.fixes)
 
                 # POST-AST: Apply features the emitter doesn't handle inline
                 dql = ast_result.dql
@@ -400,25 +400,25 @@ class NRQLtoDQLConverter:
                     if extrap_note:
                         result.warnings.append(extrap_note)
 
-                result.converted_dql = dql
+                result.dql = dql
 
                 # Collect any warnings from sub-methods
                 if self._current_warnings:
                     result.warnings.extend(self._current_warnings)
 
                 # PHASE 0: GUID Resolution
-                if result.converted_dql:
-                    result.converted_dql = self._resolve_guids_in_dql(result.converted_dql, result)
+                if result.dql:
+                    result.dql = self._resolve_guids_in_dql(result.dql, result)
 
                 # PHASE 1: Minimal post-AST processing
-                if result.converted_dql:
-                    result.converted_dql, post_fixes = self._post_ast_cleanup(result.converted_dql)
+                if result.dql:
+                    result.dql, post_fixes = self._post_ast_cleanup(result.dql)
                     if post_fixes:
-                        result.fixes_applied.extend(post_fixes)
+                        result.fixes.extend(post_fixes)
 
                 # PHASE 2: Live DT Grail API validation
-                if self._registry and result.converted_dql:
-                    result.converted_dql = self._validate_dql_live(result.converted_dql, result)
+                if self._registry and result.dql:
+                    result.dql = self._validate_dql_live(result.dql, result)
 
                 return result
 
@@ -513,7 +513,7 @@ class NRQLtoDQLConverter:
             dql_parts.append(f"| summarize count(), by: {{bin({hist_field}, {bin_expr})}}")
 
             dql = "\n".join(dql_parts)
-            result.converted_dql = f"{_nrql_comment(original_nrql)}\n{dql}"
+            result.dql = f"{_nrql_comment(original_nrql)}\n{dql}"
             result.confidence = "HIGH"
             result.warnings.append("histogram() -> count() + bin() as categoricalBarChart visualization")
             return result
@@ -559,7 +559,7 @@ class NRQLtoDQLConverter:
             if "funnel(" in nrql_clean.lower():
                 funnel_result = self._funnel_converter.convert(nrql_clean)
                 if funnel_result:
-                    result.converted_dql = (
+                    result.dql = (
                         f"{_nrql_comment(original_nrql)}\n// {funnel_result['note']}\n{funnel_result['usql']}"
                     )
                     result.confidence = "MEDIUM"
@@ -570,7 +570,7 @@ class NRQLtoDQLConverter:
             if re.match(r"\s*WITH\s+", nrql_clean, re.IGNORECASE):
                 cte_result = self._with_as_converter.convert(nrql_clean)
                 if cte_result:
-                    result.converted_dql = f"{_nrql_comment(original_nrql)}\n{cte_result['dql']}"
+                    result.dql = f"{_nrql_comment(original_nrql)}\n{cte_result['dql']}"
                     result.confidence = "MEDIUM" if cte_result["strategy"] == "inline" else "LOW"
                     if cte_result.get("note"):
                         result.warnings.append(cte_result["note"])
@@ -578,7 +578,7 @@ class NRQLtoDQLConverter:
                     return result
 
             if not event_type:
-                result.converted_dql = f"// Could not parse event type from: {original_nrql}"
+                result.dql = f"// Could not parse event type from: {original_nrql}"
                 result.confidence = "LOW"
                 result.warnings.append("Could not determine event type")
                 return result
@@ -609,7 +609,7 @@ class NRQLtoDQLConverter:
 
             # Validate and fix DQL syntax issues
             dql, fixes = self.validator.validate_and_fix(dql, title)
-            result.fixes_applied = fixes
+            result.fixes = fixes
 
             # Check original NRQL for NR-specific features that need manual conversion
             nrql_lower = nrql.lower()
@@ -683,7 +683,7 @@ class NRQLtoDQLConverter:
             else:
                 dql = f"{_nrql_comment(original_nrql)}\n{dql}"
 
-            result.converted_dql = dql
+            result.dql = dql
 
             # VALIDATE the converted DQL -- Phase 1: local regex-based checks
             syntax_validator = DQLSyntaxValidator()
@@ -696,7 +696,7 @@ class NRQLtoDQLConverter:
                     result.warnings.append(f"DQL Syntax Error: {err.message}")
 
         except Exception as e:
-            result.converted_dql = f"// Conversion error: {str(e)}\n// Original: {original_nrql}"
+            result.dql = f"// Conversion error: {str(e)}\n// Original: {original_nrql}"
             result.confidence = "LOW"
             result.warnings.append(f"Conversion error: {str(e)}")
             result.success = False
@@ -708,22 +708,22 @@ class NRQLtoDQLConverter:
         # =================================================================
         # PHASE 1: DQL Output Sanitizer (fix known bad patterns)
         # =================================================================
-        if result.converted_dql:
-            result.converted_dql, sanitize_fixes = self._sanitize_dql_output(result.converted_dql)
+        if result.dql:
+            result.dql, sanitize_fixes = self._sanitize_dql_output(result.dql)
             if sanitize_fixes:
-                result.fixes_applied.extend(sanitize_fixes)
+                result.fixes.extend(sanitize_fixes)
 
         # =================================================================
         # PHASE 2: Live DT Grail API validation
         # =================================================================
-        if self._registry and result.converted_dql:
+        if self._registry and result.dql:
             dql_clean = "\n".join(
                 line
-                for line in result.converted_dql.split("\n")
+                for line in result.dql.split("\n")
                 if line.strip() and not line.strip().startswith("//")
             ).strip()
             if dql_clean:
-                result.converted_dql = self._validate_dql_live(result.converted_dql, result)
+                result.dql = self._validate_dql_live(result.dql, result)
 
         return result
 
@@ -750,7 +750,7 @@ class NRQLtoDQLConverter:
 
             if is_valid:
                 if attempt > 0:
-                    result.fixes_applied.append(f"DQL live-validated after {attempt} auto-fix(es)")
+                    result.fixes.append(f"DQL live-validated after {attempt} auto-fix(es)")
                 return current_dql
 
             # Invalid -- try to auto-fix
@@ -759,7 +759,7 @@ class NRQLtoDQLConverter:
                 fixed_dql = self._attempt_dql_fix(current_dql, parsed, error_msg)
 
                 if fixed_dql and fixed_dql != current_dql:
-                    result.fixes_applied.append(
+                    result.fixes.append(
                         f"Live validation fix (attempt {attempt + 1}): "
                         f"{parsed['error_type']} -- {parsed.get('suggestion', error_msg[:80])}"
                     )
@@ -1597,7 +1597,7 @@ class NRQLtoDQLConverter:
                 dql = dql.replace(f'"{guid}"', f'"{resolved_name}"')
 
                 result.warnings.append(f"NR GUID resolved -> {new_filter}")
-                result.fixes_applied.append(f"GUID {guid[:20]}... -> {resolved_name}")
+                result.fixes.append(f"GUID {guid[:20]}... -> {resolved_name}")
             else:
                 result.warnings.append(
                     f"NR GUID detected ({entity_type or 'unknown type'}): {guid[:30]}... "

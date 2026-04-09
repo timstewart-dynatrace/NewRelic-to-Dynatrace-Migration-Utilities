@@ -1,28 +1,30 @@
 # Dynatrace-NewRelic Migration Tools
 
-**Last Updated:** 2026-04-08
+**Last Updated:** 2026-04-09
 
 ## Project Overview
 
-Repository containing tools for migrating New Relic monitoring configurations to Dynatrace. Two components:
-
-| Tool | Location | Purpose |
-|------|----------|---------|
-| **NRQL to DQL Converter** | `nrql-converter/` | Standalone query converter (lightweight) |
-| **Migration Framework** | `newrelic-to-dynatrace-migration/` | Full migration pipeline (export→transform→import) |
-
-The migration framework is the primary active project — see its `.claude/CLAUDE.md` for detailed instructions.
+Repository containing the New Relic to Dynatrace migration framework. All tools are consolidated under `newrelic-to-dynatrace-migration/` — see its `.claude/CLAUDE.md` for detailed instructions.
 
 ## Quick Reference
 
 ```bash
 cd newrelic-to-dynatrace-migration
 
-# Run tests (649 total)
+# Run tests (663 total)
 pytest tests/ -v
 
 # Compile single query
 python migrate.py compile "SELECT count(*) FROM Transaction"
+
+# Interactive REPL
+python migrate.py compile --interactive
+
+# Batch compile from file
+python migrate.py compile --file examples/example_queries.nrql
+
+# Reference table
+python migrate.py reference
 
 # Full migration (dry run)
 python migrate.py migrate --dry-run

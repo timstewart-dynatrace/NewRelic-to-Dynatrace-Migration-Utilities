@@ -8,6 +8,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- CLI: `compile --interactive` — interactive REPL mode for ad-hoc query conversion
+- CLI: `compile --file` / `--output` — batch compile queries from file with optional output file
+- CLI: `reference` subcommand — NRQL→DQL quick reference table with `--mappings` for full mapping tables
+- Field mappings: `memorytotal`, `memorytotalbytes` → `dt.host.memory.total`
+- Example queries file (`examples/example_queries.nrql`)
+- CLI test suite: 14 tests covering interactive, batch, reference, and example query compilation
+
+### Changed
+- Consolidated standalone `nrql-converter/` tool into migration framework CLI
+- Fixed `hostmemorytotal` mapping (was incorrectly mapped to `dt.host.memory.used`, now `dt.host.memory.total`)
+- Standardized transformer interfaces for consistency:
+  - Renamed `TransformResult` → `DashboardTransformResult` (consistent `{Entity}TransformResult` naming)
+  - Renamed `AlertTransformer.transform_policy()` → `transform()` (consistent method name)
+  - `NotificationTransformer.transform_channel()` → `transform()`, now returns `NotificationTransformResult` dataclass instead of raw dict
+  - `DashboardTransformer.transform()` now returns single `DashboardTransformResult` (with `data` as list of dashboards) instead of `List[TransformResult]`
+  - `ConversionResult` fields aligned with `CompileResult`: `converted_dql` → `dql`, `fixes_applied` → `fixes`
+
+### Removed
+- Standalone `nrql-converter/` directory — all functionality now available via `migrate.py compile` and `migrate.py reference`
+
+### Added (prior)
 - Comprehensive test suite: 367 new tests across 8 test files (649 total with compiler tests)
   - `test_utils_validators.py` — config and structure validation tests
   - `test_dql_validator.py` — DQL syntax validation + anti-pattern detection tests

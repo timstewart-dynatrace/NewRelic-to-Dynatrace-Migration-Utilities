@@ -1,5 +1,5 @@
 # Phase 00 — Consolidate nrql-converter into Migration Tool
-Status: PENDING
+Status: DONE
 
 ## Goal
 Absorb all unique features from the standalone `nrql-converter/` tool into the migration framework, then remove the standalone tool to eliminate duplication.
@@ -56,4 +56,9 @@ The migration tool already covers most functionality. This phase absorbs what's 
 - All existing 649 tests still pass
 
 ## Decisions Made This Phase
-(append as you go)
+
+- **Compiler handles all NRQL conversion logic**: LIKE operators, all operators, percentile — verified no gaps, no code to port from standalone tool
+- **Only 1 missing field mapping**: `memorytotalbytes` was the only mapping in the standalone tool not already in METRIC_MAP. Also fixed `hostmemorytotal` bug (was mapped to `dt.host.memory.used` instead of `dt.host.memory.total`)
+- **Standardized transformer interfaces**: All transformers now follow `{Entity}TransformResult` naming, use `transform()` method, return dataclasses (not raw dicts). `ConversionResult` fields aligned with `CompileResult` (`dql`/`fixes` instead of `converted_dql`/`fixes_applied`)
+- **DashboardTransformer.transform() returns single result**: Changed from `List[TransformResult]` to single `DashboardTransformResult` with `data` as list of dashboards. Multi-page handling moved inside the result, consistent with all other transformers
+- **663 tests pass**: 649 original + 14 new CLI tests, all green after refactoring

@@ -8,7 +8,7 @@
 
 import pytest
 
-from transformers.dashboard_transformer import DashboardTransformer, TransformResult
+from transformers.dashboard_transformer import DashboardTransformer, DashboardTransformResult
 from transformers.alert_transformer import (
     AlertTransformer,
     AlertTransformResult,
@@ -35,7 +35,7 @@ def dashboard_transformer():
 
 class TestDashboardTransformResult:
     def test_should_default_warnings_and_errors(self):
-        r = TransformResult(success=True)
+        r = DashboardTransformResult(success=True)
         assert r.warnings == []
         assert r.errors == []
 
@@ -43,16 +43,14 @@ class TestDashboardTransformResult:
 class TestDashboardTransformEmpty:
     def test_should_fail_with_no_pages(self, dashboard_transformer):
         nr = {"name": "Test", "pages": []}
-        results = dashboard_transformer.transform(nr)
-        assert len(results) == 1
-        assert results[0].success is False
-        assert any("no pages" in e for e in results[0].errors)
+        result = dashboard_transformer.transform(nr)
+        assert result.success is False
+        assert any("no pages" in e for e in result.errors)
 
     def test_should_fail_with_missing_pages(self, dashboard_transformer):
         nr = {"name": "Test"}
-        results = dashboard_transformer.transform(nr)
-        assert len(results) == 1
-        assert results[0].success is False
+        result = dashboard_transformer.transform(nr)
+        assert result.success is False
 
 
 class TestDashboardTransformSinglePage:
@@ -67,10 +65,10 @@ class TestDashboardTransformSinglePage:
                 }
             ],
         }
-        results = dashboard_transformer.transform(nr)
-        assert len(results) == 1
-        assert results[0].success is True
-        dt = results[0].data
+        result = dashboard_transformer.transform(nr)
+        assert result.success is True
+        assert len(result.data) == 1
+        dt = result.data[0]
         assert dt["dashboardMetadata"]["name"] == "My Dashboard"
         assert dt["dashboardMetadata"]["shared"] is True
         assert "tiles" in dt
@@ -85,10 +83,11 @@ class TestDashboardTransformMultiPage:
                 {"name": "Details", "widgets": []},
             ],
         }
-        results = dashboard_transformer.transform(nr)
-        assert len(results) == 2
-        assert "Overview" in results[0].data["dashboardMetadata"]["name"]
-        assert "Details" in results[1].data["dashboardMetadata"]["name"]
+        result = dashboard_transformer.transform(nr)
+        assert result.success is True
+        assert len(result.data) == 2
+        assert "Overview" in result.data[0]["dashboardMetadata"]["name"]
+        assert "Details" in result.data[1]["dashboardMetadata"]["name"]
 
 
 class TestDashboardTransformWidgets:
@@ -109,9 +108,9 @@ class TestDashboardTransformWidgets:
                 }
             ],
         }
-        results = dashboard_transformer.transform(nr)
-        assert results[0].success is True
-        tiles = results[0].data["tiles"]
+        result = dashboard_transformer.transform(nr)
+        assert result.success is True
+        tiles = result.data[0]["tiles"]
         assert len(tiles) == 1
         assert tiles[0]["tileType"] == "MARKDOWN"
         assert tiles[0]["markdown"] == "# Hello"
@@ -137,9 +136,9 @@ class TestDashboardTransformWidgets:
                 }
             ],
         }
-        results = dashboard_transformer.transform(nr)
-        assert results[0].success is True
-        tiles = results[0].data["tiles"]
+        result = dashboard_transformer.transform(nr)
+        assert result.success is True
+        tiles = result.data[0]["tiles"]
         assert len(tiles) == 1
         assert tiles[0]["tileType"] == "DATA_EXPLORER"
         assert tiles[0]["queries"][0]["freeText"]  # Has DQL
@@ -165,8 +164,8 @@ class TestDashboardTransformWidgets:
                 }
             ],
         }
-        results = dashboard_transformer.transform(nr)
-        tiles = results[0].data["tiles"]
+        result = dashboard_transformer.transform(nr)
+        tiles = result.data[0]["tiles"]
         assert tiles[0]["tileType"] == "DATA_EXPLORER"
 
 
@@ -240,13 +239,13 @@ class TestAlertTransformResult:
 class TestAlertTransformPolicy:
     def test_should_transform_empty_policy(self, alert_transformer):
         policy = {"name": "Test Policy", "id": "123", "conditions": []}
-        result = alert_transformer.transform_policy(policy)
+        result = alert_transformer.transform(policy)
         assert result.success is True
         assert result.alerting_profile is not None
         assert "[Migrated]" in result.alerting_profile["name"]
         assert result.metric_events == []
 
-    def test_should_transform_policy_with_nrql_condition(self, alert_transformer):
+    def test_should_transform_with_nrql_condition(self, alert_transformer):
         policy = {
             "name": "Test Policy",
             "id": "123",
@@ -268,7 +267,7 @@ class TestAlertTransformPolicy:
                 }
             ],
         }
-        result = alert_transformer.transform_policy(policy)
+        result = alert_transformer.transform(policy)
         assert result.success is True
         assert len(result.metric_events) == 1
         event = result.metric_events[0]
@@ -284,7 +283,7 @@ class TestAlertTransformPolicy:
                 {"name": "APM Cond", "conditionType": "APM"}
             ],
         }
-        result = alert_transformer.transform_policy(policy)
+        result = alert_transformer.transform(policy)
         assert result.success is True
         assert len(result.metric_events) == 1
         assert result.metric_events[0]["enabled"] is False  # Placeholder disabled
@@ -371,10 +370,10 @@ class TestNotificationTransformer:
             "active": True,
             "properties": [{"key": "recipients", "value": "a@b.com,c@d.com"}],
         }
-        result = notif_transformer.transform_channel(channel)
-        assert result["success"] is True
-        assert result["integration_type"] == "email"
-        assert "a@b.com" in result["config"]["recipients"]
+        result = notif_transformer.transform(channel)
+        assert result.success is True
+        assert result.integration_type == "email"
+        assert "a@b.com" in result.config["recipients"]
 
     def test_should_transform_slack_channel(self, notif_transformer):
         channel = {
@@ -385,10 +384,10 @@ class TestNotificationTransformer:
                 {"key": "channel", "value": "#alerts"},
             ],
         }
-        result = notif_transformer.transform_channel(channel)
-        assert result["success"] is True
-        assert result["integration_type"] == "slack"
-        assert result["config"]["channel"] == "#alerts"
+        result = notif_transformer.transform(channel)
+        assert result.success is True
+        assert result.integration_type == "slack"
+        assert result.config["channel"] == "#alerts"
 
     def test_should_transform_pagerduty_channel(self, notif_transformer):
         channel = {
@@ -396,9 +395,9 @@ class TestNotificationTransformer:
             "type": "PAGERDUTY",
             "properties": [{"key": "service_key", "value": "abc123"}],
         }
-        result = notif_transformer.transform_channel(channel)
-        assert result["success"] is True
-        assert result["integration_type"] == "pagerduty"
+        result = notif_transformer.transform(channel)
+        assert result.success is True
+        assert result.integration_type == "pagerduty"
 
     def test_should_transform_webhook_channel(self, notif_transformer):
         channel = {
@@ -406,15 +405,15 @@ class TestNotificationTransformer:
             "type": "WEBHOOK",
             "properties": [{"key": "base_url", "value": "https://example.com/hook"}],
         }
-        result = notif_transformer.transform_channel(channel)
-        assert result["success"] is True
-        assert result["integration_type"] == "webhook"
+        result = notif_transformer.transform(channel)
+        assert result.success is True
+        assert result.integration_type == "webhook"
 
     def test_should_fail_unsupported_type(self, notif_transformer):
         channel = {"name": "Unknown", "type": "UNKNOWN_TYPE", "properties": []}
-        result = notif_transformer.transform_channel(channel)
-        assert result["success"] is False
-        assert len(result["errors"]) > 0
+        result = notif_transformer.transform(channel)
+        assert result.success is False
+        assert len(result.errors) > 0
 
 
 # ═════════════════════════════════════════════════════════════════════════════
