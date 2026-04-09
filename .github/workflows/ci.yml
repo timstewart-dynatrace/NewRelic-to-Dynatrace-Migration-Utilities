@@ -13,10 +13,6 @@ jobs:
       matrix:
         python-version: ["3.9", "3.10", "3.11", "3.12"]
 
-    defaults:
-      run:
-        working-directory: newrelic-to-dynatrace-migration
-
     steps:
       - uses: actions/checkout@v4
 
@@ -38,14 +34,10 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: coverage-report
-          path: newrelic-to-dynatrace-migration/coverage.xml
+          path: coverage.xml
 
   lint:
     runs-on: ubuntu-latest
-
-    defaults:
-      run:
-        working-directory: newrelic-to-dynatrace-migration
 
     steps:
       - uses: actions/checkout@v4

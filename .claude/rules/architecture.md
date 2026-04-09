@@ -3,8 +3,8 @@
 ## Project Structure
 
 ```
-newrelic-to-dynatrace-migration/
-├── migrate.py                         # CLI entry point (click group: migrate, compile, convert)
+Dynatrace-NewRelic/
+├── migrate.py                         # CLI entry point (migrate, compile, convert, reference, batch)
 ├── requirements.txt
 ├── .env.example
 │
