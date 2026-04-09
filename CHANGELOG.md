@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-04-09
+
+### Added (Phase 8 — Export Formats: Monaco & Terraform)
+- Monaco exporter: generates v2 project structure (YAML configs + JSON templates)
+- Terraform exporter: generates HCL files with dynatrace provider resources
+- CLI: `export-monaco` and `export-terraform` subcommands with --input/--output
+- 15 new tests (Monaco + Terraform exporters) — 894 total across 25 files
+
 ## [1.1.0] - 2026-04-09
 
 ### Added (Phase 7 — Validation, Retry & Diff)

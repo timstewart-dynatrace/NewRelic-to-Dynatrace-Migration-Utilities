@@ -1,5 +1,5 @@
 # Phase 08 — Export Formats: Monaco & Terraform
-Status: PENDING
+Status: DONE
 
 ## Goal
 Generate config-as-code output (Monaco YAML, Terraform HCL) from migrated configurations, enabling review-before-apply workflows.

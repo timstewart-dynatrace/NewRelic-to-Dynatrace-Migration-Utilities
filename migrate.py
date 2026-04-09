@@ -1255,6 +1255,62 @@ def cli(ctx):
         click.echo(ctx.get_help())
 
 
+@click.command("export-monaco")
+@click.option("--input", "input_dir", required=True, type=click.Path(exists=True), help="Directory with transformed data")
+@click.option("--output", "output_dir", type=click.Path(), default="./monaco-output", help="Monaco output directory")
+def export_monaco(input_dir: str, output_dir: str):
+    """Export transformed data as Monaco config-as-code project."""
+    from exporters.monaco import MonacoExporter
+
+    input_path = Path(input_dir)
+    # Try to load transformed data
+    for candidate in [input_path / "transformed" / "dynatrace_config.json",
+                      input_path / "preview" / "transformed_preview.json",
+                      input_path / "dynatrace_config.json"]:
+        if candidate.exists():
+            with open(candidate) as f:
+                transformed_data = json.load(f)
+            break
+    else:
+        console.print(f"[red]Could not find transformed data in {input_dir}[/red]")
+        sys.exit(1)
+
+    exporter = MonacoExporter()
+    summary = exporter.export(transformed_data, Path(output_dir))
+
+    console.print(f"\n[green]Monaco project exported to {output_dir}[/green]")
+    for entity_type, count in summary.items():
+        console.print(f"  {entity_type}: {count}")
+
+
+@click.command("export-terraform")
+@click.option("--input", "input_dir", required=True, type=click.Path(exists=True), help="Directory with transformed data")
+@click.option("--output", "output_dir", type=click.Path(), default="./terraform-output", help="Terraform output directory")
+def export_terraform(input_dir: str, output_dir: str):
+    """Export transformed data as Terraform HCL configuration."""
+    from exporters.terraform import TerraformExporter
+
+    input_path = Path(input_dir)
+    # Try to load transformed data
+    for candidate in [input_path / "transformed" / "dynatrace_config.json",
+                      input_path / "preview" / "transformed_preview.json",
+                      input_path / "dynatrace_config.json"]:
+        if candidate.exists():
+            with open(candidate) as f:
+                transformed_data = json.load(f)
+            break
+    else:
+        console.print(f"[red]Could not find transformed data in {input_dir}[/red]")
+        sys.exit(1)
+
+    exporter = TerraformExporter()
+    summary = exporter.export(transformed_data, Path(output_dir))
+
+    console.print(f"\n[green]Terraform config exported to {output_dir}[/green]")
+    for entity_type, count in summary.items():
+        console.print(f"  {entity_type}: {count}")
+
+
 # Register subcommands
 cli.add_command(main, "migrate")
 cli.add_command(compile_nrql, "compile")
@@ -1262,6 +1318,8 @@ cli.add_command(convert_nrql, "convert")
 cli.add_command(reference, "reference")
 cli.add_command(audit_slos, "audit-slos")
 cli.add_command(batch_compile, "batch")
+cli.add_command(export_monaco, "export-monaco")
+cli.add_command(export_terraform, "export-terraform")
 
 
 if __name__ == "__main__":

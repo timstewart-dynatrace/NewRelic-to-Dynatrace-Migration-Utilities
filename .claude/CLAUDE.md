@@ -47,7 +47,7 @@ python migrate.py --version
 | CLI | Click + Rich | Subcommands with progress display |
 | Logging | structlog | Structured logging |
 | HTTP | requests | API clients |
-| Testing | pytest | 879 tests across 21 files |
+| Testing | pytest | 894 tests across 21 files |
 
 ## Architecture
 
@@ -86,7 +86,8 @@ All transformers follow a consistent pattern:
 | `transformers/` | 10 entity transformers + NRQL converter + mapping tables |
 | `validators/` | DQL syntax validator + 19-rule auto-fixer |
 | `registry/` | DTEnvironmentRegistry (live validation) + SLOAuditor |
-| `migration/` | Rollback, checkpointing, incremental state, conversion reports |
+| `migration/` | Rollback, checkpointing, incremental state, conversion reports, retry, diff |
+| `exporters/` | Monaco YAML + Terraform HCL config-as-code exporters |
 | `config/` | Pydantic BaseSettings from .env |
 | `utils/` | Logging, validators, auth utilities |
 | `examples/` | Sample NRQL queries for batch testing |
