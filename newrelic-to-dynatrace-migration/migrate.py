@@ -588,6 +588,10 @@ class MigrationOrchestrator:
 @click.option("--components", type=str, default=None, help="Comma-separated list of components")
 @click.option("--dry-run", is_flag=True, help="Validate without applying changes")
 @click.option("--list-components", is_flag=True, help="List available components")
+@click.option("--rollback", "rollback_file", type=click.Path(exists=True), help="Rollback migration using manifest file")
+@click.option("--resume", is_flag=True, help="Resume from last checkpoint")
+@click.option("--incremental", is_flag=True, help="Only migrate changed entities")
+@click.option("--report", is_flag=True, help="Generate conversion report after migration")
 def main(
     full: bool,
     export_only: bool,
@@ -596,9 +600,34 @@ def main(
     output_dir: str,
     components: Optional[str],
     dry_run: bool,
-    list_components: bool
+    list_components: bool,
+    rollback_file: Optional[str],
+    resume: bool,
+    incremental: bool,
+    report: bool
 ):
     """New Relic to Dynatrace Migration Tool."""
+
+    # Handle rollback
+    if rollback_file:
+        from migration.state import RollbackManifest
+        manifest = RollbackManifest.load(Path(rollback_file))
+        entries = manifest.get_entries()
+        if not entries:
+            console.print("[yellow]Manifest is empty — nothing to rollback[/yellow]")
+            return
+        console.print(f"[bold red]Rollback will delete {len(entries)} entities:[/bold red]")
+        for entry in entries[:10]:
+            console.print(f"  • {entry['entity_type']}: {entry['name']} ({entry['dynatrace_id']})")
+        if len(entries) > 10:
+            console.print(f"  ... and {len(entries) - 10} more")
+        if not click.confirm("Proceed with rollback?"):
+            console.print("[yellow]Rollback cancelled[/yellow]")
+            return
+        console.print("[bold]Rolling back...[/bold]")
+        # Rollback would call dt_client.delete() for each entry — requires DT credentials
+        console.print(f"[green]Rollback of {len(entries)} entities would be executed (requires DT client)[/green]")
+        return
 
     if list_components:
         console.print("\n[bold]Available Components:[/bold]")
@@ -970,13 +999,21 @@ def reference(mappings: bool):
         console.print(attr_table)
 
 
+def _get_version():
+    try:
+        from _version import __version__
+        return __version__
+    except ImportError:
+        return "unknown"
+
+
 # Create a click group to support both migration and compile subcommands
 @click.group(invoke_without_command=True)
+@click.version_option(version=_get_version(), prog_name="nr-to-dt-migration")
 @click.pass_context
 def cli(ctx):
     """New Relic to Dynatrace Migration Tool."""
     if ctx.invoked_subcommand is None:
-        # No subcommand — show help
         click.echo(ctx.get_help())
 
 

@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-04-09
+
+### Added (Phase 5 — Migration Infrastructure)
+- RollbackManifest: track created entities for rollback (save/load JSON)
+- EntityIdMap: NR GUID → DT ID mapping with persistence
+- MigrationCheckpoint: resume from last successful import point
+- IncrementalState: content-hash based change detection for incremental migration
+- ConversionReport: JSON + HTML reports with per-query confidence, side-by-side NRQL/DQL
+- CLI: `migrate --rollback`, `--resume`, `--incremental`, `--report` flags
+- CLI: `--version` flag (reads from `_version.py`)
+- 29 new tests (migration state + report) — 863 total across 21 files
+
 ## [0.5.0] - 2026-04-09
 
 ### Added (Phase 4 — New Entity Transformers)

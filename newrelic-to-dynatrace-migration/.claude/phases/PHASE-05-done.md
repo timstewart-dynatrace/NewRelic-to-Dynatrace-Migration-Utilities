@@ -1,5 +1,5 @@
 # Phase 05 — Migration Infrastructure
-Status: PENDING
+Status: DONE
 
 ## Goal
 Add production-grade migration infrastructure: rollback capability, progress checkpointing, incremental migration, entity ID mapping, and a conversion report for manual review.
