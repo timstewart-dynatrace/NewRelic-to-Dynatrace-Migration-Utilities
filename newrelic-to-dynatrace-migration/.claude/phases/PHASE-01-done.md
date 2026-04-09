@@ -1,5 +1,5 @@
 # Phase 01 — Compiler Enhancements
-Status: PENDING
+Status: DONE
 
 ## Goal
 Close compiler gaps by pulling proven patterns from the sibling repos, expanding NRQL coverage from 282 to 300+ tested patterns.
@@ -28,4 +28,9 @@ Close compiler gaps by pulling proven patterns from the sibling repos, expanding
 - All existing 649 tests still pass
 
 ## Decisions Made This Phase
-(append as you go)
+
+- **7 of 10 tasks were already implemented**: NR shorthands, IS TRUE/FALSE, FACET CASES, SLIDE BY, WITH TIMEZONE, cdfPercentage, eventType — all done in prior work. Only 3 tasks needed new code.
+- **COMPARE WITH append strategy**: For non-metric queries, generate `append [shifted pipeline]` with `_comparison` label field. Metric queries continue using native `shift:` parameter.
+- **Lexer escape handling fix**: Changed lexer to preserve regex backslash sequences (`\w`, `\d`, `\s`, `\S`) in string literals instead of stripping them. Only SQL-style escapes (`\'`, `\\`) are processed. This was necessary for `capture()` regex patterns to reach the DPL converter intact.
+- **Nested filter parsing**: Added special-case in parser for `filter(WHERE ...)` syntax (WHERE as first token). The emitter detects filter-as-arg inside aggregation functions and converts to the corresponding `*If()` function.
+- **292 compiler tests, 673 total**: 10 new regression tests added for the 3 new features.

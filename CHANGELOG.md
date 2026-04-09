@@ -15,6 +15,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Example queries file (`examples/example_queries.nrql`)
 - CLI test suite: 14 tests covering interactive, batch, reference, and example query compilation
 
+### Added (Phase 1 — Compiler Enhancements)
+- COMPARE WITH → `append` subquery for span/event queries (metric queries still use `shift:`)
+- `capture(field, regex)` → `parse(field, "DPL_PATTERN")` using RegexToDPL converter
+- Nested `filter()` in aggregations: `count(*, filter(WHERE ...))` → `countIf(...)`
+- Lexer now preserves regex escape sequences in string literals (`\w`, `\d`, `\s`, `\S`)
+- 10 new compiler regression tests (292 compiler tests, 673 total)
+
 ### Changed
 - Consolidated standalone `nrql-converter/` tool into migration framework CLI
 - Fixed `hostmemorytotal` mapping (was incorrectly mapped to `dt.host.memory.used`, now `dt.host.memory.total`)

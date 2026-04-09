@@ -2039,3 +2039,107 @@ class TestG14AuditFixes:
         )
         assert_valid_dql(result)
         assert "filter:{" in code_lines(result.dql)
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# Phase 1 regression tests
+# ═════════════════════════════════════════════════════════════════════════════
+
+
+class TestCompareWithAppend:
+    """COMPARE WITH on span/event queries should generate append subquery."""
+
+    def test_compare_with_day_over_day(self, compiler):
+        result = compiler.compile(
+            "SELECT count(*) FROM Transaction COMPARE WITH 1 day ago SINCE 1 hour ago"
+        )
+        assert result.success
+        assert "append" in result.dql
+        assert "from:now()-1d" in result.dql
+        assert '_comparison = "current"' in result.dql
+        assert '_comparison = "previous' in result.dql
+
+    def test_compare_with_week_over_week(self, compiler):
+        result = compiler.compile(
+            "SELECT count(*) FROM Transaction COMPARE WITH 1 week ago"
+        )
+        assert result.success
+        assert "append" in result.dql
+        assert "from:now()-7d" in result.dql
+
+    def test_compare_with_facet(self, compiler):
+        result = compiler.compile(
+            "SELECT count(*) FROM Transaction FACET appName COMPARE WITH 1 day ago"
+        )
+        assert result.success
+        assert "append" in result.dql
+        assert "by:" in result.dql
+        # Both current and shifted pipelines should have the facet
+        dql = result.dql
+        assert dql.count("by:") >= 2  # once in current, once in append
+
+    def test_compare_with_metric_still_uses_shift(self, compiler):
+        """Metric queries should still use shift: parameter, not append."""
+        result = compiler.compile(
+            "SELECT average(cpuPercent) FROM SystemSample COMPARE WITH 1 day ago TIMESERIES"
+        )
+        assert result.success
+        assert "shift:-1d" in result.dql
+        assert "append" not in result.dql
+
+
+class TestCaptureFunction:
+    """capture() should convert regex to DQL parse() with DPL pattern."""
+
+    def test_capture_named_groups(self, compiler):
+        result = compiler.compile(
+            r"SELECT capture(message, '(?P<method>\w+)\s+(?P<path>/\S+)') FROM Log"
+        )
+        assert result.success
+        assert "parse(" in result.dql
+        assert "method" in result.dql
+        assert "path" in result.dql
+
+    def test_capture_digit_group(self, compiler):
+        result = compiler.compile(
+            r"SELECT capture(message, '(?P<status>\d+)') FROM Log"
+        )
+        assert result.success
+        assert "parse(" in result.dql
+        assert "status" in result.dql
+
+    def test_capture_preserves_field_mapping(self, compiler):
+        """capture() on 'message' should map to DT 'content' field."""
+        result = compiler.compile(
+            r"SELECT capture(message, '(?P<code>\d+)') FROM Log"
+        )
+        assert result.success
+        assert "content" in result.dql  # message -> content mapping
+
+
+class TestNestedFilterInAggregation:
+    """count(*, filter(WHERE ...)) should convert to countIf(...)."""
+
+    def test_count_with_filter(self, compiler):
+        result = compiler.compile(
+            "SELECT count(*, filter(WHERE error IS TRUE)) FROM Transaction"
+        )
+        assert result.success
+        assert "countIf(" in result.dql
+        assert "error == true" in result.dql
+
+    def test_sum_with_filter(self, compiler):
+        result = compiler.compile(
+            "SELECT sum(duration, filter(WHERE appName = 'api')) FROM Transaction"
+        )
+        assert result.success
+        assert "sumIf(" in result.dql
+        assert "duration" in result.dql
+
+    def test_average_with_filter(self, compiler):
+        result = compiler.compile(
+            "SELECT average(duration, filter(WHERE httpResponseCode >= 500)) FROM Transaction"
+        )
+        assert result.success
+        assert "avgIf(" in result.dql
+        assert "duration" in result.dql

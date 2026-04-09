@@ -143,7 +143,14 @@ class NRQLLexer:
                     self.pos += 1
                     return Token(TokenType.STRING, ''.join(buf), start)
             elif c == '\\' and self.pos + 1 < len(self.src):
-                buf.append(self.src[self.pos + 1])
+                next_c = self.src[self.pos + 1]
+                # Only process SQL-style escapes (\' and \\)
+                # Preserve regex escapes (\w, \d, \s, \S, \b, etc.)
+                if next_c in ("'", '\\'):
+                    buf.append(next_c)
+                else:
+                    buf.append('\\')
+                    buf.append(next_c)
                 self.pos += 2
             else:
                 buf.append(c)
@@ -161,7 +168,12 @@ class NRQLLexer:
                 self.pos += 1  # skip closing "
                 return Token(TokenType.STRING, ''.join(buf), start)
             elif c == '\\' and self.pos + 1 < len(self.src):
-                buf.append(self.src[self.pos + 1])
+                next_c = self.src[self.pos + 1]
+                if next_c in ('"', '\\'):
+                    buf.append(next_c)
+                else:
+                    buf.append('\\')
+                    buf.append(next_c)
                 self.pos += 2
             else:
                 buf.append(c)

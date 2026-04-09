@@ -859,6 +859,13 @@ class NRQLParser:
         if self._check(TokenType.RPAREN):
             return args, None
 
+        # NR's filter(WHERE cond) -- used as nested arg in count(*, filter(WHERE ...))
+        # WHERE appears immediately with no leading expression arg
+        if func_name.lower() == 'filter' and self._check(TokenType.WHERE):
+            self.pos += 1  # skip WHERE
+            where_clause = self._parse_condition()
+            return args, where_clause
+
         # NR's if(condition, trueVal, falseVal) -- first arg is a condition
         if func_name.lower() == 'if':
             cond = self._parse_condition()

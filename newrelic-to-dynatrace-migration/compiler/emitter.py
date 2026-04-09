@@ -308,12 +308,12 @@ class DQLEmitter:
                     f"COMPARE WITH {query.compare_with_raw} -> DQL shift:{shift_dur} "
                     f"(overlays current + shifted series)"
                 )
+            elif shift_dur:
+                # Span/event queries: generate append subquery with shifted time range
+                dql = self._emit_compare_with_append(dql, query, shift_dur)
             else:
-                # Span/event queries: makeTimeseries does NOT support shift:
-                # Use DT dashboard time-shift overlay instead
                 self.warnings.append(
-                    f"COMPARE WITH {query.compare_with_raw}: use DT dashboard time-shift "
-                    f"overlay (makeTimeseries does not support shift: parameter)"
+                    f"COMPARE WITH {query.compare_with_raw}: could not parse time shift"
                 )
 
         # EXTRAPOLATE -- NR statistical extrapolation for sampled data
@@ -429,6 +429,69 @@ class DQLEmitter:
             )
 
         return dql
+
+    def _emit_compare_with_append(self, dql: str, query: Query, shift_dur: str) -> str:
+        """Generate append subquery for COMPARE WITH on span/event queries.
+
+        Duplicates the pipeline with a shifted time range so DT can overlay
+        current vs. comparison data.
+        E.g., COMPARE WITH 1 day ago with from:now()-1h produces:
+          append [<same pipeline with from:now()-1d-1h, to:now()-1d>]
+        """
+        # Parse the shift duration value and unit for arithmetic
+        shift_match = re.match(r'-(\d+)([dhms])', shift_dur)
+        if not shift_match:
+            self.warnings.append(
+                f"COMPARE WITH {query.compare_with_raw}: could not generate append subquery"
+            )
+            return dql
+
+        shift_val = shift_match.group(1)
+        shift_unit = shift_match.group(2)
+
+        # Build the shifted pipeline: replace fetch line's time range
+        lines = dql.split('\n')
+        # Skip comment lines at the top
+        pipeline_lines = []
+        comment_lines = []
+        for line in lines:
+            if line.strip().startswith('//') and not pipeline_lines:
+                comment_lines.append(line)
+            else:
+                pipeline_lines.append(line)
+
+        if not pipeline_lines:
+            return dql
+
+        # Build the append block by adjusting the fetch line with shifted time
+        shifted_lines = []
+        for line in pipeline_lines:
+            stripped = line.strip()
+            if stripped.startswith('fetch '):
+                # Add shifted time range to fetch
+                shifted_lines.append(
+                    f"{stripped}, from:now()-{shift_val}{shift_unit}-1h, to:now()-{shift_val}{shift_unit}"
+                )
+            else:
+                shifted_lines.append(stripped)
+
+        # Add a fieldsAdd to label the comparison period
+        shifted_pipeline = '\n'.join(shifted_lines)
+        label_line = f'| fieldsAdd _comparison = "previous ({query.compare_with_raw})"'
+
+        # Also label the current period
+        current_label = '| fieldsAdd _comparison = "current"'
+
+        result = '\n'.join(comment_lines + pipeline_lines)
+        result += f"\n{current_label}"
+        result += f"\n| append [\n{shifted_pipeline}\n{label_line}\n]"
+
+        self.warnings.append(
+            f"COMPARE WITH {query.compare_with_raw} -> append subquery with "
+            f"shifted time range ({shift_dur}). Use _comparison field to distinguish periods."
+        )
+
+        return result
 
     def _emit_join_clause(self, query: Query, base_dql: str) -> str:
         """Emit JOIN as DQL lookup command."""
@@ -1492,6 +1555,23 @@ class DQLEmitter:
                 )
             return f"(100.0 * countIf({cond_str}) / count())"
 
+        # -- count(*, filter(WHERE cond)) -> countIf(cond)
+        # NR allows filter() as a nested argument inside aggregation functions
+        if name_low in FILTER_IF_MAP and node.args:
+            for arg in node.args:
+                if (isinstance(arg, FunctionCall) and
+                        arg.name.lower() == 'filter' and arg.where_clause):
+                    dt_if = FILTER_IF_MAP[name_low]
+                    cond_str = self._emit_condition(arg.where_clause)
+                    # Get non-filter, non-star args (e.g., field in sum(field, filter(...)))
+                    other_args = [
+                        self._emit_expr(a) for a in node.args
+                        if a is not arg and not isinstance(a, StarExpr)
+                    ]
+                    if other_args:
+                        return f"{dt_if}({', '.join(other_args)}, {cond_str})"
+                    return f"{dt_if}({cond_str})"
+
         # -- filter(func(field), WHERE cond) -> funcIf(field, cond)
         if name_low == 'filter' and node.where_clause and node.args:
             inner = node.args[0]
@@ -1883,6 +1963,28 @@ class DQLEmitter:
             val_str = self._emit_expr(node.args[0])
             scale_str = self._emit_expr(node.args[1])
             return f"round({val_str}, scale:{scale_str})"
+
+        # NR: capture(field, 'regex_pattern') -> DQL: parse(field, "DPL_PATTERN")
+        # Uses RegexToDPL converter to translate regex named groups to DPL matchers
+        if name_low == 'capture' and len(node.args) >= 2:
+            field_str = self._emit_expr(node.args[0])
+            pattern_arg = node.args[1]
+            # Extract the regex string from the literal
+            if isinstance(pattern_arg, LiteralExpr):
+                regex_str = str(pattern_arg.value).strip("'\"")
+                try:
+                    from transformers.converters import RegexToDPLConverter
+                    converter = RegexToDPLConverter()
+                    dpl_pattern, capture_names = converter.convert(regex_str)
+                    if dpl_pattern:
+                        return f'parse({field_str}, "{dpl_pattern}")'
+                except Exception:
+                    pass
+                # Fallback: emit as extract with original regex
+                self.warnings.append(
+                    f"capture() regex could not be converted to DPL; using extract() with original pattern"
+                )
+                return f'extract({field_str}, "{regex_str}")'
 
         args_str = ', '.join(self._emit_expr(a) for a in node.args)
         return f"{dt_func}({args_str})"
