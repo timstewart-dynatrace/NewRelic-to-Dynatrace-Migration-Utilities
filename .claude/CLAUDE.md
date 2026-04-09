@@ -36,7 +36,8 @@ python migrate.py migrate --dry-run
 
 ## Active Development
 
-See `newrelic-to-dynatrace-migration/.claude/phases/` for the 6-phase roadmap:
+See `newrelic-to-dynatrace-migration/.claude/phases/` for the 7-phase roadmap:
+0. Consolidate nrql-converter into Migration Tool (cleanup)
 1. Compiler Enhancements
 2. Test Coverage Completion
 3. Environment Registry & Live Validation
