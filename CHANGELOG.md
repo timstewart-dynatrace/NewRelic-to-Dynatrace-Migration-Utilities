@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-04-09
+
 ### Added
 - CLI: `compile --interactive` — interactive REPL mode for ad-hoc query conversion
 - CLI: `compile --file` / `--output` — batch compile queries from file with optional output file

@@ -11,7 +11,7 @@ Repository containing the New Relic to Dynatrace migration framework. All tools 
 ```bash
 cd newrelic-to-dynatrace-migration
 
-# Run tests (663 total)
+# Run tests (673 total)
 pytest tests/ -v
 
 # Compile single query
@@ -39,8 +39,8 @@ python migrate.py migrate --dry-run
 ## Active Development
 
 See `newrelic-to-dynatrace-migration/.claude/phases/` for the 7-phase roadmap:
-0. Consolidate nrql-converter into Migration Tool (cleanup)
-1. Compiler Enhancements
+0. ~~Consolidate nrql-converter into Migration Tool~~ (done)
+1. ~~Compiler Enhancements~~ (done)
 2. Test Coverage Completion
 3. Environment Registry & Live Validation
 4. New Entity Transformers
