@@ -2,13 +2,13 @@
 
 import os
 import sys
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 
-from clients.newrelic_client import NewRelicClient, NerdGraphResponse
+from clients.newrelic_client import NerdGraphResponse, NewRelicClient
 
 
 @pytest.fixture

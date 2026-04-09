@@ -1,7 +1,7 @@
 """Tests for TagTransformer."""
 
-import sys
 import os
+import sys
 
 import pytest
 

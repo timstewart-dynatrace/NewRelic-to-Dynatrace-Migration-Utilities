@@ -2,8 +2,9 @@
 Tag Transformer - Converts New Relic entity tags to Dynatrace auto-tag rules.
 """
 
-from typing import Any, Dict, List, Optional
 from dataclasses import dataclass
+from typing import Any, Dict, List
+
 import structlog
 
 logger = structlog.get_logger()

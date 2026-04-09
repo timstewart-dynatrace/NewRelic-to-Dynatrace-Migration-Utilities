@@ -272,7 +272,7 @@ class RegexToDPLConverter:
             if ' ' in excluded or '\\s' in excluded:
                 return f'NSPACE{q}'
             if '"' in excluded:
-                return f'DQS'
+                return 'DQS'
             return f'LD{q}'
 
         # Complex character class with dots, dashes etc: keep as LD

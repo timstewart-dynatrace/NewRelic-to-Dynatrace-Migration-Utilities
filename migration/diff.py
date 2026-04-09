@@ -1,6 +1,6 @@
 """Diff/preview — compare transformed entities against live DT environment."""
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
 import structlog

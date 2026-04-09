@@ -1,16 +1,15 @@
 """Tests for migration.state — RollbackManifest, EntityIdMap, MigrationCheckpoint, IncrementalState."""
 
 import os
-import sys
-import json
-import tempfile
 import shutil
+import sys
+import tempfile
 from pathlib import Path
 
 import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
-from migration.state import RollbackManifest, EntityIdMap, MigrationCheckpoint, IncrementalState
+from migration.state import EntityIdMap, IncrementalState, MigrationCheckpoint, RollbackManifest
 
 
 class TestRollbackManifest:

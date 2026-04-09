@@ -2,10 +2,10 @@
 Configuration management for the New Relic to Dynatrace Migration Tool.
 """
 
-import os
-from typing import Optional, List
-from pydantic_settings import BaseSettings
+from typing import List, Optional
+
 from pydantic import Field, field_validator
+from pydantic_settings import BaseSettings
 
 
 class NewRelicConfig(BaseSettings):

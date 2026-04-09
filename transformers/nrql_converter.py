@@ -22,6 +22,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from compiler import NRQLCompiler
 from validators import DQLSyntaxValidator
+
 from .nrql_mapping_rules import (
     AGG_MAP,
     ATTR_MAP,
@@ -2737,7 +2738,8 @@ class NRQLtoDQLConverter:
                     for arg in args_str.split(","):
                         arg = arg.strip()
                         if (arg.startswith('"') and arg.endswith('"')) or (arg.startswith("'") and arg.endswith("'")):
-                            mapped_args.append(f'"{arg.strip("\"\'")}"')
+                            stripped = arg.strip("\"'")
+                            mapped_args.append(f'"{stripped}"')
                         else:
                             mapped_args.append(self._map_attribute(arg))
                     fields_add_exprs.append(f'{alias} = concat({", ".join(mapped_args)})')
@@ -3699,7 +3701,7 @@ class NRQLtoDQLConverter:
                     )
 
             result = re.sub(
-                rf"entity\.guid\s*=+\s*['\"]" + re.escape(guid) + r"['\"]",
+                r"entity\.guid\s*=+\s*['\"]" + re.escape(guid) + r"['\"]",
                 replacement,
                 result,
                 flags=re.IGNORECASE,
@@ -3740,7 +3742,7 @@ class NRQLtoDQLConverter:
                     self._current_warnings.append("entityGuid filter detected - replace with dt.entity filter")
 
             result = re.sub(
-                rf"entityGuid\s*=+\s*['\"]" + re.escape(guid) + r"['\"]",
+                r"entityGuid\s*=+\s*['\"]" + re.escape(guid) + r"['\"]",
                 replacement,
                 result,
                 flags=re.IGNORECASE,

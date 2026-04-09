@@ -2,18 +2,14 @@
 Alert Transformer - Converts New Relic alerts to Dynatrace format.
 """
 
-import re
-from typing import Any, Dict, List, Optional
 from dataclasses import dataclass
+from typing import Any, Dict, List, Optional
+
 import structlog
 
 from .mapping_rules import (
-    EntityMapper,
-    ALERT_PRIORITY_MAP,
     OPERATOR_MAP,
-    THRESHOLD_OCCURRENCES_MAP,
-    AGGREGATION_MAP,
-    FILL_OPTION_MAP,
+    EntityMapper,
 )
 
 logger = structlog.get_logger()

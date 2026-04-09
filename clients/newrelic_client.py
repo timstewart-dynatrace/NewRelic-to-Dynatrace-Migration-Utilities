@@ -5,15 +5,14 @@ Provides methods to export all configuration entities from New Relic
 using the NerdGraph GraphQL API.
 """
 
-import json
 import time
-from typing import Any, Dict, List, Optional, Generator
 from dataclasses import dataclass
+from typing import Any, Dict, Generator, List, Optional
+
 import requests
+import structlog
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
-
-import structlog
 
 logger = structlog.get_logger()
 

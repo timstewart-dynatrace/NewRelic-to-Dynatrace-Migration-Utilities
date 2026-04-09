@@ -7,13 +7,13 @@ using the Settings API v2 and Configuration API.
 
 import json
 import time
-from typing import Any, Dict, List, Optional, Union
-from dataclasses import dataclass, field
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional
+
 import requests
+import structlog
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
-
-import structlog
 
 logger = structlog.get_logger()
 

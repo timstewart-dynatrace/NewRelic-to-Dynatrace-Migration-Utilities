@@ -1,9 +1,7 @@
 """Tests for transformers/nrql_mapping_rules.py — NRQL-to-DQL mapping tables."""
 
-import pytest
 
 from transformers.nrql_mapping_rules import AGG_MAP, ATTR_MAP, EVENT_TYPE_MAP
-
 
 # ─── EVENT_TYPE_MAP ──────────────────────────────────────────────────────────
 

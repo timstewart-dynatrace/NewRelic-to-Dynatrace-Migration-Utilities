@@ -9,11 +9,7 @@ Import target is ``nrql_migrator.compiler``; a fallback to the monolith
 ``nrql_compiler`` is wired in ``conftest.py``.
 """
 
-import re
-import sys
-from pathlib import Path
 
-import pytest
 
 # Re-use helpers from conftest
 from tests.conftest import assert_valid_dql, code_lines

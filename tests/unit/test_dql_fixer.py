@@ -4,7 +4,6 @@ import pytest
 
 from validators.dql_fixer import DQLValidator, ms_to_dql_duration
 
-
 # ─── ms_to_dql_duration ─────────────────────────────────────────────────────
 
 

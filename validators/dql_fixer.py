@@ -610,7 +610,7 @@ class DQLValidator:
         def fix_single_equals(match):
             before = match.group(1)
             after = match.group(2)
-            self.fixes.append(f"Changed '=' to '==' for equality comparison")
+            self.fixes.append("Changed '=' to '==' for equality comparison")
             return f"{before}=={after}"
 
         # Don't convert = to == in fieldsAdd statements (those are assignments)
@@ -683,7 +683,7 @@ class DQLValidator:
                 dql,
                 flags=re.IGNORECASE
             )
-            self.fixes.append(f"Changed 'IS NOT NULL' to 'isNotNull()'")
+            self.fixes.append("Changed 'IS NOT NULL' to 'isNotNull()'")
 
         # IS NULL -> isNull(field)
         match = re.search(r'(`[^`]+`|[\w.-]+)\s+IS\s+NULL\b', dql, re.IGNORECASE)
@@ -695,7 +695,7 @@ class DQLValidator:
                 dql,
                 flags=re.IGNORECASE
             )
-            self.fixes.append(f"Changed 'IS NULL' to 'isNull()'")
+            self.fixes.append("Changed 'IS NULL' to 'isNull()'")
 
         return dql
 

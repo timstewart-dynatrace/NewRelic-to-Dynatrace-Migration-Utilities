@@ -2,13 +2,11 @@
 
 import os
 import sys
-from unittest.mock import patch, MagicMock
-
-import pytest
+from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 
-from utils.auth import get_auth_header, nrql_comment, ms_to_dql_duration, get_dt_oauth_token
+from utils.auth import get_auth_header, get_dt_oauth_token, ms_to_dql_duration, nrql_comment
 
 
 class TestGetAuthHeader:

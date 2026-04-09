@@ -2,8 +2,9 @@
 Workload Transformer - Converts New Relic Workloads to Dynatrace Management Zones.
 """
 
-from typing import Any, Dict, List, Optional
 from dataclasses import dataclass
+from typing import Any, Dict, List, Optional
+
 import structlog
 
 logger = structlog.get_logger()

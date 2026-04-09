@@ -1,8 +1,8 @@
 """Logging configuration for the migration tool."""
 
-import sys
-import structlog
 from typing import Optional
+
+import structlog
 
 
 def setup_logging(level: str = "INFO") -> None:

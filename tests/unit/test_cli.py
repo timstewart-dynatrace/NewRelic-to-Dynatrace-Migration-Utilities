@@ -1,13 +1,14 @@
 """Tests for CLI commands: compile (interactive, file, output) and reference."""
 
 import os
+
+# Add project root to path so migrate.py imports work
+import sys
 import tempfile
 
 import pytest
 from click.testing import CliRunner
 
-# Add project root to path so migrate.py imports work
-import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 
 from migrate import cli

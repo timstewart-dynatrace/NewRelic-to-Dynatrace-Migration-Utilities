@@ -8,20 +8,19 @@
 
 import pytest
 
-from transformers.dashboard_transformer import DashboardTransformer, DashboardTransformResult
 from transformers.alert_transformer import (
     AlertTransformer,
     AlertTransformResult,
     NotificationTransformer,
 )
+from transformers.dashboard_transformer import DashboardTransformer, DashboardTransformResult
+from transformers.slo_transformer import SLOTransformer, SLOTransformResult
 from transformers.synthetic_transformer import (
+    SyntheticScriptConverter,
     SyntheticTransformer,
     SyntheticTransformResult,
-    SyntheticScriptConverter,
 )
-from transformers.slo_transformer import SLOTransformer, SLOTransformResult
 from transformers.workload_transformer import WorkloadTransformer, WorkloadTransformResult
-
 
 # ═════════════════════════════════════════════════════════════════════════════
 # DashboardTransformer

@@ -6,15 +6,15 @@ Handles errors gracefully and provides diagnostic info.
 """
 
 from __future__ import annotations
+
 import re
 from dataclasses import dataclass, field
-from typing import List, Optional, Tuple, Dict
+from typing import Dict, List, Optional, Tuple
 
-from .tokens import TokenType
-from .lexer import LexError, NRQLLexer
 from .ast_nodes import Query
-from .parser import ParseError, NRQLParser
 from .emitter import DQLEmitter
+from .lexer import LexError, NRQLLexer
+from .parser import NRQLParser, ParseError
 
 
 @dataclass

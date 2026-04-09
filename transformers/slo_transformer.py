@@ -2,8 +2,9 @@
 SLO Transformer - Converts New Relic SLOs to Dynatrace format.
 """
 
-from typing import Any, Dict, List, Optional
 from dataclasses import dataclass
+from typing import Any, Dict, List, Optional
+
 import structlog
 
 from .mapping_rules import SLO_TIME_UNIT_MAP
@@ -122,7 +123,7 @@ class SLOTransformer:
 
         dt_slo = {
             "name": f"[Migrated] {name}",
-            "description": description or f"Migrated from New Relic",
+            "description": description or "Migrated from New Relic",
             "metricName": self._sanitize_metric_name(name),
             "metricExpression": metric_expression,
             "evaluationType": "AGGREGATE",

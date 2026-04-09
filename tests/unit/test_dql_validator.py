@@ -2,7 +2,7 @@
 
 import pytest
 
-from validators.dql_validator import DQLSyntaxValidator, DQLValidationResult
+from validators.dql_validator import DQLSyntaxValidator
 
 
 @pytest.fixture

@@ -5,15 +5,32 @@ Walks the NRQL AST and emits valid DQL.
 """
 
 from __future__ import annotations
+
 import re
-from typing import List, Optional, Tuple, Dict
+from typing import Dict, List, Optional, Tuple
 
 from .ast_nodes import (
-    ASTNode, StarExpr, LiteralExpr, FieldRef, FunctionCall, BinaryOp,
-    UnaryMinus, TimeInterval, Condition, ComparisonCond, LogicalCond,
-    NotCond, IsNullCond, InListCond, InSubqueryCond, LikeCond, RLikeCond,
-    SelectItem, FacetItem, TimeseriesClause, LimitClause, OrderByClause,
-    JoinClause, Query,
+    ASTNode,
+    BinaryOp,
+    ComparisonCond,
+    Condition,
+    FacetItem,
+    FieldRef,
+    FunctionCall,
+    InListCond,
+    InSubqueryCond,
+    IsNullCond,
+    LikeCond,
+    LiteralExpr,
+    LogicalCond,
+    NotCond,
+    Query,
+    RLikeCond,
+    SelectItem,
+    StarExpr,
+    TimeInterval,
+    TimeseriesClause,
+    UnaryMinus,
 )
 from .parser import AGG_FUNCTIONS
 
@@ -356,7 +373,7 @@ class DQLEmitter:
                 if slide_dql:
                     # Replace interval: in existing DQL with slide interval
                     # (the window interval was already emitted, we need the slide interval instead)
-                    if f'interval: ' in dql:
+                    if 'interval: ' in dql:
                         dql = re.sub(r'interval: \S+', f'interval: {slide_dql}', dql)
                     elif 'makeTimeseries' in dql:
                         # No interval was set (AUTO/MAX) -- add the slide interval
@@ -1807,7 +1824,7 @@ class DQLEmitter:
                         f"DQL delta() or rate() over makeTimeseries interval"
                     )
                     return f"delta({field_str})"
-                self.warnings.append(f"derivative() -> DQL delta() function")
+                self.warnings.append("derivative() -> DQL delta() function")
                 return f"delta({field_str})"
             return "delta(duration)"
 
@@ -1982,7 +1999,7 @@ class DQLEmitter:
                     pass
                 # Fallback: emit as extract with original regex
                 self.warnings.append(
-                    f"capture() regex could not be converted to DPL; using extract() with original pattern"
+                    "capture() regex could not be converted to DPL; using extract() with original pattern"
                 )
                 return f'extract({field_str}, "{regex_str}")'
 
@@ -2029,7 +2046,7 @@ class DQLEmitter:
                                     return f'startsWith({field_expr}, "{prefix}") and endsWith({field_expr}, "{value}")'
 
                     # Fallback: use contains for the value part
-                    self.warnings.append(f"aparse() converted to contains() -- verify match logic")
+                    self.warnings.append("aparse() converted to contains() -- verify match logic")
                     return f'contains({field_expr}, "{value}")'
 
             left = self._emit_expr(cond.left)
