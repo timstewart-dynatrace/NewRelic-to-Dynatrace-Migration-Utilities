@@ -148,7 +148,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - Updated root README.md project structure to reflect current codebase (added compiler/, validators/, tests/, and new transformer files)
-- Updated newrelic-to-dynatrace-migration/README.md project structure to match actual directory layout
+- Updated README.md project structure to match actual directory layout
 - Corrected Known Limitations to accurately describe AST compiler capabilities (282 tested patterns)
 
 ## [0.1.0] - 2026-04-08

@@ -5,7 +5,7 @@
 ```
 Dynatrace-NewRelic/
 ├── migrate.py                         # CLI entry point (migrate, compile, convert, reference, batch, audit-slos)
-├── _version.py                        # Version (1.0.0)
+├── _version.py                        # Version (1.2.0)
 ├── pyproject.toml                     # Project config, pip install, pytest
 ├── requirements.txt                   # Python dependencies
 ├── .env.example                       # Environment template
@@ -47,7 +47,13 @@ Dynatrace-NewRelic/
 │
 ├── migration/                         # Migration infrastructure
 │   ├── state.py                      # RollbackManifest, EntityIdMap, Checkpoint, IncrementalState
-│   └── report.py                     # ConversionReport (JSON + HTML)
+│   ├── report.py                     # ConversionReport (JSON + HTML)
+│   ├── retry.py                      # FailedEntities (save/load/filter for partial retry)
+│   └── diff.py                       # DiffReport (compare transformed vs live DT)
+│
+├── exporters/                         # Config-as-code exporters
+│   ├── monaco.py                     # Monaco v2 YAML project structure
+│   └── terraform.py                  # Terraform HCL with dynatrace provider
 │
 ├── config/
 │   └── settings.py                   # Pydantic BaseSettings (NR + DT + Migration config)
@@ -60,7 +66,7 @@ Dynatrace-NewRelic/
 ├── examples/
 │   └── example_queries.nrql          # Sample NRQL queries for batch testing
 │
-└── tests/                            # 869 tests across 21 files
+└── tests/                            # 894 tests across 25 files
     ├── conftest.py
     └── unit/
         ├── test_compiler.py          # 292 compiler tests (25+ classes)
@@ -83,7 +89,11 @@ Dynatrace-NewRelic/
         ├── test_registry.py           # 19 registry tests
         ├── test_slo_auditor.py        # 14 SLO auditor tests
         ├── test_migration_state.py    # 21 state management tests
-        └── test_report.py             # 8 report tests
+        ├── test_report.py             # 8 report tests
+        ├── test_retry.py              # 5 retry tests
+        ├── test_diff.py               # 5 diff tests
+        ├── test_monaco_exporter.py    # 8 Monaco exporter tests
+        └── test_terraform_exporter.py # 7 Terraform exporter tests
 ```
 
 ## Data Flow

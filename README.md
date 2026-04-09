@@ -9,7 +9,7 @@ Utilities for migrating from New Relic to Dynatrace.
 
 ## New Relic to Dynatrace Migration Framework
 
-A universal, comprehensive migration framework for converting New Relic monitoring configurations to Dynatrace. Includes a built-in NRQL-to-DQL compiler with 292 tested patterns and 869 tests.
+A universal, comprehensive migration framework for converting New Relic monitoring configurations to Dynatrace. Includes a built-in NRQL-to-DQL compiler with 292 tested patterns and 894 tests.
 
 ### Architecture
 
@@ -62,6 +62,14 @@ python migrate.py migrate --full     # Execute migration
 | `python migrate.py convert "SELECT ..."`           | Compile with post-processing and auto-fixes      |
 | `python migrate.py reference`                      | Show NRQL→DQL quick reference table              |
 | `python migrate.py reference --mappings`           | Show full mapping tables                         |
+| `python migrate.py batch --file queries.csv`       | Batch compile from CSV/Excel file                |
+| `python migrate.py audit-slos`                     | Audit SLOs for metric validity                   |
+| `python migrate.py export-monaco --input ./output` | Export as Monaco config-as-code (YAML)           |
+| `python migrate.py export-terraform --input ./output` | Export as Terraform HCL                       |
+| `python migrate.py migrate --diff`                 | Compare against live DT environment              |
+| `python migrate.py migrate --retry failed.json`    | Retry previously failed entities                 |
+| `python migrate.py migrate --report`               | Generate conversion quality report               |
+| `python migrate.py --version`                      | Show version                                     |
 
 ### Entity Mapping
 
@@ -89,11 +97,11 @@ python migrate.py migrate --full     # Execute migration
 
 ```
 Dynatrace-NewRelic/
-├── migrate.py                     # CLI entry point (migrate, compile, convert, reference, batch)
+├── migrate.py                     # CLI entry point (migrate, compile, convert, reference, batch, export)
 ├── pyproject.toml                 # Project config + pip install
 ├── requirements.txt               # Python dependencies
 ├── .env.example                   # Environment template
-├── _version.py                    # Version (1.0.0)
+├── _version.py                    # Version (1.2.0)
 │
 ├── compiler/                      # NRQL-to-DQL AST compiler (292 tested patterns)
 ├── clients/                       # NR NerdGraph + DT API clients
@@ -101,12 +109,13 @@ Dynatrace-NewRelic/
 ├── transformers/                  # 10 entity transformers + NRQL converter
 ├── validators/                    # DQL syntax validator + auto-fixer
 ├── registry/                      # DTEnvironmentRegistry + SLOAuditor
-├── migration/                     # Rollback, checkpointing, reports
+├── migration/                     # Rollback, checkpoint, retry, diff, reports
+├── exporters/                     # Monaco YAML + Terraform HCL exporters
 ├── utils/                         # Logging, auth, validators
 ├── examples/                      # Sample NRQL queries
-├── tests/                         # 869 tests across 21 files
+├── tests/                         # 894 tests across 25 files
 │
-├── docs/                          # SVG diagrams
+├── docs/                          # SVG diagrams + migration research
 ├── .github/workflows/ci.yml       # CI pipeline
 └── CHANGELOG.md
 ```

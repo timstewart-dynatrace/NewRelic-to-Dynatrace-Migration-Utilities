@@ -4,16 +4,16 @@
 
 ## Project Summary
 
-Universal migration tool for converting New Relic monitoring configurations to Dynatrace. Migrates dashboards (with a real NRQL-to-DQL compiler), alerts, synthetic monitors, SLOs, and workloads. Three-phase pipeline: Export (NR NerdGraph) -> Transform -> Import (DT APIs).
+Universal migration tool for converting New Relic monitoring configurations to Dynatrace. Migrates dashboards (with a real NRQL-to-DQL compiler), alerts, synthetic monitors, SLOs, and workloads. Three-phase pipeline: Export (NR NerdGraph) -> Transform -> Import (DT APIs). Supports config-as-code export (Monaco, Terraform).
 
 **Last Updated:** 2026-04-09
-**Version:** 1.0.0
-**Phases Completed:** 0-6 (all complete) — v1.0.0
+**Version:** 1.2.0
+**Phases Completed:** 0-8 (all complete)
 
 ## Quick Reference
 
 ```bash
-# Run tests (869 total)
+# Run tests (894 total across 25 files)
 pytest tests/ -v
 
 # Compile single query
@@ -31,8 +31,18 @@ python migrate.py batch --file queries.csv --output results.csv
 # Reference table
 python migrate.py reference
 
-# Full migration (dry run)
-python migrate.py migrate --dry-run
+# Full migration
+python migrate.py migrate --dry-run          # Preview what would be created
+python migrate.py migrate --full             # Execute migration
+python migrate.py migrate --diff             # Compare against live DT
+python migrate.py migrate --retry failed.json # Retry failed entities
+
+# Config-as-code export
+python migrate.py export-monaco --input ./output --output ./monaco-out
+python migrate.py export-terraform --input ./output --output ./tf-out
+
+# SLO audit
+python migrate.py audit-slos
 
 # Version
 python migrate.py --version
@@ -47,14 +57,15 @@ python migrate.py --version
 | CLI | Click + Rich | Subcommands with progress display |
 | Logging | structlog | Structured logging |
 | HTTP | requests | API clients |
-| Testing | pytest | 894 tests across 21 files |
+| Testing | pytest | 894 tests across 25 files |
 
 ## Architecture
 
 ```
 EXPORT (NR NerdGraph)  ->  TRANSFORM  ->  IMPORT (DT APIs)
+                                      ->  EXPORT (Monaco / Terraform)
 
-Transformers:                          Targets:
+Transformers (10):                     Targets:
   DashboardTransformer (AST compiler)    Dashboards (Documents API)
   AlertTransformer                       Alerting Profiles + Metric Events
   NotificationTransformer                Problem Notifications
@@ -81,17 +92,17 @@ All transformers follow a consistent pattern:
 
 | Path | Purpose |
 |------|---------|
-| `compiler/` | NRQL-to-DQL AST compiler (6 files: tokens, lexer, ast_nodes, parser, emitter, compiler) |
-| `clients/` | NR NerdGraph + DT API clients with retry/backoff |
+| `compiler/` | NRQL-to-DQL AST compiler (292 tested patterns) |
+| `clients/` | NR NerdGraph + DT API clients (Config v1 + Documents v2 + Settings v2) |
 | `transformers/` | 10 entity transformers + NRQL converter + mapping tables |
 | `validators/` | DQL syntax validator + 19-rule auto-fixer |
 | `registry/` | DTEnvironmentRegistry (live validation) + SLOAuditor |
-| `migration/` | Rollback, checkpointing, incremental state, conversion reports, retry, diff |
+| `migration/` | Rollback, checkpoint, incremental, reports, retry, diff |
 | `exporters/` | Monaco YAML + Terraform HCL config-as-code exporters |
 | `config/` | Pydantic BaseSettings from .env |
-| `utils/` | Logging, validators, auth utilities |
+| `utils/` | Logging, auth (OAuth), validators |
 | `examples/` | Sample NRQL queries for batch testing |
-| `tests/` | 869 pytest tests across 21 files |
+| `tests/` | 894 pytest tests across 25 files |
 
 ## Rules
 

@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-**v1.0.0** — Universal migration framework for converting New Relic monitoring configurations to Dynatrace. AST-based NRQL-to-DQL compiler with 292 tested patterns and 869 total tests.
+**v1.2.0** — Universal migration framework for converting New Relic monitoring configurations to Dynatrace. AST-based NRQL-to-DQL compiler with 292 tested patterns and 894 total tests.
 
 ## Architecture
 
@@ -19,7 +19,8 @@ NRQL Compiler: NRQL string → Lexer → Parser → AST → DQLEmitter → DQL s
 - `registry/` — DTEnvironmentRegistry for live validation + SLOAuditor
 - `migration/` — Rollback, checkpointing, incremental state, conversion reports
 - `clients/` — NR NerdGraph + DT API clients (Config v1 + Documents v2 + Settings v2)
-- `migrate.py` — Click CLI (migrate, compile, convert, reference, batch, audit-slos)
+- `migrate.py` — Click CLI (migrate, compile, convert, reference, batch, audit-slos, export-monaco, export-terraform)
+- `exporters/` — Monaco YAML + Terraform HCL config-as-code exporters
 
 ## Transformer Pattern
 
@@ -52,13 +53,17 @@ python migrate.py audit-slos                                   # SLO metric audi
 python migrate.py migrate --dry-run                            # Validate
 python migrate.py migrate --full                               # Execute
 python migrate.py migrate --list-components                    # Show components
+python migrate.py migrate --diff                               # Compare vs live DT
+python migrate.py migrate --retry failed.json                  # Retry failures
+python migrate.py export-monaco --input ./output               # Monaco export
+python migrate.py export-terraform --input ./output            # Terraform export
 python migrate.py --version                                    # Show version
 ```
 
 ## Testing
 
 ```bash
-pytest tests/ -v                    # All 869 tests
+pytest tests/ -v                    # All 894 tests
 pytest tests/unit/test_compiler.py  # 292 compiler tests
 pytest -x --tb=short               # Stop on first failure
 ```
