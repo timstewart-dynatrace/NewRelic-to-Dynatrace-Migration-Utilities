@@ -140,6 +140,18 @@ class MigrationOrchestrator:
         else:
             console.print("\n[yellow]Phase 3: Skipped (dry run mode)[/yellow]")
 
+            # Dry-run preview
+            self._show_preview(transformed_data)
+
+            # Save preview JSON
+            preview_dir = self.output_dir / "preview"
+            preview_dir.mkdir(exist_ok=True)
+            preview_file = preview_dir / "transformed_preview.json"
+            with open(preview_file, "w") as f:
+                json.dump({k: v for k, v in transformed_data.items()
+                          if k not in ("warnings", "errors")}, f, indent=2, default=str)
+            console.print(f"\n[dim]Preview saved to {preview_file}[/dim]")
+
         # Generate report
         results["end_time"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
         self._generate_report(results)
@@ -527,6 +539,43 @@ class MigrationOrchestrator:
 
         return import_results
 
+    def _show_preview(self, transformed_data: Dict[str, Any]):
+        """Show a summary of what would be created in dry-run mode."""
+        preview_table = Table(title="Dry-Run Preview — What Would Be Created")
+        preview_table.add_column("Entity Type", style="cyan")
+        preview_table.add_column("Count", justify="right", style="green")
+        preview_table.add_column("Names (first 5)", style="white")
+
+        type_keys = [
+            ("Dashboards", "dashboards", "dashboardMetadata.name"),
+            ("Alerting Profiles", "alerting_profiles", "name"),
+            ("Metric Events", "metric_events", "summary"),
+            ("HTTP Monitors", "http_monitors", "name"),
+            ("Browser Monitors", "browser_monitors", "name"),
+            ("SLOs", "slos", "name"),
+            ("Management Zones", "management_zones", "name"),
+        ]
+
+        for label, key, name_path in type_keys:
+            items = transformed_data.get(key, [])
+            if not items:
+                continue
+            # Extract names
+            names = []
+            for item in items[:5]:
+                if "." in name_path:
+                    parts = name_path.split(".")
+                    val = item
+                    for p in parts:
+                        val = val.get(p, {}) if isinstance(val, dict) else ""
+                    names.append(str(val) if val else "?")
+                else:
+                    names.append(item.get(name_path, "?"))
+            suffix = f" (+{len(items) - 5} more)" if len(items) > 5 else ""
+            preview_table.add_row(label, str(len(items)), ", ".join(names) + suffix)
+
+        console.print(preview_table)
+
     def _generate_report(self, results: Dict[str, Any]):
         """Generate a migration report."""
         report_file = self.output_dir / "reports" / f"migration_report_{int(time.time())}.json"
@@ -592,6 +641,8 @@ class MigrationOrchestrator:
 @click.option("--resume", is_flag=True, help="Resume from last checkpoint")
 @click.option("--incremental", is_flag=True, help="Only migrate changed entities")
 @click.option("--report", is_flag=True, help="Generate conversion report after migration")
+@click.option("--retry", "retry_file", type=click.Path(exists=True), help="Retry failed entities from previous run")
+@click.option("--diff", "show_diff", is_flag=True, help="Compare transformed entities against live DT environment")
 def main(
     full: bool,
     export_only: bool,
@@ -604,7 +655,9 @@ def main(
     rollback_file: Optional[str],
     resume: bool,
     incremental: bool,
-    report: bool
+    report: bool,
+    retry_file: Optional[str],
+    show_diff: bool
 ):
     """New Relic to Dynatrace Migration Tool."""
 
@@ -627,6 +680,19 @@ def main(
         console.print("[bold]Rolling back...[/bold]")
         # Rollback would call dt_client.delete() for each entry — requires DT credentials
         console.print(f"[green]Rollback of {len(entries)} entities would be executed (requires DT client)[/green]")
+        return
+
+    # Handle retry of failed entities
+    if retry_file:
+        from migration.retry import FailedEntities
+        failed = FailedEntities.load(Path(retry_file))
+        if failed.is_empty():
+            console.print("[yellow]No failed entities to retry[/yellow]")
+            return
+        console.print(f"[bold]Retrying {len(failed.entries)} failed entities...[/bold]")
+        for entry in failed.entries:
+            console.print(f"  • {entry['entity_type']}: {entry['name']}")
+        console.print("[yellow]Retry requires re-running with transformed data and DT credentials[/yellow]")
         return
 
     if list_components:
@@ -713,6 +779,36 @@ def main(
     # Run migration
     if full or (not export_only and not import_only):
         results = orchestrator.run_full_migration(component_list)
+
+        # Save failed entities for retry
+        from migration.retry import FailedEntities
+        failed = FailedEntities()
+        for entry in results.get("import_results", {}).get("failed", []):
+            failed.add(entry.get("type", ""), entry.get("name", ""), entry.get("error", ""))
+        if not failed.is_empty():
+            failed_file = output_path / "failed-entities.json"
+            failed.save(failed_file)
+            console.print(f"[yellow]{len(failed.entries)} failed entities saved to {failed_file}[/yellow]")
+            console.print("[dim]Retry with: python migrate.py migrate --retry failed-entities.json[/dim]")
+
+        # Diff against live environment
+        if show_diff:
+            registry = _create_registry()
+            if registry:
+                from migration.diff import DiffReport
+                diff = DiffReport.generate_diff(results.get("transformed_data", {}), registry)
+                diff_summary = diff.summary()
+                diff_table = Table(title="Diff: Transformed vs Live Environment")
+                diff_table.add_column("Entity", style="white")
+                diff_table.add_column("Action", style="cyan")
+                diff_table.add_column("Reason", style="dim")
+                for entry in diff.entries:
+                    action_style = {"CREATE": "green", "UPDATE": "yellow", "CONFLICT": "red"}.get(entry.action, "white")
+                    diff_table.add_row(f"{entry.entity_type}: {entry.name}", f"[{action_style}]{entry.action}[/{action_style}]", entry.reason)
+                console.print(diff_table)
+                console.print(f"\n[bold]Diff: {diff_summary['creates']} create, {diff_summary['updates']} update, {diff_summary['conflicts']} conflict[/bold]")
+            else:
+                console.print("[yellow]--diff requires DT credentials for live environment comparison[/yellow]")
 
         # Save rollback manifest
         manifest_file = output_path / "rollback-manifest.json"

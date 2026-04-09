@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-04-09
+
+### Added (Phase 7 — Validation, Retry & Diff)
+- Dry-run preview: summary table of what would be created + preview JSON export
+- Partial retry: save failed entities to JSON, `--retry` flag to re-import
+- Diff/preview: `--diff` flag compares transformed entities against live DT (CREATE/UPDATE/CONFLICT)
+- FailedEntities class for tracking and reloading import failures
+- DiffReport class with registry-based comparison (dashboards, management zones)
+- 10 new tests (retry, diff) — 879 total across 23 files
+
 ## [1.0.0] - 2026-04-09
 
 ### Added (Phase 6 — API Modernization & CI/CD)

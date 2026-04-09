@@ -47,7 +47,7 @@ python migrate.py --version
 | CLI | Click + Rich | Subcommands with progress display |
 | Logging | structlog | Structured logging |
 | HTTP | requests | API clients |
-| Testing | pytest | 869 tests across 21 files |
+| Testing | pytest | 879 tests across 21 files |
 
 ## Architecture
 
