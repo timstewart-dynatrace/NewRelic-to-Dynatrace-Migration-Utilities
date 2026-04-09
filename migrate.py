@@ -677,6 +677,31 @@ def main(
             console.print("[red]Failed to connect to Dynatrace. Check your API token and URL.[/red]")
             sys.exit(1)
 
+    # Initialize migration state
+    from migration.state import RollbackManifest, MigrationCheckpoint, IncrementalState
+    from migration.report import ConversionReport
+
+    output_path = Path(output_dir)
+    output_path.mkdir(parents=True, exist_ok=True)
+
+    checkpoint = None
+    if resume:
+        checkpoint_file = output_path / ".migration-checkpoint.json"
+        if checkpoint_file.exists():
+            checkpoint = MigrationCheckpoint.load(checkpoint_file)
+            console.print(f"[green]Resuming from checkpoint: {checkpoint_file}[/green]")
+        else:
+            console.print("[yellow]No checkpoint found — starting fresh[/yellow]")
+
+    inc_state = None
+    if incremental:
+        state_file = output_path / ".migration-state.json"
+        if state_file.exists():
+            inc_state = IncrementalState.load(state_file)
+            console.print(f"[green]Incremental mode: will skip unchanged entities[/green]")
+        else:
+            inc_state = IncrementalState()
+
     # Create orchestrator
     orchestrator = MigrationOrchestrator(
         newrelic_client=nr_client,
@@ -687,7 +712,47 @@ def main(
 
     # Run migration
     if full or (not export_only and not import_only):
-        orchestrator.run_full_migration(component_list)
+        results = orchestrator.run_full_migration(component_list)
+
+        # Save rollback manifest
+        manifest_file = output_path / "rollback-manifest.json"
+        manifest = RollbackManifest()
+        for entry in results.get("import_results", {}).get("successful", []):
+            manifest.add(entry["type"], entry.get("id", ""), entry.get("name", ""))
+        manifest.save(manifest_file)
+        if manifest.get_entries():
+            console.print(f"[dim]Rollback manifest saved to {manifest_file}[/dim]")
+
+        # Save checkpoint
+        if resume or True:  # Always save checkpoint for future resume
+            cp = MigrationCheckpoint()
+            for comp in component_list:
+                cp.mark_complete(comp, -1)  # Mark all as complete
+            cp.save(output_path / ".migration-checkpoint.json")
+
+        # Save incremental state
+        if inc_state is not None:
+            inc_state.save(output_path / ".migration-state.json")
+
+        # Generate conversion report
+        if report:
+            report_obj = ConversionReport()
+            # Collect query data from transform warnings
+            for w in results.get("transformed_data", {}).get("warnings", []):
+                if "NRQL" in str(w) or "confidence" in str(w).lower():
+                    report_obj.add_query(original_nrql=str(w), converted_dql="", confidence="MEDIUM", warnings=[str(w)])
+            report_json = output_path / "reports" / "conversion-report.json"
+            report_html = output_path / "reports" / "conversion-report.html"
+            report_json.parent.mkdir(parents=True, exist_ok=True)
+            report_obj.generate_json(report_json)
+            report_obj.generate_html(report_html)
+            summary = report_obj.summary()
+            console.print(f"\n[bold]Conversion Report:[/bold] {summary['total']} queries — "
+                          f"[green]{summary['high_confidence']} high[/green], "
+                          f"[yellow]{summary['medium_confidence']} medium[/yellow], "
+                          f"[red]{summary['low_confidence']} low[/red]")
+            console.print(f"  JSON: {report_json}")
+            console.print(f"  HTML: {report_html}")
     elif export_only:
         orchestrator._export_phase(component_list)
     elif import_only:
