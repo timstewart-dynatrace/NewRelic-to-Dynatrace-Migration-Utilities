@@ -4,13 +4,15 @@
 
 ```
 Dynatrace-NewRelic/
-├── migrate.py                         # CLI entry point (migrate, compile, convert, reference, batch)
-├── requirements.txt
-├── .env.example
+├── migrate.py                         # CLI entry point (migrate, compile, convert, reference, batch, audit-slos)
+├── _version.py                        # Version (1.0.0)
+├── pyproject.toml                     # Project config, pip install, pytest
+├── requirements.txt                   # Python dependencies
+├── .env.example                       # Environment template
 │
-├── compiler/                          # NRQL-to-DQL AST compiler
+├── compiler/                          # NRQL-to-DQL AST compiler (292 tested patterns)
 │   ├── tokens.py                      # TokenType enum, Token dataclass, KEYWORDS
-│   ├── lexer.py                       # NRQLLexer (tokenization)
+│   ├── lexer.py                       # NRQLLexer (tokenization, preserves regex escapes)
 │   ├── ast_nodes.py                   # 18 AST node classes
 │   ├── parser.py                      # NRQLParser (recursive descent)
 │   ├── emitter.py                     # DQLEmitter (context-aware DQL generation)
@@ -18,41 +20,70 @@ Dynatrace-NewRelic/
 │
 ├── clients/                           # API clients
 │   ├── newrelic_client.py             # NerdGraph GraphQL (pagination, rate limit, retry)
-│   └── dynatrace_client.py           # Settings API v2 + Config API v1
+│   └── dynatrace_client.py           # Settings API v2 + Config API v1 + Documents API v2
 │
-├── transformers/                      # Entity transformers
-│   ├── mapping_rules.py              # EntityMapper, VISUALIZATION_TYPE_MAP, CHART_TYPE_MAP, etc.
+├── transformers/                      # 10 entity transformers
+│   ├── mapping_rules.py              # EntityMapper, VISUALIZATION_TYPE_MAP, CHART_TYPE_MAP
 │   ├── nrql_mapping_rules.py         # METRIC_MAP (230), ATTR_MAP (72), AGG_MAP (90+), EVENT_TYPE_MAP (34)
 │   ├── nrql_converter.py             # NRQLtoDQLConverter (compiler + post-processing + auto-fix)
 │   ├── converters.py                 # Specialized: RegexToDPL, Aparse, Rate, CompareWith, Funnel, etc.
-│   ├── dashboard_transformer.py      # NR Dashboard -> DT Dashboard (uses AST compiler)
+│   ├── dashboard_transformer.py      # NR Dashboard -> DT Dashboard
 │   ├── alert_transformer.py          # NR Alert Policy -> DT Alerting Profile + Metric Events
 │   ├── synthetic_transformer.py      # NR Monitors -> DT HTTP/Browser Monitors
-│   ├── slo_transformer.py            # NR SLO -> DT SLO (type detection + metric expressions)
-│   └── workload_transformer.py       # NR Workload -> DT Management Zone
+│   ├── slo_transformer.py            # NR SLO -> DT SLO
+│   ├── workload_transformer.py       # NR Workload -> DT Management Zone
+│   ├── infrastructure_transformer.py # NR Infra Conditions -> DT Metric Events
+│   ├── log_parsing_transformer.py    # NR Log Rules -> DT Processing Rules (DPL)
+│   ├── tag_transformer.py            # NR Tags -> DT Auto-Tag Rules
+│   └── drop_rule_transformer.py      # NR Drop Rules -> DT Ingest Rules
 │
 ├── validators/                        # DQL validation
 │   ├── dql_validator.py              # Structural syntax validator (9 regex rules)
-│   └── dql_fixer.py                  # Auto-fixer (19 fix rules: quotes, operators, fields, etc.)
+│   └── dql_fixer.py                  # Auto-fixer (19 fix rules)
+│
+├── registry/                          # Live environment validation
+│   ├── environment.py                # DTEnvironmentRegistry (metrics, entities, dashboards, mgmt zones, locations)
+│   └── slo_auditor.py               # SLOAuditor (metric extraction, validation, fuzzy search)
+│
+├── migration/                         # Migration infrastructure
+│   ├── state.py                      # RollbackManifest, EntityIdMap, Checkpoint, IncrementalState
+│   └── report.py                     # ConversionReport (JSON + HTML)
 │
 ├── config/
 │   └── settings.py                   # Pydantic BaseSettings (NR + DT + Migration config)
 │
 ├── utils/
 │   ├── logger.py                     # structlog configuration
+│   ├── auth.py                       # OAuth flow, auth header detection, duration conversion
 │   └── validators.py                 # Config validators (NR key format, DT token format)
 │
-└── tests/
-    ├── conftest.py                   # Shared fixtures (compiler instance, structural validators)
+├── examples/
+│   └── example_queries.nrql          # Sample NRQL queries for batch testing
+│
+└── tests/                            # 869 tests across 21 files
+    ├── conftest.py
     └── unit/
-        ├── test_compiler.py          # 282 compiler tests across 25 test classes
-        ├── test_transformers.py      # Dashboard, Alert, Notification, Synthetic, SLO, Workload tests
-        ├── test_converters.py        # RegexToDPL, Aparse, Rate, CompareWith, Funnel tests
-        ├── test_mapping_rules.py     # EntityMapper + mapping dictionary tests
-        ├── test_nrql_mapping_rules.py # EVENT_TYPE_MAP, AGG_MAP, ATTR_MAP tests
-        ├── test_dql_validator.py     # DQL syntax validator + anti-pattern tests
-        ├── test_dql_fixer.py         # DQL auto-fixer + duration conversion tests
-        └── test_utils_validators.py  # Config and structure validator tests
+        ├── test_compiler.py          # 292 compiler tests (25+ classes)
+        ├── test_cli.py               # CLI command tests (interactive, batch, reference, version)
+        ├── test_transformers.py      # Dashboard, Alert, Notification, Synthetic, SLO, Workload
+        ├── test_infrastructure_transformer.py
+        ├── test_log_parsing_transformer.py
+        ├── test_tag_transformer.py
+        ├── test_drop_rule_transformer.py
+        ├── test_converters.py        # RegexToDPL, Aparse, Rate, CompareWith, Funnel
+        ├── test_mapping_rules.py     # EntityMapper + mapping dicts
+        ├── test_nrql_mapping_rules.py
+        ├── test_dql_validator.py
+        ├── test_dql_fixer.py
+        ├── test_utils_validators.py
+        ├── test_newrelic_client.py    # 24 NR client tests (mocked HTTP)
+        ├── test_dynatrace_client.py   # 29 DT client tests (mocked HTTP)
+        ├── test_settings.py           # 13 config tests
+        ├── test_auth.py               # 14 auth utility tests
+        ├── test_registry.py           # 19 registry tests
+        ├── test_slo_auditor.py        # 14 SLO auditor tests
+        ├── test_migration_state.py    # 21 state management tests
+        └── test_report.py             # 8 report tests
 ```
 
 ## Data Flow
@@ -64,6 +95,7 @@ NR NerdGraph API
   -> Synthetic Monitors (type, URL, script, frequency)
   -> SLOs (objectives, events, time windows)
   -> Workloads (entity collections, search queries)
+  -> Infrastructure Conditions, Log Rules, Tags, Drop Rules
 
                     |
                     v
@@ -74,22 +106,16 @@ Transformers (per entity type)
     -> DQLValidator auto-fix (quotes, operators, fields)
     -> Widget type mapping (viz.line -> DATA_EXPLORER, etc.)
     -> Layout conversion (NR 12-col grid -> DT pixel bounds)
-  AlertTransformer:
-    Policy -> Alerting Profile
-    NRQL Condition -> Metric Event (threshold + operator mapping)
-  SyntheticTransformer:
-    Ping -> HTTP Monitor, Browser -> Browser Monitor
-  SLOTransformer:
-    Detect type (availability/error/latency) -> metric expression
-  WorkloadTransformer:
-    Entity collection -> Management Zone rules
+  AlertTransformer + NotificationTransformer
+  SyntheticTransformer, SLOTransformer, WorkloadTransformer
+  InfrastructureTransformer, LogParsingTransformer, TagTransformer, DropRuleTransformer
 
                     |
                     v
 
 DT APIs
-  -> Documents API (dashboards)
-  -> Settings API v2 (alerting profiles, management zones)
+  -> Documents API v2 (dashboards, fallback to Config API v1)
+  -> Settings API v2 (alerting profiles, management zones, auto-tags)
   -> Config API v1 (metric events, monitors, SLOs)
 ```
 
@@ -98,12 +124,15 @@ DT APIs
 | New Relic | Dynatrace | Transformer |
 |-----------|-----------|-------------|
 | Dashboard (multi-page) | Dashboard (per page) | DashboardTransformer |
-| NRQL Query | DQL Query | NRQLCompiler (282 tested patterns) |
+| NRQL Query | DQL Query | NRQLCompiler (292 tested patterns) |
 | Alert Policy | Alerting Profile | AlertTransformer |
 | NRQL Condition | Metric Event | AlertTransformer |
+| Notification Channel | Problem Notification | NotificationTransformer |
 | Ping Monitor | HTTP Monitor | SyntheticTransformer |
 | Browser Monitor | Browser Monitor | SyntheticTransformer |
-| Scripted API | HTTP Monitor (multi-step) | SyntheticTransformer |
 | SLO | SLO | SLOTransformer |
 | Workload | Management Zone | WorkloadTransformer |
-| Notification Channel | Problem Notification | AlertTransformer |
+| Infra Condition | Metric Event | InfrastructureTransformer |
+| Log Parsing Rule | Processing Rule | LogParsingTransformer |
+| Entity Tags | Auto-Tag Rules | TagTransformer |
+| Drop Rules | Ingest Rules | DropRuleTransformer |

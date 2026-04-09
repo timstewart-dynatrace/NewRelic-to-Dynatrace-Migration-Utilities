@@ -1,122 +1,97 @@
-# Copilot Instructions - Dynatrace-NewRelic
+# Copilot Instructions - Dynatrace-NewRelic Migration Tool
 
 ## Project Overview
 
-**Dynatrace-NewRelic** is a migration toolkit with two complementary tools:
+**v1.0.0** — Universal migration framework for converting New Relic monitoring configurations to Dynatrace. AST-based NRQL-to-DQL compiler with 292 tested patterns and 869 total tests.
 
-1. **NRQL to DQL Converter** - Lightweight standalone query converter
-2. **Migration Framework** - Full configuration migration pipeline
-
-## Architecture & Key Patterns
-
-### Migration Pipeline (newrelic-to-dynatrace-migration/)
+## Architecture
 
 ```
-Export (New Relic GraphQL) → Transform (Mapper classes) → Import (Dynatrace API)
+Export (NR NerdGraph) → Transform (10 transformers) → Import (DT APIs)
+
+NRQL Compiler: NRQL string → Lexer → Parser → AST → DQLEmitter → DQL string
 ```
 
-**Key Components:**
+**Key modules:**
+- `compiler/` — AST-based NRQL→DQL compiler (lexer, parser, emitter)
+- `transformers/` — 10 entity transformers (Dashboard, Alert, Notification, Synthetic, SLO, Workload, Infrastructure, LogParsing, Tag, DropRule)
+- `validators/` — DQL syntax validator + 19-rule auto-fixer
+- `registry/` — DTEnvironmentRegistry for live validation + SLOAuditor
+- `migration/` — Rollback, checkpointing, incremental state, conversion reports
+- `clients/` — NR NerdGraph + DT API clients (Config v1 + Documents v2 + Settings v2)
+- `migrate.py` — Click CLI (migrate, compile, convert, reference, batch, audit-slos)
 
-- `config/settings.py` - Pydantic BaseSettings for API credentials and URLs. Handles region-specific endpoints (US vs EU)
-- `clients/` - GraphQL (New Relic) and REST/Settings API (Dynatrace) clients with error handling
-- `transformers/` - Entity-specific converters (dashboard, alert, synthetic, SLO, workload)
-- `migrate.py` - Click CLI entry point orchestrating the full pipeline
+## Transformer Pattern
 
-**Critical Pattern:** Each transformer inherits from base transformation logic, returns `TransformResult` dataclass with `success`, `data`, `warnings`, `errors`.
+All transformers follow this interface:
+```python
+@dataclass
+class {Entity}TransformResult:
+    success: bool
+    {payload}: Optional[...] = None  # entity-specific
+    warnings: List[str] = None
+    errors: List[str] = None
 
-### NRQL to DQL Converter (nrql-converter/)
+class {Entity}Transformer:
+    def transform(self, nr_entity: Dict) -> {Entity}TransformResult: ...
+    def transform_all(self, items: List[Dict]) -> List[{Entity}TransformResult]: ...
+```
 
-Standalone tool converting NRQL queries to DQL. Uses regex-based pattern matching to:
-
-- Parse SELECT, WHERE, FACET, SINCE, LIMIT clauses
-- Map aggregation functions (uniqueCount → countDistinct, average → avg)
-- Convert time ranges (-30m, -1h, -7d format)
-- Apply field mapping (appName → service.name, duration → response_time)
-- Return `ConversionResult` with confidence scoring and field mappings applied
-
-**Run tests:** `python -m pytest test_nrql_to_dql.py -v` (21 tests, all passing)
-
-## Entity Mapping Reference
-
-| New Relic              | Dynatrace            | Notes                                |
-| ---------------------- | -------------------- | ------------------------------------ |
-| Dashboard (multi-page) | Multiple Dashboards  | Each page becomes separate dashboard |
-| Alert Policy           | Alerting Profile     | 1:1 mapping                          |
-| NRQL Condition         | Metric Event         | Needs query conversion               |
-| Synthetic Monitor      | HTTP/Browser Monitor | Direct mapping for Ping → HTTP       |
-| SLO                    | SLO                  | Query conversion required            |
-| Workload               | Management Zone      | Conceptual mapping                   |
-
-See `newrelic-to-dynatrace-migration/transformers/mapping_rules.py` for complete FieldMapping definitions.
-
-## Development Workflow
-
-### Setup
+## CLI Commands
 
 ```bash
-cd newrelic-to-dynatrace-migration
-pip install -r requirements.txt
-# Set env vars: NEW_RELIC_API_KEY, DYNATRACE_API_TOKEN, etc.
+python migrate.py compile "SELECT count(*) FROM Transaction"  # Single query
+python migrate.py compile --interactive                        # REPL
+python migrate.py compile --file queries.nrql                  # Batch
+python migrate.py compile --validate "SELECT ..."              # Live DT validation
+python migrate.py convert "SELECT ..."                         # Compile + auto-fix
+python migrate.py reference                                    # NRQL→DQL table
+python migrate.py reference --mappings                         # Full mapping tables
+python migrate.py batch --file queries.csv                     # CSV batch
+python migrate.py audit-slos                                   # SLO metric audit
+python migrate.py migrate --dry-run                            # Validate
+python migrate.py migrate --full                               # Execute
+python migrate.py migrate --list-components                    # Show components
+python migrate.py --version                                    # Show version
 ```
 
-### Testing
+## Testing
 
-- **Migration tests:** `pytest tests/` (if added)
-- **Converter tests:** `cd nrql-converter && pytest test_nrql_to_dql.py -v`
-- **Dry-run verification:** `python migrate.py --dry-run --full`
-
-### Configuration
-
-- Environment variables via `.env` (use `.env.example` as template)
-- Pydantic validates required fields at startup; `settings.py` handles region-specific URLs
+```bash
+pytest tests/ -v                    # All 869 tests
+pytest tests/unit/test_compiler.py  # 292 compiler tests
+pytest -x --tb=short               # Stop on first failure
+```
 
 ## Code Conventions
 
-1. **Logging:** Use `structlog` (not `logging`). Initialized in `migrate.py` with ISO timestamps and dev renderer
-2. **Error Handling:** Transformers return `TransformResult` dataclass; CLI bubbles up errors as exit codes
-3. **API Clients:** Separate New Relic (GraphQL) and Dynatrace (REST) clients; handle pagination in client, not caller
-4. **Field Mapping:** Define in `mapping_rules.py` using `FieldMapping` dataclass with `TransformationType` enum (DIRECT, MAPPED, COMPUTED, TEMPLATE, CUSTOM)
-5. **CLI Design:** Use Click decorators; progress shown via `rich.Progress`; dry-run doesn't apply changes
+1. **Logging:** `structlog` (not `logging`)
+2. **Config:** Pydantic BaseSettings from `.env`
+3. **Results:** Dataclass result types, never raw dicts
+4. **Imports:** stdlib → third-party → local
+5. **CLI:** Click decorators + Rich output
+6. **HTTP mocking:** `unittest.mock.patch` on session methods
 
-## Common Tasks
+## Adding a New Transformer
 
-**Add new component migration:**
+1. Create `transformers/{name}_transformer.py` with `{Name}TransformResult` + `{Name}Transformer`
+2. Register in `transformers/__init__.py`
+3. Add to `AVAILABLE_COMPONENTS` in `config/settings.py`
+4. Add to `MigrationOrchestrator.__init__` and `_transform_phase` in `migrate.py`
+5. Create `tests/unit/test_{name}_transformer.py`
 
-1. Create transformer class in `transformers/new_transformer.py` inheriting transformation patterns
-2. Define entity mappings in `mapping_rules.py`
-3. Register in `migrate.py` CLI under `--components` option
-4. Add test coverage
+## Entity Mapping
 
-**Fix NRQL conversion:**
-
-- Update regex patterns in `nrql_to_dql.py`
-- Add test case to `test_nrql_to_dql.py`
-- Update mappings in `examples.nrql` if pattern changes apply broadly
-
-**Handle API changes:**
-
-- For New Relic: Update GraphQL queries in `clients/newrelic_client.py`
-- For Dynatrace: Check Settings/Config API v2 docs; update request schema in `clients/dynatrace_client.py`
-
-## Key Files & Decision Points
-
-| File                 | When to Update         | What It Controls                      |
-| -------------------- | ---------------------- | ------------------------------------- |
-| `mapping_rules.py`   | Adding fields/entities | Entity transformation logic           |
-| `migrate.py`         | Adding CLI options     | Migration workflow & orchestration    |
-| `config/settings.py` | New config needed      | Credential/environment handling       |
-| `nrql_to_dql.py`     | Query pattern fixes    | NRQL → DQL conversion                 |
-| `CLAUDE.md`          | Major changes          | Project documentation (keep current!) |
-
-## External Dependencies
-
-- **New Relic:** GraphQL endpoint (region-specific), API v1/v2 REST APIs
-- **Dynatrace:** Settings API v2, Config API, API token required
-- **Python libs:** Click (CLI), Pydantic (config), structlog (logging), Rich (output), GraphQL-core (New Relic client), requests (HTTP)
-
-## Debugging Tips
-
-1. **API Failures:** Check `.env` credentials and region settings; dry-run mode logs API requests
-2. **Transformation Issues:** Enable structlog debug level to see field mapping details
-3. **Test Failures:** Converter tests fail if `ConversionResult.converted_dql` doesn't match expected pattern — check regex changes
-4. **Pagination:** Clients handle pagination internally; if incomplete data returned, check GraphQL query limits
+| New Relic | Dynatrace | Transformer |
+|-----------|-----------|-------------|
+| Dashboard | Dashboard | DashboardTransformer |
+| Alert Policy | Alerting Profile | AlertTransformer |
+| NRQL Condition | Metric Event | AlertTransformer |
+| Notification | Problem Notification | NotificationTransformer |
+| Synthetic Monitor | HTTP/Browser Monitor | SyntheticTransformer |
+| SLO | SLO | SLOTransformer |
+| Workload | Management Zone | WorkloadTransformer |
+| Infra Condition | Metric Event | InfrastructureTransformer |
+| Log Rule | Processing Rule | LogParsingTransformer |
+| Tags | Auto-Tag Rules | TagTransformer |
+| Drop Rules | Ingest Rules | DropRuleTransformer |
