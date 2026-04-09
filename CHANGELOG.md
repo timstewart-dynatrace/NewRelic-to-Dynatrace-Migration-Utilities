@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [Unreleased]
+
+## [0.3.0] - 2026-04-09
+
+### Added (Phase 2 — Test Coverage Completion)
+- NewRelicClient unit tests: 24 tests covering all 14 public methods (mocked HTTP)
+- DynatraceClient unit tests: 26 tests covering all 22 public methods (mocked HTTP)
+- Settings unit tests: 13 tests covering config classes, endpoints, singleton, components
+- Total test count: 747 across 12 test files (was 673)
+
 ## [0.2.0] - 2026-04-09
 
 ### Added

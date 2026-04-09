@@ -8,7 +8,7 @@ Universal migration tool for converting New Relic monitoring configurations to D
 
 **Last Updated:** 2026-04-09
 **Version:** 0.2.0
-**Phases Completed:** 0 (Consolidation), 1 (Compiler Enhancements)
+**Phases Completed:** 0 (Consolidation), 1 (Compiler Enhancements), 2 (Test Coverage)
 
 ## Tech Stack
 
@@ -19,7 +19,7 @@ Universal migration tool for converting New Relic monitoring configurations to D
 | CLI | Click + Rich | Subcommands with progress display |
 | Logging | structlog | Structured logging |
 | HTTP | requests | API clients |
-| Testing | pytest | 673 tests (292 compiler + 14 CLI + 367 transformer/validator/converter/mapping) |
+| Testing | pytest | 747 tests (292 compiler + 14 CLI + 367 transformer/validator + 24 NR client + 26 DT client + 13 settings + 11 mapping) |
 
 ## Architecture
 

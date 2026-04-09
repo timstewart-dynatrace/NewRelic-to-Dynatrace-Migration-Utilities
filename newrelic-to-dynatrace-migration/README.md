@@ -83,7 +83,7 @@ python migrate.py reference --mappings
 ### Testing
 
 ```bash
-pytest tests/ -v                    # All 673 tests
+pytest tests/ -v                    # All 747 tests
 pytest tests/unit/test_compiler.py  # 292 compiler tests only
 pytest tests/unit/test_cli.py       # 14 CLI tests only
 pytest -x --tb=short               # Stop on first failure
@@ -172,7 +172,7 @@ newrelic-to-dynatrace-migration/
 │   ├── logger.py           # structlog configuration
 │   └── validators.py       # Config & structure validators
 │
-└── tests/                  # 673 tests across 9 files
+└── tests/                  # 747 tests across 9 files
     ├── conftest.py
     └── unit/
         ├── test_compiler.py           # 292 compiler tests
