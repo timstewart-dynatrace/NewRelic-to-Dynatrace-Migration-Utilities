@@ -101,29 +101,55 @@ python nrql_to_dql.py --file queries.txt --output converted.dql
 
 ```
 newrelic-to-dynatrace-migration/
-├── migrate.py              # Main migration CLI
-├── nrql_to_dql.py          # NRQL → DQL converter
+├── migrate.py              # Main migration CLI (click + rich)
+├── pyproject.toml          # pytest configuration
 ├── requirements.txt        # Dependencies
 ├── .env.example            # Environment template
 │
+├── compiler/               # NRQL-to-DQL AST compiler
+│   ├── tokens.py           # TokenType enum, Token dataclass
+│   ├── lexer.py            # NRQLLexer (tokenization)
+│   ├── ast_nodes.py        # 18 AST node classes
+│   ├── parser.py           # NRQLParser (recursive descent)
+│   ├── emitter.py          # DQLEmitter (context-aware DQL generation)
+│   └── compiler.py         # NRQLCompiler (orchestrator + validation)
+│
 ├── config/
-│   └── settings.py         # Configuration management
+│   └── settings.py         # Configuration management (pydantic)
 │
 ├── clients/
 │   ├── newrelic_client.py  # New Relic NerdGraph client
 │   └── dynatrace_client.py # Dynatrace API client
 │
 ├── transformers/
-│   ├── mapping_rules.py    # Entity mappings
+│   ├── mapping_rules.py    # Entity/visualization/chart mappings
+│   ├── nrql_mapping_rules.py # NRQL field/metric/aggregation maps
+│   ├── nrql_converter.py   # NRQLtoDQLConverter (compiler + post-processing)
+│   ├── converters.py       # Specialized converters (regex→DPL, rate, etc.)
 │   ├── dashboard_transformer.py
 │   ├── alert_transformer.py
 │   ├── synthetic_transformer.py
 │   ├── slo_transformer.py
 │   └── workload_transformer.py
 │
-└── utils/
-    ├── logger.py           # Structured logging
-    └── validators.py       # Configuration validators
+├── validators/
+│   ├── dql_validator.py    # DQL syntax validator (9 regex rules)
+│   └── dql_fixer.py        # DQL auto-fixer (19 fix rules)
+│
+├── utils/
+│   ├── logger.py           # Structured logging (structlog)
+│   └── validators.py       # Configuration validators
+│
+└── tests/
+    ├── conftest.py          # Shared fixtures
+    └── unit/
+        ├── test_compiler.py          # 282 compiler tests
+        ├── test_transformers.py      # Transformer tests
+        ├── test_converters.py        # Specialized converter tests
+        ├── test_mapping_rules.py     # EntityMapper tests
+        ├── test_dql_validator.py     # DQL validator tests
+        ├── test_dql_fixer.py         # DQL fixer tests
+        └── test_utils_validators.py  # Config validator tests
 ```
 
 ## Output
@@ -158,7 +184,7 @@ output/
 
 ## Known Limitations
 
-1. **NRQL to DQL** - Complex queries may require manual review
+1. **NRQL to DQL** - AST compiler covers 282 tested patterns; complex or custom queries may require manual review
 2. **Scripted Synthetics** - Complex scripts need manual recreation
 3. **Entity References** - GUIDs don't map to Dynatrace entity IDs
 4. **Dashboard Variables** - Limited filter conversion

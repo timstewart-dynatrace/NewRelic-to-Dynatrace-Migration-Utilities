@@ -6,6 +6,7 @@ from .alert_transformer import AlertTransformer
 from .synthetic_transformer import SyntheticTransformer
 from .slo_transformer import SLOTransformer
 from .workload_transformer import WorkloadTransformer
+from .nrql_converter import NRQLtoDQLConverter
 
 __all__ = [
     "EntityMapper",
@@ -15,4 +16,5 @@ __all__ = [
     "SyntheticTransformer",
     "SLOTransformer",
     "WorkloadTransformer",
+    "NRQLtoDQLConverter",
 ]

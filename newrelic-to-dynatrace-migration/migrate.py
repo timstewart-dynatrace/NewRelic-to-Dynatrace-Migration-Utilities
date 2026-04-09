@@ -673,5 +673,65 @@ def main(
         orchestrator._import_phase(transformed_data, component_list)
 
 
+@click.command("compile")
+@click.argument("nrql")
+def compile_nrql(nrql: str):
+    """Compile a single NRQL query to DQL.
+
+    Example: python migrate.py compile "SELECT count(*) FROM Transaction FACET appName TIMESERIES"
+    """
+    from compiler import NRQLCompiler
+
+    compiler = NRQLCompiler()
+    result = compiler.compile(nrql)
+
+    if result.success:
+        console.print(result.dql)
+        if result.warnings:
+            for w in result.warnings:
+                console.print(f"[yellow]Warning:[/yellow] {w}")
+    else:
+        console.print(f"[red]Error:[/red] {result.error}")
+        sys.exit(1)
+
+
+@click.command("convert")
+@click.argument("nrql")
+def convert_nrql(nrql: str):
+    """Convert NRQL to DQL with full post-processing and auto-fixes.
+
+    Example: python migrate.py convert "SELECT average(duration) FROM Transaction WHERE appName = 'my-api'"
+    """
+    from transformers.nrql_converter import NRQLtoDQLConverter
+
+    converter = NRQLtoDQLConverter()
+    result = converter.convert(nrql, "CLI query")
+
+    console.print(result.converted_dql)
+    if result.fixes_applied:
+        for f in result.fixes_applied:
+            console.print(f"[green]Fix:[/green] {f}")
+    if result.warnings:
+        for w in result.warnings:
+            console.print(f"[yellow]Warning:[/yellow] {w}")
+    console.print(f"\n[dim]Confidence: {result.confidence}[/dim]")
+
+
+# Create a click group to support both migration and compile subcommands
+@click.group(invoke_without_command=True)
+@click.pass_context
+def cli(ctx):
+    """New Relic to Dynatrace Migration Tool."""
+    if ctx.invoked_subcommand is None:
+        # No subcommand — show help
+        click.echo(ctx.get_help())
+
+
+# Register subcommands
+cli.add_command(main, "migrate")
+cli.add_command(compile_nrql, "compile")
+cli.add_command(convert_nrql, "convert")
+
+
 if __name__ == "__main__":
-    main()
+    cli()

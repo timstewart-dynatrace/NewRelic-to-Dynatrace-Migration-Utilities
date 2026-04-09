@@ -1,0 +1,64 @@
+# Changelog
+
+All notable changes to this project will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [Unreleased]
+
+### Added
+- Comprehensive test suite: 367 new tests across 8 test files (649 total with compiler tests)
+  - `test_utils_validators.py` — config and structure validation tests
+  - `test_dql_validator.py` — DQL syntax validation + anti-pattern detection tests
+  - `test_dql_fixer.py` — DQL auto-fixer, duration conversion, and new fix rule tests
+  - `test_mapping_rules.py` — EntityMapper and mapping dictionary tests
+  - `test_converters.py` — RegexToDPL, Aparse, Rate, CompareWith, Funnel, Extrapolate, BucketPercentile converter tests
+  - `test_transformers.py` — Dashboard, Alert, Notification, Synthetic, SLO, and Workload transformer tests
+  - `test_nrql_mapping_rules.py` — EVENT_TYPE_MAP, AGG_MAP, ATTR_MAP coverage
+- DQL reference rules (`.claude/rules/dql-reference.md`) — incorporated from dynatrace-dql skill repository
+  - Complete DQL function catalog (100+ functions across 10 categories)
+  - Grail data objects reference
+  - Performance best practices and anti-patterns
+  - Recommended command ordering
+- DQL validator anti-pattern detection (warnings):
+  - Sort before filter detection
+  - Limit before summarize detection
+- DQL fixer new rules:
+  - Duration unit fix (nanosecond vs millisecond for `resolved_problem_duration`)
+  - Negation-to-filterOut performance hint
+  - Array count without expand warning
+- Expanded AGG_MAP with 40+ new function mappings from Grail function reference
+  - Aggregation: countIf, variance, correlation, collectArray, takeAny, takeMax, takeMin, countDistinctApprox/Exact
+  - String: indexOf, lastIndexOf, startsWith, endsWith, contains, matchesValue, matchesPhrase, matchesPattern, trim, replaceString, replacePattern, splitString, levenshteinDistance
+  - Array: arrayAvg, arrayMax, arrayMin, arrayMedian, arrayFirst, arrayLast, arrayConcat, arrayDistinct, arrayFlatten, arrayDelta, arrayCumulativeSum, arrayMovingAvg
+  - Boolean/conditional: isNull, isNotNull, coalesce
+  - Time: getDayOfMonth, getDayOfYear, getSecond, formatTimestamp
+  - Type conversion: toLong, toDouble, toBoolean, toTimestamp, toDuration
+- Expanded EVENT_TYPE_MAP with mobile, custom event, audit, and integration sample types
+- CHANGELOG.md following Keep a Changelog format
+
+### Changed
+- Updated root README.md project structure to reflect current codebase (added compiler/, validators/, tests/, and new transformer files)
+- Updated newrelic-to-dynatrace-migration/README.md project structure to match actual directory layout
+- Corrected Known Limitations to accurately describe AST compiler capabilities (282 tested patterns)
+
+## [0.1.0] - 2026-04-08
+
+### Added
+- Initial migration framework with three-phase pipeline (Export → Transform → Import)
+- AST-based NRQL-to-DQL compiler (lexer, parser, emitter) with 282 tested patterns
+- Dashboard transformer (multi-page → per-page conversion)
+- Alert transformer (policy → alerting profile + metric events)
+- Synthetic transformer (ping/browser/API → HTTP/Browser monitors)
+- SLO transformer with type detection (availability, error rate, latency)
+- Workload transformer (entity groupings → management zones)
+- Notification transformer (email, Slack, PagerDuty, webhook)
+- DQL syntax validator (9 structural regex rules)
+- DQL auto-fixer (19 fix rules: quotes, operators, functions, aliases, etc.)
+- Specialized converters: RegexToDPL, Aparse, Rate/Derivative, CompareWith, Funnel, Extrapolate, BucketPercentile, WithAs (CTE)
+- New Relic NerdGraph GraphQL client with pagination and rate limiting
+- Dynatrace API client (Settings API v2 + Config API v1)
+- Click CLI with subcommands: migrate, compile, convert
+- Pydantic-based configuration from .env files
+- structlog-based structured logging
