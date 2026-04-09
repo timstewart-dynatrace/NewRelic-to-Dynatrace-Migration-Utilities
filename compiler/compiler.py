@@ -18,15 +18,97 @@ from .parser import NRQLParser, ParseError
 
 
 @dataclass
+class TranslationNotes:
+    """Categorized notes about the translation for human review."""
+    data_source_mapping: List[str] = field(default_factory=list)
+    field_extraction: List[str] = field(default_factory=list)
+    key_differences: List[str] = field(default_factory=list)
+    performance_considerations: List[str] = field(default_factory=list)
+    data_model_requirements: List[str] = field(default_factory=list)
+    testing_recommendations: List[str] = field(default_factory=list)
+
+
+def _compute_confidence(warnings: List[str], fixes: List[str],
+                        has_compare_with: bool = False,
+                        has_timezone: bool = False,
+                        agg_count: int = 0,
+                        facet_count: int = 0,
+                        unknown_event_type: bool = False) -> Tuple[int, str]:
+    """Compute numeric confidence score (0-100) and label."""
+    score = 100
+    score -= len(warnings) * 10
+    score -= len(fixes) * 2
+    if has_compare_with:
+        score -= 5
+    if has_timezone:
+        score -= 5
+    if agg_count > 3:
+        score -= 5
+    if facet_count > 3:
+        score -= 5
+    if unknown_event_type:
+        score -= 15
+    score = max(0, min(100, score))
+
+    if score >= 80:
+        label = 'HIGH'
+    elif score >= 50:
+        label = 'MEDIUM'
+    else:
+        label = 'LOW'
+    return score, label
+
+
+@dataclass
 class CompileResult:
     success: bool
     dql: str = ''
     confidence: str = 'HIGH'
+    confidence_score: int = 100
     warnings: List[str] = field(default_factory=list)
     fixes: List[str] = field(default_factory=list)
+    notes: TranslationNotes = field(default_factory=TranslationNotes)
     error: str = ''
     ast: Optional[Query] = None
     original_nrql: str = ''
+
+
+def _categorize_warnings(warnings: List[str], ast: Optional[Query]) -> TranslationNotes:
+    """Categorize flat warnings into structured translation notes."""
+    notes = TranslationNotes()
+
+    for w in warnings:
+        wl = w.lower()
+        if any(k in wl for k in ['maps to', 'event type', 'fetch', 'data source', 'timeseries']):
+            notes.data_source_mapping.append(w)
+        elif any(k in wl for k in ['field', 'metric', 'attribute', 'column', 'mapped']):
+            notes.field_extraction.append(w)
+        elif any(k in wl for k in ['not supported', 'not available', 'manual', 'different']):
+            notes.key_differences.append(w)
+        elif any(k in wl for k in ['performance', 'filter', 'sort', 'limit']):
+            notes.performance_considerations.append(w)
+        elif any(k in wl for k in ['requires', 'need', 'must', 'model']):
+            notes.data_model_requirements.append(w)
+        else:
+            notes.key_differences.append(w)
+
+    # Add standard testing recommendation if there are any warnings
+    if warnings:
+        notes.testing_recommendations.append(
+            "Compare row counts and aggregation results between original NRQL and converted DQL"
+        )
+
+    # Add data source note based on event type
+    if ast and ast.from_clause:
+        from_type = ast.from_clause.lower()
+        if from_type in ('transaction', 'transactionerror'):
+            notes.data_source_mapping.insert(0, f"{ast.from_clause} maps to spans in Dynatrace Grail")
+        elif from_type in ('log', 'logevent'):
+            notes.data_source_mapping.insert(0, f"{ast.from_clause} maps to logs in Dynatrace Grail")
+        elif from_type in ('systemsample', 'processsample', 'metric'):
+            notes.data_source_mapping.insert(0, f"{ast.from_clause} maps to timeseries metrics in Dynatrace")
+
+    return notes
 
 
 class NRQLCompiler:
@@ -86,21 +168,33 @@ class NRQLCompiler:
             result.dql = f"// Original NRQL: {nrql_oneline}\n{dql}"
             result.warnings = emitter.warnings
             result.success = True
-            result.confidence = 'HIGH'
-
-            # Downgrade confidence if there are warnings
-            if any('not directly supported' in w for w in result.warnings):
-                result.confidence = 'MEDIUM'
 
         except Exception as e:
             result.error = f"Emitter error: {e}"
             return result
 
         # Phase 4: DQL Syntax Validation
-        # Catch known invalid patterns BEFORE the query reaches Dynatrace
         result.dql, validation_fixes = self._validate_dql(result.dql)
         if validation_fixes:
             result.fixes = (result.fixes or []) + validation_fixes
+
+        # Phase 5: Compute confidence score and populate translation notes
+        has_compare = ast.compare_with_raw is not None if ast else False
+        has_tz = ast.with_timezone is not None if ast else False
+        agg_count = len(ast.select_items) if ast else 0
+        facet_count = len(ast.facet_items) if ast and ast.facet_items else 0
+        unknown_event = any('unknown' in w.lower() and 'event' in w.lower() for w in result.warnings)
+
+        result.confidence_score, result.confidence = _compute_confidence(
+            result.warnings, result.fixes,
+            has_compare_with=has_compare,
+            has_timezone=has_tz,
+            agg_count=agg_count,
+            facet_count=facet_count,
+            unknown_event_type=unknown_event,
+        )
+
+        result.notes = _categorize_warnings(result.warnings, ast)
 
         return result
 
