@@ -1,13 +1,11 @@
 """Tests for migration.report — ConversionReport with JSON/HTML generation."""
 
-import os
-import sys
 import json
-import tempfile
+import os
 import shutil
+import sys
+import tempfile
 from pathlib import Path
-
-import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 from migration.report import ConversionReport

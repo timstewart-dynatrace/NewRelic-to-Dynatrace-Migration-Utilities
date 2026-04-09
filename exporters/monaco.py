@@ -2,12 +2,11 @@
 
 import json
 import re
-
-import yaml
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict
 
 import structlog
+import yaml
 
 logger = structlog.get_logger()
 

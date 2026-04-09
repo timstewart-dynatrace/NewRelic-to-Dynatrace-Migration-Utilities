@@ -23,6 +23,6 @@ Integration:
         return self._regex_convert(nrql)  # Fallback
 """
 
-from .compiler import NRQLCompiler, CompileResult
+from .compiler import CompileResult, NRQLCompiler
 
 __all__ = ['NRQLCompiler', 'CompileResult']

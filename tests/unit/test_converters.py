@@ -3,16 +3,15 @@
 import pytest
 
 from transformers.converters import (
-    RegexToDPLConverter,
     AparseConverter,
-    RateDerivativeConverter,
-    CompareWithConverter,
-    FunnelConverter,
-    ExtrapolateHandler,
     BucketPercentileConverter,
+    CompareWithConverter,
+    ExtrapolateHandler,
+    FunnelConverter,
+    RateDerivativeConverter,
+    RegexToDPLConverter,
     WithAsConverter,
 )
-
 
 # ─── RegexToDPLConverter ─────────────────────────────────────────────────────
 

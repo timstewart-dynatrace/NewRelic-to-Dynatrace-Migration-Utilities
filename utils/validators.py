@@ -1,7 +1,7 @@
 """Validation utilities for migration configurations."""
 
-from typing import Dict, Any, List, Tuple
 import re
+from typing import Any, Dict, List, Tuple
 
 
 def validate_newrelic_config(config: Dict[str, Any]) -> Tuple[bool, List[str]]:

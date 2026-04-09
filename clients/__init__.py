@@ -1,6 +1,6 @@
 """API Clients module."""
 
-from .newrelic_client import NewRelicClient
 from .dynatrace_client import DynatraceClient
+from .newrelic_client import NewRelicClient
 
 __all__ = ["NewRelicClient", "DynatraceClient"]

@@ -1,8 +1,7 @@
 import os
-import sys
-import json
-import tempfile
 import shutil
+import sys
+import tempfile
 from pathlib import Path
 
 import pytest

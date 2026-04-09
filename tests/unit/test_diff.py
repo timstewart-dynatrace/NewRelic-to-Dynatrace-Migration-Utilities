@@ -7,7 +7,7 @@ from unittest.mock import MagicMock
 import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
-from migration.diff import DiffReport, DiffEntry
+from migration.diff import DiffReport
 
 
 @pytest.fixture

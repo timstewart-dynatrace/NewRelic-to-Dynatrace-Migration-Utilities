@@ -1,15 +1,13 @@
 """Tests for utils/validators.py — config and structure validation functions."""
 
-import pytest
 
 from utils.validators import (
-    validate_newrelic_config,
-    validate_dynatrace_config,
     validate_dashboard,
+    validate_dynatrace_config,
     validate_metric_event,
+    validate_newrelic_config,
     validate_synthetic_monitor,
 )
-
 
 # ─── validate_newrelic_config ─────────────────────────────────────────────────
 

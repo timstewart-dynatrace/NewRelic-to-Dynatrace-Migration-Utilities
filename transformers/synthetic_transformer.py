@@ -2,13 +2,14 @@
 Synthetic Monitor Transformer - Converts New Relic synthetics to Dynatrace format.
 """
 
-from typing import Any, Dict, List, Optional
 from dataclasses import dataclass
+from typing import Any, Dict, List, Optional
+
 import structlog
 
 from .mapping_rules import (
-    SYNTHETIC_MONITOR_TYPE_MAP,
     MONITOR_PERIOD_MAP,
+    SYNTHETIC_MONITOR_TYPE_MAP,
 )
 
 logger = structlog.get_logger()

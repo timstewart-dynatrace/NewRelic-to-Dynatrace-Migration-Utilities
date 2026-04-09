@@ -21,11 +21,11 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import click
+import structlog
+from dotenv import load_dotenv
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich.table import Table
-from dotenv import load_dotenv
-import structlog
 
 # Configure logging
 structlog.configure(
@@ -49,22 +49,22 @@ console = Console()
 load_dotenv()
 
 # Import project modules
+from clients import DynatraceClient, NewRelicClient
 from config import (
-    get_settings,
     AVAILABLE_COMPONENTS,
     COMPONENT_DEPENDENCIES,
+    get_settings,
 )
-from clients import NewRelicClient, DynatraceClient
 from transformers import (
-    DashboardTransformer,
     AlertTransformer,
-    SyntheticTransformer,
-    SLOTransformer,
-    WorkloadTransformer,
+    DashboardTransformer,
+    DropRuleTransformer,
     InfrastructureTransformer,
     LogParsingTransformer,
+    SLOTransformer,
+    SyntheticTransformer,
     TagTransformer,
-    DropRuleTransformer,
+    WorkloadTransformer,
 )
 
 
@@ -744,8 +744,8 @@ def main(
             sys.exit(1)
 
     # Initialize migration state
-    from migration.state import RollbackManifest, MigrationCheckpoint, IncrementalState
     from migration.report import ConversionReport
+    from migration.state import IncrementalState, MigrationCheckpoint, RollbackManifest
 
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
@@ -764,7 +764,7 @@ def main(
         state_file = output_path / ".migration-state.json"
         if state_file.exists():
             inc_state = IncrementalState.load(state_file)
-            console.print(f"[green]Incremental mode: will skip unchanged entities[/green]")
+            console.print("[green]Incremental mode: will skip unchanged entities[/green]")
         else:
             inc_state = IncrementalState()
 
@@ -1133,7 +1133,7 @@ def reference(mappings: bool):
     _print_reference_table()
 
     if mappings:
-        from transformers.nrql_mapping_rules import AGG_MAP, EVENT_TYPE_MAP, ATTR_MAP
+        from transformers.nrql_mapping_rules import AGG_MAP, ATTR_MAP, EVENT_TYPE_MAP
 
         console.print()
         agg_table = Table(title="Aggregation Mappings", show_header=True, header_style="bold cyan")
@@ -1173,6 +1173,7 @@ def batch_compile(input_file: str, output_file: Optional[str], nrql_column: str)
     Example: python migrate.py batch --file queries.csv --output results.csv
     """
     import csv
+
     from compiler import NRQLCompiler
 
     compiler = NRQLCompiler()

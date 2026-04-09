@@ -3,10 +3,11 @@ NRQL-to-DQL Compiler -- Lexer (tokenizer).
 """
 
 from __future__ import annotations
+
 import re
 from typing import List
 
-from .tokens import TokenType, Token, KEYWORDS, NON_KEYWORD_IDENTS
+from .tokens import KEYWORDS, NON_KEYWORD_IDENTS, Token, TokenType
 
 
 class LexError(Exception):

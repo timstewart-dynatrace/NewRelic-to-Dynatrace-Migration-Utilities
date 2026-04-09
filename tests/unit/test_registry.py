@@ -1,9 +1,9 @@
 """Tests for DTEnvironmentRegistry — all public methods with mocked HTTP."""
 
+import json
 import os
 import sys
-import json
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 

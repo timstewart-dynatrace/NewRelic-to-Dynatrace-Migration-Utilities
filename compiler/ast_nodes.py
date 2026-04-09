@@ -3,9 +3,9 @@ NRQL-to-DQL Compiler -- AST node definitions.
 """
 
 from __future__ import annotations
-from dataclasses import dataclass
-from typing import List, Optional, Union, Any
 
+from dataclasses import dataclass
+from typing import Any, List, Optional, Union
 
 # -- Base --
 

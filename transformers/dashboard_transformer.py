@@ -5,16 +5,14 @@ Uses the AST-based NRQL compiler for accurate query translation (282 tested patt
 instead of regex-based conversion.
 """
 
-import json
-import re
-from typing import Any, Dict, List, Optional
 from dataclasses import dataclass
+from typing import Any, Dict, List, Optional
+
 import structlog
 
 from .mapping_rules import (
-    EntityMapper,
     VISUALIZATION_TYPE_MAP,
-    CHART_TYPE_MAP,
+    EntityMapper,
 )
 from .nrql_converter import NRQLtoDQLConverter
 

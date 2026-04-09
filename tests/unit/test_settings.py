@@ -3,18 +3,16 @@
 import os
 import sys
 
-import pytest
-
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 
 from config.settings import (
-    NewRelicConfig,
-    DynatraceConfig,
-    MigrationConfig,
-    Settings,
-    get_settings,
     AVAILABLE_COMPONENTS,
     COMPONENT_DEPENDENCIES,
+    DynatraceConfig,
+    MigrationConfig,
+    NewRelicConfig,
+    Settings,
+    get_settings,
 )
 
 

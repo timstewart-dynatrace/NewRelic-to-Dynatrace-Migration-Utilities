@@ -3,17 +3,36 @@ NRQL-to-DQL Compiler -- Recursive-descent parser.
 """
 
 from __future__ import annotations
+
 from typing import List, Optional, Tuple
 
-from .tokens import TokenType, Token
 from .ast_nodes import (
-    ASTNode, StarExpr, LiteralExpr, FieldRef, FunctionCall, BinaryOp,
-    UnaryMinus, TimeInterval, Condition, ComparisonCond, LogicalCond,
-    NotCond, IsNullCond, InListCond, InSubqueryCond, LikeCond, RLikeCond,
-    SelectItem, FacetItem, TimeseriesClause, LimitClause, OrderByClause,
-    JoinClause, Query,
+    ASTNode,
+    BinaryOp,
+    ComparisonCond,
+    Condition,
+    FacetItem,
+    FieldRef,
+    FunctionCall,
+    InListCond,
+    InSubqueryCond,
+    IsNullCond,
+    JoinClause,
+    LikeCond,
+    LimitClause,
+    LiteralExpr,
+    LogicalCond,
+    NotCond,
+    OrderByClause,
+    Query,
+    RLikeCond,
+    SelectItem,
+    StarExpr,
+    TimeInterval,
+    TimeseriesClause,
+    UnaryMinus,
 )
-
+from .tokens import Token, TokenType
 
 TIME_UNITS = {'second', 'seconds', 'sec', 's',
               'minute', 'minutes', 'min',

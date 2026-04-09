@@ -3,24 +3,20 @@
 import pytest
 
 from transformers.mapping_rules import (
-    EntityMapper,
-    TransformationType,
-    FieldMapping,
-    EntityMapping,
-    VISUALIZATION_TYPE_MAP,
-    CHART_TYPE_MAP,
     ALERT_PRIORITY_MAP,
-    OPERATOR_MAP,
-    SYNTHETIC_MONITOR_TYPE_MAP,
+    CHART_TYPE_MAP,
+    ENTITY_MAPPINGS,
+    FILL_OPTION_MAP,
     MONITOR_PERIOD_MAP,
     NOTIFICATION_TYPE_MAP,
-    AGGREGATION_MAP,
-    FILL_OPTION_MAP,
+    OPERATOR_MAP,
     SLO_TIME_UNIT_MAP,
+    SYNTHETIC_MONITOR_TYPE_MAP,
     THRESHOLD_OCCURRENCES_MAP,
-    ENTITY_MAPPINGS,
+    VISUALIZATION_TYPE_MAP,
+    EntityMapper,
+    EntityMapping,
 )
-
 
 # ─── Mapping dictionaries ───────────────────────────────────────────────────
 

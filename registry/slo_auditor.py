@@ -1,15 +1,14 @@
 """SLO audit and migration for Dynatrace."""
 
-import re
 import json
-import urllib.request
+import re
 import urllib.error
-from typing import Any, Dict, List, Optional, Tuple
+import urllib.request
+from typing import Dict, List, Optional, Tuple
 
 import structlog
 
 from .environment import DTEnvironmentRegistry
-from utils.auth import get_auth_header
 
 logger = structlog.get_logger()
 
