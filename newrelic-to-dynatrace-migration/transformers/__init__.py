@@ -6,6 +6,10 @@ from .alert_transformer import AlertTransformer
 from .synthetic_transformer import SyntheticTransformer
 from .slo_transformer import SLOTransformer
 from .workload_transformer import WorkloadTransformer
+from .infrastructure_transformer import InfrastructureTransformer
+from .log_parsing_transformer import LogParsingTransformer
+from .tag_transformer import TagTransformer
+from .drop_rule_transformer import DropRuleTransformer
 from .nrql_converter import NRQLtoDQLConverter
 
 __all__ = [
@@ -16,5 +20,9 @@ __all__ = [
     "SyntheticTransformer",
     "SLOTransformer",
     "WorkloadTransformer",
+    "InfrastructureTransformer",
+    "LogParsingTransformer",
+    "TagTransformer",
+    "DropRuleTransformer",
     "NRQLtoDQLConverter",
 ]

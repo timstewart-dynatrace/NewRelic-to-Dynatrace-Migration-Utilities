@@ -61,6 +61,10 @@ from transformers import (
     SyntheticTransformer,
     SLOTransformer,
     WorkloadTransformer,
+    InfrastructureTransformer,
+    LogParsingTransformer,
+    TagTransformer,
+    DropRuleTransformer,
 )
 
 
@@ -87,6 +91,10 @@ class MigrationOrchestrator:
         self.synthetic_transformer = SyntheticTransformer()
         self.slo_transformer = SLOTransformer()
         self.workload_transformer = WorkloadTransformer()
+        self.infrastructure_transformer = InfrastructureTransformer()
+        self.log_parsing_transformer = LogParsingTransformer()
+        self.tag_transformer = TagTransformer()
+        self.drop_rule_transformer = DropRuleTransformer()
 
         # Create output directories
         self.output_dir.mkdir(parents=True, exist_ok=True)

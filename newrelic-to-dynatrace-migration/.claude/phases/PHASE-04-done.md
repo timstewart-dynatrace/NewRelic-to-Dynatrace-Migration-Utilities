@@ -1,5 +1,5 @@
 # Phase 04 — New Entity Transformers
-Status: PENDING
+Status: DONE
 
 ## Goal
 Add transformers for New Relic entity types that are currently missing, expanding migration coverage beyond dashboards/alerts/synthetics/SLOs/workloads.

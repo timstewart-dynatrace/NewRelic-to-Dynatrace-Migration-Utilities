@@ -138,8 +138,10 @@ AVAILABLE_COMPONENTS = [
     "slos",
     "workloads",
     "notification_channels",
-    "apm_settings",
     "infrastructure",
+    "log_parsing",
+    "tags",
+    "drop_rules",
 ]
 
 # Component dependencies (must be migrated in order)

@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-04-09
+
+### Added (Phase 4 — New Entity Transformers)
+- InfrastructureTransformer: NR host-not-reporting/process-not-running → DT metric events
+- LogParsingTransformer: NR grok/regex log rules → DT processing rules with DPL patterns
+- TagTransformer: NR entity tags → DT auto-tag rules (10 entity type mappings)
+- DropRuleTransformer: NR data drop filter rules → DT metric/log ingest rules
+- 32 new tests across 4 test files — 834 total across 19 files
+
+### Changed
+- Removed dead `apm_settings` from AVAILABLE_COMPONENTS (no transformer existed)
+- Added `infrastructure`, `log_parsing`, `tags`, `drop_rules` to AVAILABLE_COMPONENTS
+
 ## [0.4.0] - 2026-04-09
 
 ### Added (Phase 3 — Environment Registry & Live Validation)
