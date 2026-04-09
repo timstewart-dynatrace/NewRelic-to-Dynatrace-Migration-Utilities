@@ -698,7 +698,8 @@ def _display_compile_result(result, show_original: str = None):
 @click.option("--interactive", "-i", is_flag=True, help="Interactive REPL mode")
 @click.option("--file", "-f", "input_file", type=click.Path(exists=True), help="Read queries from file")
 @click.option("--output", "-o", "output_file", type=click.Path(), help="Write results to file")
-def compile_nrql(nrql: Optional[str], interactive: bool, input_file: Optional[str], output_file: Optional[str]):
+@click.option("--validate", "-v", is_flag=True, help="Validate compiled DQL against live DT environment")
+def compile_nrql(nrql: Optional[str], interactive: bool, input_file: Optional[str], output_file: Optional[str], validate: bool):
     """Compile NRQL queries to DQL.
 
     Modes:
@@ -708,6 +709,8 @@ def compile_nrql(nrql: Optional[str], interactive: bool, input_file: Optional[st
       python migrate.py compile --interactive
 
       python migrate.py compile --file queries.nrql --output results.dql
+
+      python migrate.py compile --validate "SELECT count(*) FROM Transaction"
     """
     from compiler import NRQLCompiler
 
@@ -715,6 +718,14 @@ def compile_nrql(nrql: Optional[str], interactive: bool, input_file: Optional[st
         ctx = click.get_current_context()
         click.echo(ctx.get_help())
         sys.exit(1)
+
+    # Optionally create registry for live validation
+    registry = None
+    if validate:
+        registry = _create_registry()
+        if not registry:
+            console.print("[yellow]Warning: Could not create registry for live validation. "
+                          "Set DYNATRACE_ENVIRONMENT_URL and DYNATRACE_API_TOKEN in .env[/yellow]")
 
     compiler = NRQLCompiler()
 
@@ -782,9 +793,79 @@ def compile_nrql(nrql: Optional[str], interactive: bool, input_file: Optional[st
         if result.warnings:
             for w in result.warnings:
                 console.print(f"[yellow]Warning:[/yellow] {w}")
+
+        # Live validation against DT environment
+        if validate and registry:
+            is_valid, error_msg, _ = registry.validate_dql_syntax(result.dql)
+            if is_valid is True:
+                console.print("[green]Live validation: DQL is valid[/green]")
+            elif is_valid is False:
+                console.print(f"[red]Live validation failed:[/red] {error_msg}")
+            else:
+                console.print(f"[yellow]Live validation skipped:[/yellow] {error_msg}")
     else:
         console.print(f"[red]Error:[/red] {result.error}")
         sys.exit(1)
+
+
+def _create_registry():
+    """Create a DTEnvironmentRegistry from environment variables if available."""
+    dt_url = os.environ.get("DYNATRACE_ENVIRONMENT_URL", "")
+    api_token = os.environ.get("DYNATRACE_API_TOKEN", "")
+    oauth_token = os.environ.get("DYNATRACE_OAUTH_TOKEN", "")
+
+    if not dt_url or (not api_token and not oauth_token):
+        return None
+
+    try:
+        from registry.environment import DTEnvironmentRegistry
+        return DTEnvironmentRegistry(dt_url, oauth_token=oauth_token, api_token=api_token)
+    except Exception as e:
+        logger.warning("Could not create registry", error=str(e))
+        return None
+
+
+@click.command("audit-slos")
+def audit_slos():
+    """Audit SLOs in the Dynatrace environment for metric validity.
+
+    Checks all SLOs for missing metrics, invalid aggregations, and NRQL syntax
+    that wasn't properly converted. Requires DYNATRACE_ENVIRONMENT_URL and
+    DYNATRACE_OAUTH_TOKEN environment variables.
+    """
+    oauth_token = os.environ.get("DYNATRACE_OAUTH_TOKEN", "")
+    api_token = os.environ.get("DYNATRACE_API_TOKEN", "")
+    dt_url = os.environ.get("DYNATRACE_ENVIRONMENT_URL", "")
+
+    if not dt_url or not oauth_token:
+        console.print("[red]Error: DYNATRACE_ENVIRONMENT_URL and DYNATRACE_OAUTH_TOKEN required[/red]")
+        console.print("SLO audit requires OAuth token for Platform SLO API access.")
+        sys.exit(1)
+
+    from registry.environment import DTEnvironmentRegistry
+    from registry.slo_auditor import SLOAuditor
+
+    registry = DTEnvironmentRegistry(dt_url, oauth_token=oauth_token, api_token=api_token)
+    auditor = SLOAuditor(dt_url, oauth_token, api_token=api_token, registry=registry)
+
+    console.print("[bold]Auditing SLOs...[/bold]\n")
+    results = auditor.audit()
+
+    # Display results
+    table = Table(title="SLO Audit Results", show_header=True, header_style="bold cyan")
+    table.add_column("SLO", style="white")
+    table.add_column("Status", justify="center")
+    table.add_column("Issues", style="yellow")
+
+    for slo_result in results:
+        status = "[green]OK[/green]" if slo_result.get("valid") else "[red]FAIL[/red]"
+        issues = "; ".join(slo_result.get("issues", [])) or "—"
+        table.add_row(slo_result.get("name", "Unknown"), status, issues[:80])
+
+    console.print(table)
+
+    valid = sum(1 for r in results if r.get("valid"))
+    console.print(f"\n[bold]{valid}/{len(results)} SLOs valid[/bold]")
 
 
 @click.command("convert")
@@ -896,6 +977,7 @@ cli.add_command(main, "migrate")
 cli.add_command(compile_nrql, "compile")
 cli.add_command(convert_nrql, "convert")
 cli.add_command(reference, "reference")
+cli.add_command(audit_slos, "audit-slos")
 
 
 if __name__ == "__main__":

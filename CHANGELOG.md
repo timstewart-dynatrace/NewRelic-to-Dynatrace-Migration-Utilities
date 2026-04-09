@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-04-09
+
+### Added (Phase 3 — Environment Registry & Live Validation)
+- DTEnvironmentRegistry: lazy-loaded caches for metrics, entities, dashboards, management zones, synthetic locations
+- Fuzzy metric matching with 19 semantic synonym groups (error/failure, cpu/processor, etc.)
+- DQL live validation via Grail query API (submit + parse errors)
+- SLOAuditor: batch SLO audit for metric validity, invalid aggregation detection, NRQL syntax detection
+- OAuth authentication support (client credentials flow via `sso.dynatrace.com`)
+- Auth utilities: `get_auth_header()`, `get_dt_oauth_token()`, `ms_to_dql_duration()`
+- CLI: `compile --validate` flag for live DQL validation against DT environment
+- CLI: `audit-slos` subcommand for SLO metric audit
+- 55 new tests (registry, SLO auditor, auth) — 802 total across 15 files
+
 ## [0.3.0] - 2026-04-09
 
 ### Added (Phase 2 — Test Coverage Completion)
