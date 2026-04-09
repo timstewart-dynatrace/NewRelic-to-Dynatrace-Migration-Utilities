@@ -11,10 +11,10 @@ Utilities for migrating from New Relic to Dynatrace.
 
 This repository contains two complementary tools:
 
-| Tool | Description | Location |
-|------|-------------|----------|
-| **NRQL to DQL Converter** | Standalone query converter | [`nrql-converter/`](nrql-converter/) |
-| **Migration Framework** | Full configuration migration | [`newrelic-to-dynatrace-migration/`](newrelic-to-dynatrace-migration/) |
+| Tool                      | Description                  | Location                                                               |
+| ------------------------- | ---------------------------- | ---------------------------------------------------------------------- |
+| **NRQL to DQL Converter** | Standalone query converter   | [`nrql-converter/`](nrql-converter/)                                   |
+| **Migration Framework**   | Full configuration migration | [`newrelic-to-dynatrace-migration/`](newrelic-to-dynatrace-migration/) |
 
 ---
 
@@ -142,33 +142,54 @@ Dynatrace-NewRelic/
 │
 └── newrelic-to-dynatrace-migration/       # Full migration framework
     ├── migrate.py                         # Migration CLI entry point
+    ├── pyproject.toml                     # pytest configuration
     ├── requirements.txt                   # Python dependencies
     ├── .env.example                       # Environment template
-    ├── CLAUDE.md                          # Development documentation
-    ├── CLAUDE-for-NR.md                   # Research & reference guide
+    │
+    ├── compiler/                          # NRQL-to-DQL AST compiler
+    │   ├── tokens.py                      # TokenType enum, Token dataclass
+    │   ├── lexer.py                       # NRQLLexer (tokenization)
+    │   ├── ast_nodes.py                   # 18 AST node classes
+    │   ├── parser.py                      # NRQLParser (recursive descent)
+    │   ├── emitter.py                     # DQLEmitter (context-aware DQL generation)
+    │   └── compiler.py                    # NRQLCompiler (orchestrator + validation)
     │
     ├── config/
-    │   ├── __init__.py
     │   └── settings.py                    # Configuration (pydantic)
     │
     ├── clients/
-    │   ├── __init__.py
     │   ├── newrelic_client.py             # NerdGraph GraphQL client
-    │   └── dynatrace_client.py            # Settings API v2 client
+    │   └── dynatrace_client.py            # Settings API v2 + Config API v1 client
     │
     ├── transformers/
-    │   ├── __init__.py
-    │   ├── mapping_rules.py               # Entity mappings
-    │   ├── dashboard_transformer.py
-    │   ├── alert_transformer.py
-    │   ├── synthetic_transformer.py
-    │   ├── slo_transformer.py
-    │   └── workload_transformer.py
+    │   ├── mapping_rules.py               # Entity/visualization/chart mappings
+    │   ├── nrql_mapping_rules.py          # NRQL field/metric/aggregation maps (230+72+43)
+    │   ├── nrql_converter.py              # NRQLtoDQLConverter (AST + post-processing)
+    │   ├── converters.py                  # Specialized converters (regex→DPL, rate, etc.)
+    │   ├── dashboard_transformer.py       # Dashboard page→dashboard conversion
+    │   ├── alert_transformer.py           # Alert policy→alerting profile + metric events
+    │   ├── synthetic_transformer.py       # Monitor→HTTP/Browser monitor
+    │   ├── slo_transformer.py             # SLO→SLO with type detection
+    │   └── workload_transformer.py        # Workload→management zone
     │
-    └── utils/
-        ├── __init__.py
-        ├── logger.py                      # Structured logging
-        └── validators.py                  # Config validation
+    ├── validators/
+    │   ├── dql_validator.py               # DQL syntax validator (9 regex rules)
+    │   └── dql_fixer.py                   # DQL auto-fixer (19 fix rules)
+    │
+    ├── utils/
+    │   ├── logger.py                      # Structured logging (structlog)
+    │   └── validators.py                  # Config & structure validators
+    │
+    └── tests/
+        ├── conftest.py                    # Shared fixtures
+        └── unit/
+            ├── test_compiler.py           # 282 compiler tests (25 classes)
+            ├── test_transformers.py       # All 5 transformer tests
+            ├── test_converters.py         # Specialized converter tests
+            ├── test_mapping_rules.py      # EntityMapper + mapping dict tests
+            ├── test_dql_validator.py       # DQL syntax validator tests
+            ├── test_dql_fixer.py          # DQL auto-fixer tests
+            └── test_utils_validators.py   # Config validator tests
 ```
 
 ## Required API Permissions
@@ -197,14 +218,14 @@ Dynatrace-NewRelic/
 
 ## Known Limitations
 
-| Area                    | Limitation                    | Workaround             |
-| ----------------------- | ----------------------------- | ---------------------- |
-| **NRQL → DQL**          | Limited automatic conversion  | Manual query review    |
-| **Scripted Synthetics** | Complex scripts not converted | Manual recreation      |
-| **Entity References**   | GUIDs don't map to DT IDs     | Manual linking         |
-| **Dashboard Variables** | Limited filter conversion     | Manual configuration   |
-| **Dynamic Baselines**   | Not automatically converted   | Manual threshold setup |
-| **Historical Data**     | Not transferable              | N/A                    |
+| Area                    | Limitation                                            | Workaround             |
+| ----------------------- | ----------------------------------------------------- | ---------------------- |
+| **NRQL → DQL**          | AST compiler covers 282 tested patterns; edge cases may need review | Manual query review    |
+| **Scripted Synthetics** | Complex scripts not converted                         | Manual recreation      |
+| **Entity References**   | GUIDs don't map to DT IDs                             | Manual linking         |
+| **Dashboard Variables** | Limited filter conversion                             | Manual configuration   |
+| **Dynamic Baselines**   | Not automatically converted                           | Manual threshold setup |
+| **Historical Data**     | Not transferable                                      | N/A                    |
 
 ## Related Resources
 

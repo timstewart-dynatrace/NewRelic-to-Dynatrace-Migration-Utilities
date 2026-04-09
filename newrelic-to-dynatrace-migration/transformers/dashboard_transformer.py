@@ -1,5 +1,8 @@
 """
 Dashboard Transformer - Converts New Relic dashboards to Dynatrace format.
+
+Uses the AST-based NRQL compiler for accurate query translation (282 tested patterns)
+instead of regex-based conversion.
 """
 
 import json
@@ -13,6 +16,7 @@ from .mapping_rules import (
     VISUALIZATION_TYPE_MAP,
     CHART_TYPE_MAP,
 )
+from .nrql_converter import NRQLtoDQLConverter
 
 logger = structlog.get_logger()
 
@@ -49,8 +53,9 @@ class DashboardTransformer:
     DEFAULT_TILE_WIDTH = 6
     DEFAULT_TILE_HEIGHT = 4
 
-    def __init__(self):
+    def __init__(self, registry=None):
         self.mapper = EntityMapper()
+        self._nrql_converter = NRQLtoDQLConverter(registry=registry)
 
     def transform(self, nr_dashboard: Dict[str, Any]) -> List[TransformResult]:
         """
@@ -224,41 +229,35 @@ class DashboardTransformer:
         tile: Dict[str, Any],
         warnings: List[str]
     ) -> Dict[str, Any]:
-        """Transform billboard (single value) widget."""
+        """Transform billboard (single value) widget using the NRQL compiler."""
         raw_config = widget.get("rawConfiguration", {})
         nrql_queries = raw_config.get("nrqlQueries", [])
 
-        # Convert to custom chart tile for now
-        tile["tileType"] = "CUSTOM_CHARTING"
+        tile["tileType"] = "DATA_EXPLORER"
 
         if nrql_queries:
-            # Note: NRQL to DQL conversion is complex
-            # This creates a placeholder
             query = nrql_queries[0].get("query", "")
-            tile["customName"] = f"Migrated: {widget.get('title', 'Billboard')}"
-            tile["queries"] = [
-                {
-                    "id": "A",
-                    "metric": "builtin:tech.generic.placeholder",
-                    "spaceAggregation": "AVG",
-                    "timeAggregation": "DEFAULT",
-                    "splitBy": [],
-                    "sortBy": "DESC",
-                    "filterBy": {
-                        "filter": None,
-                        "globalEntity": None,
-                        "filterType": None
-                    },
-                    "limit": 20,
-                    "rate": "NONE",
-                    "enabled": True
-                }
-            ]
+            title = widget.get("title", "Billboard")
+            dql_result = self._convert_nrql_to_dql(query, title)
 
-            warnings.append(
-                f"Billboard widget '{widget.get('title')}' requires manual "
-                f"DQL query configuration. Original NRQL: {query[:100]}..."
-            )
+            tile["customName"] = title
+            tile["queries"] = [{
+                "id": "A",
+                "enabled": True,
+                "freeText": dql_result["dql"],
+                "queryMetaData": {
+                    "customName": title
+                }
+            }]
+
+            if dql_result["warnings"]:
+                warnings.extend(dql_result["warnings"])
+
+            if not dql_result["fully_converted"]:
+                warnings.append(
+                    f"Billboard '{title}' converted with {dql_result.get('confidence', 'UNKNOWN')} "
+                    f"confidence. Original NRQL: {query[:100]}..."
+                )
 
         return tile
 
@@ -280,8 +279,8 @@ class DashboardTransformer:
         if nrql_queries:
             query = nrql_queries[0].get("query", "")
 
-            # Attempt basic NRQL to DQL conversion
-            dql_result = self._convert_nrql_to_dql(query)
+            # Convert NRQL to DQL using the AST compiler
+            dql_result = self._convert_nrql_to_dql(query, widget.get("title", "Chart"))
 
             tile["queries"] = [{
                 "id": "A",
@@ -303,78 +302,22 @@ class DashboardTransformer:
 
         return tile
 
-    def _convert_nrql_to_dql(self, nrql: str) -> Dict[str, Any]:
+    def _convert_nrql_to_dql(self, nrql: str, title: str = "") -> Dict[str, Any]:
         """
-        Convert NRQL (New Relic Query Language) to DQL (Dynatrace Query Language).
+        Convert NRQL to DQL using the AST-based compiler.
 
-        This is a basic conversion that handles common patterns.
-        Complex queries will require manual adjustment.
+        Uses a formal three-stage compiler (lexer/parser/AST/emitter)
+        with 282 tested patterns including apdex, percentage, funnel,
+        K8s metrics, subqueries, COMPARE WITH, and more.
         """
-        warnings = []
-        fully_converted = True
-
-        dql = nrql
-
-        # Common NRQL to DQL conversions
-        conversions = [
-            # SELECT -> fetch
-            (r"^SELECT\s+", "fetch "),
-
-            # FROM TransactionError -> fetch logs | filter ...
-            (r"\bFROM\s+Transaction\b", "data | filter dt.entity.service isNotNull"),
-            (r"\bFROM\s+TransactionError\b", "data | filter error == true"),
-            (r"\bFROM\s+Metric\b", "metrics | filter"),
-            (r"\bFROM\s+Log\b", "logs | filter"),
-
-            # TIMESERIES -> | sort timestamp
-            (r"\bTIMESERIES\b", "| sort timestamp"),
-
-            # FACET -> | summarize by
-            (r"\bFACET\s+", "| summarize by "),
-
-            # Common aggregations
-            (r"\baverage\(([^)]+)\)", r"avg(\1)"),
-            (r"\bpercentile\(([^,]+),\s*(\d+)\)", r"percentile(\1, \2)"),
-            (r"\buniqueCounts?\(([^)]+)\)", r"countDistinct(\1)"),
-
-            # WHERE -> filter
-            (r"\bWHERE\s+", "| filter "),
-
-            # SINCE/UNTIL - Dynatrace uses different time selection
-            (r"\bSINCE\s+\d+\s+\w+\s+AGO\b", ""),
-            (r"\bUNTIL\s+\d+\s+\w+\s+AGO\b", ""),
-
-            # LIMIT -> | limit
-            (r"\bLIMIT\s+(\d+)", r"| limit \1"),
-        ]
-
-        for pattern, replacement in conversions:
-            if re.search(pattern, dql, re.IGNORECASE):
-                dql = re.sub(pattern, replacement, dql, flags=re.IGNORECASE)
-
-        # Check for unconverted NRQL-specific elements
-        nrql_specific = [
-            "EXTRAPOLATE", "RAW", "COMPARE WITH", "SINCE", "UNTIL",
-            "WITH TIMEZONE", "AS"
-        ]
-
-        for term in nrql_specific:
-            if term in dql.upper():
-                warnings.append(f"NRQL term '{term}' may not convert directly to DQL")
-                fully_converted = False
-
-        # Clean up multiple spaces and normalize
-        dql = re.sub(r"\s+", " ", dql).strip()
-
-        # If conversion seems incomplete, wrap in a placeholder
-        if not dql.startswith("fetch") and not dql.startswith("metrics"):
-            dql = f"// Original NRQL (requires manual conversion):\n// {nrql}\n\nfetch metrics"
-            fully_converted = False
+        result = self._nrql_converter.convert(nrql, title or "query")
 
         return {
-            "dql": dql,
-            "warnings": warnings,
-            "fully_converted": fully_converted
+            "dql": result.converted_dql,
+            "warnings": result.warnings,
+            "fully_converted": result.success and result.confidence == "HIGH",
+            "confidence": result.confidence,
+            "fixes_applied": result.fixes_applied,
         }
 
     def _transform_variables(self, variables: List[Dict[str, Any]]) -> Dict[str, Any]:
