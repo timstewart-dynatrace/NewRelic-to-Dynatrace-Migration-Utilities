@@ -1,0 +1,368 @@
+{
+  "dashboards": [
+    {
+      "guid": "MXxWSVp8QVBQTElDQVRJT058MTIzNDU2",
+      "name": "Production Overview",
+      "description": "Key metrics for the production environment",
+      "permissions": "PUBLIC_READ_WRITE",
+      "pages": [
+        {
+          "guid": "MXxWSVp8UEFHRXwxMDAwMDE",
+          "name": "Application Performance",
+          "description": "",
+          "widgets": [
+            {
+              "id": "widget-001",
+              "title": "Request Throughput",
+              "layout": { "column": 0, "row": 0, "width": 4, "height": 3 },
+              "visualization": { "id": "viz.line" },
+              "rawConfiguration": {
+                "nrqlQueries": [
+                  {
+                    "accountIds": [1234567],
+                    "query": "SELECT rate(count(*), 1 minute) FROM Transaction TIMESERIES SINCE 1 hour ago"
+                  }
+                ]
+              }
+            },
+            {
+              "id": "widget-002",
+              "title": "Average Response Time",
+              "layout": { "column": 4, "row": 0, "width": 4, "height": 3 },
+              "visualization": { "id": "viz.billboard" },
+              "rawConfiguration": {
+                "nrqlQueries": [
+                  {
+                    "accountIds": [1234567],
+                    "query": "SELECT average(duration) AS 'Avg Response Time' FROM Transaction SINCE 1 hour ago"
+                  }
+                ]
+              }
+            },
+            {
+              "id": "widget-003",
+              "title": "Error Rate by Service",
+              "layout": { "column": 8, "row": 0, "width": 4, "height": 3 },
+              "visualization": { "id": "viz.bar" },
+              "rawConfiguration": {
+                "nrqlQueries": [
+                  {
+                    "accountIds": [1234567],
+                    "query": "SELECT percentage(count(*), WHERE error IS true) FROM Transaction FACET appName SINCE 1 hour ago"
+                  }
+                ]
+              }
+            },
+            {
+              "id": "widget-004",
+              "title": "Top 10 Slowest Endpoints",
+              "layout": { "column": 0, "row": 3, "width": 6, "height": 3 },
+              "visualization": { "id": "viz.table" },
+              "rawConfiguration": {
+                "nrqlQueries": [
+                  {
+                    "accountIds": [1234567],
+                    "query": "SELECT average(duration), count(*) FROM Transaction FACET name SINCE 1 hour ago LIMIT 10"
+                  }
+                ]
+              }
+            },
+            {
+              "id": "widget-005",
+              "title": "Response Time Distribution",
+              "layout": { "column": 6, "row": 3, "width": 6, "height": 3 },
+              "visualization": { "id": "viz.area" },
+              "rawConfiguration": {
+                "nrqlQueries": [
+                  {
+                    "accountIds": [1234567],
+                    "query": "SELECT percentile(duration, 50, 90, 95, 99) FROM Transaction TIMESERIES SINCE 1 hour ago"
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "guid": "MXxWSVp8UEFHRXwxMDAwMDI",
+          "name": "Infrastructure",
+          "description": "",
+          "widgets": [
+            {
+              "id": "widget-006",
+              "title": "CPU Usage by Host",
+              "layout": { "column": 0, "row": 0, "width": 6, "height": 3 },
+              "visualization": { "id": "viz.line" },
+              "rawConfiguration": {
+                "nrqlQueries": [
+                  {
+                    "accountIds": [1234567],
+                    "query": "SELECT average(cpuPercent) FROM SystemSample FACET hostname TIMESERIES SINCE 1 hour ago"
+                  }
+                ]
+              }
+            },
+            {
+              "id": "widget-007",
+              "title": "Memory Usage",
+              "layout": { "column": 6, "row": 0, "width": 6, "height": 3 },
+              "visualization": { "id": "viz.line" },
+              "rawConfiguration": {
+                "nrqlQueries": [
+                  {
+                    "accountIds": [1234567],
+                    "query": "SELECT average(memoryUsedPercent) FROM SystemSample FACET hostname TIMESERIES SINCE 1 hour ago"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "guid": "MXxWSVp8QVBQTElDQVRJT058Nzg5MDEy",
+      "name": "API Health",
+      "description": "API endpoint monitoring",
+      "permissions": "PUBLIC_READ_ONLY",
+      "pages": [
+        {
+          "guid": "MXxWSVp8UEFHRXwxMDAwMDM",
+          "name": "API Metrics",
+          "description": "",
+          "widgets": [
+            {
+              "id": "widget-008",
+              "title": "API Requests per Minute",
+              "layout": { "column": 0, "row": 0, "width": 12, "height": 3 },
+              "visualization": { "id": "viz.line" },
+              "rawConfiguration": {
+                "nrqlQueries": [
+                  {
+                    "accountIds": [1234567],
+                    "query": "SELECT rate(count(*), 1 minute) FROM Transaction WHERE request.uri LIKE '/api/%' FACET request.uri TIMESERIES SINCE 1 hour ago"
+                  }
+                ]
+              }
+            },
+            {
+              "id": "widget-009",
+              "title": "4xx and 5xx Errors",
+              "layout": { "column": 0, "row": 3, "width": 6, "height": 3 },
+              "visualization": { "id": "viz.line" },
+              "rawConfiguration": {
+                "nrqlQueries": [
+                  {
+                    "accountIds": [1234567],
+                    "query": "SELECT count(*) FROM Transaction WHERE httpResponseCode >= 400 FACET CASES(WHERE httpResponseCode >= 400 AND httpResponseCode < 500 AS '4xx', WHERE httpResponseCode >= 500 AS '5xx') TIMESERIES SINCE 1 hour ago"
+                  }
+                ]
+              }
+            },
+            {
+              "id": "widget-010",
+              "title": "P95 Latency",
+              "layout": { "column": 6, "row": 3, "width": 6, "height": 3 },
+              "visualization": { "id": "viz.billboard" },
+              "rawConfiguration": {
+                "nrqlQueries": [
+                  {
+                    "accountIds": [1234567],
+                    "query": "SELECT percentile(duration, 95) AS 'P95 Latency (s)' FROM Transaction WHERE request.uri LIKE '/api/%' SINCE 1 hour ago"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "alert_policies": [
+    {
+      "id": "policy-001",
+      "name": "Production Alerts",
+      "incidentPreference": "PER_CONDITION",
+      "conditions": [
+        {
+          "id": "cond-001",
+          "name": "High Error Rate",
+          "type": "NRQL",
+          "enabled": true,
+          "conditionType": "NRQL",
+          "nrql": {
+            "query": "SELECT percentage(count(*), WHERE error IS true) FROM Transaction"
+          },
+          "signal": {
+            "aggregationWindow": 60,
+            "aggregationMethod": "EVENT_FLOW",
+            "aggregationDelay": 0,
+            "fillOption": "NONE"
+          },
+          "terms": [
+            {
+              "threshold": 5.0,
+              "thresholdDuration": 300,
+              "thresholdOccurrences": "ALL",
+              "operator": "ABOVE",
+              "priority": "critical"
+            },
+            {
+              "threshold": 2.0,
+              "thresholdDuration": 300,
+              "thresholdOccurrences": "ALL",
+              "operator": "ABOVE",
+              "priority": "warning"
+            }
+          ],
+          "expiration": {
+            "closeViolationsOnExpiration": true,
+            "expirationDuration": 86400,
+            "openViolationOnExpiration": false
+          },
+          "description": "Fires when error rate exceeds 5% for 5 minutes"
+        },
+        {
+          "id": "cond-002",
+          "name": "High Response Time",
+          "type": "NRQL",
+          "enabled": true,
+          "conditionType": "NRQL",
+          "nrql": {
+            "query": "SELECT average(duration) FROM Transaction"
+          },
+          "signal": {
+            "aggregationWindow": 60,
+            "aggregationMethod": "EVENT_FLOW",
+            "aggregationDelay": 0,
+            "fillOption": "LAST_VALUE"
+          },
+          "terms": [
+            {
+              "threshold": 2.0,
+              "thresholdDuration": 300,
+              "thresholdOccurrences": "ALL",
+              "operator": "ABOVE",
+              "priority": "critical"
+            }
+          ],
+          "runbookUrl": "https://wiki.example.com/runbooks/high-latency",
+          "description": "Average response time exceeds 2 seconds"
+        }
+      ]
+    }
+  ],
+  "synthetic_monitors": [
+    {
+      "guid": "synth-001",
+      "name": "Homepage Health Check",
+      "monitorType": "SIMPLE",
+      "monitoredUrl": "https://www.example.com",
+      "period": "EVERY_5_MINUTES",
+      "status": "ENABLED",
+      "monitorSummary": {
+        "status": "PASSING",
+        "successRate": 99.8
+      },
+      "tags": [
+        { "key": "environment", "values": ["production"] },
+        { "key": "team", "values": ["platform"] }
+      ]
+    },
+    {
+      "guid": "synth-002",
+      "name": "API Login Flow",
+      "monitorType": "SCRIPT_API",
+      "monitoredUrl": "https://api.example.com/auth/login",
+      "period": "EVERY_15_MINUTES",
+      "status": "ENABLED",
+      "monitorSummary": {
+        "status": "PASSING",
+        "successRate": 100.0
+      },
+      "tags": [
+        { "key": "environment", "values": ["production"] }
+      ]
+    },
+    {
+      "guid": "synth-003",
+      "name": "Checkout Flow",
+      "monitorType": "BROWSER",
+      "monitoredUrl": "https://www.example.com/checkout",
+      "period": "EVERY_30_MINUTES",
+      "status": "ENABLED",
+      "monitorSummary": {
+        "status": "PASSING",
+        "successRate": 97.5
+      },
+      "tags": [
+        { "key": "environment", "values": ["production"] },
+        { "key": "critical", "values": ["true"] }
+      ]
+    }
+  ],
+  "slos": [
+    {
+      "guid": "slo-001",
+      "name": "API Availability",
+      "description": "99.9% of API requests should return a successful response",
+      "objectives": [
+        {
+          "target": 99.9,
+          "timeWindow": {
+            "rolling": { "count": 7, "unit": "DAY" }
+          }
+        }
+      ],
+      "events": {
+        "validEvents": {
+          "from": "Transaction",
+          "where": "request.uri LIKE '/api/%'"
+        },
+        "goodEvents": {
+          "from": "Transaction",
+          "where": "request.uri LIKE '/api/%' AND httpResponseCode < 500"
+        }
+      }
+    },
+    {
+      "guid": "slo-002",
+      "name": "Checkout Latency",
+      "description": "95% of checkout requests should complete within 3 seconds",
+      "objectives": [
+        {
+          "target": 95.0,
+          "timeWindow": {
+            "rolling": { "count": 30, "unit": "DAY" }
+          }
+        }
+      ],
+      "events": {
+        "validEvents": {
+          "from": "Transaction",
+          "where": "name = 'WebTransaction/checkout'"
+        },
+        "goodEvents": {
+          "from": "Transaction",
+          "where": "name = 'WebTransaction/checkout' AND duration < 3"
+        }
+      }
+    }
+  ],
+  "workloads": [
+    {
+      "guid": "workload-001",
+      "name": "E-Commerce Platform",
+      "collection": [
+        { "guid": "entity-001", "name": "checkout-service", "type": "APM_APPLICATION" },
+        { "guid": "entity-002", "name": "payment-service", "type": "APM_APPLICATION" },
+        { "guid": "entity-003", "name": "inventory-service", "type": "APM_APPLICATION" },
+        { "guid": "entity-004", "name": "prod-web-01", "type": "HOST" },
+        { "guid": "entity-005", "name": "prod-web-02", "type": "HOST" }
+      ],
+      "entitySearchQueries": [
+        { "query": "type = 'APPLICATION' AND tags.team = 'ecommerce'" }
+      ]
+    }
+  ]
+}
