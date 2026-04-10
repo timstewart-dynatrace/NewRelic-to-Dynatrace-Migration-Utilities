@@ -125,8 +125,8 @@ class NRQLCompiler:
             print(result.dql)
     """
 
-    def __init__(self, field_map: Dict[str, str] = None, metric_map: Dict[str, str] = None,
-                 metric_transforms: Dict[str, Dict] = None, metric_resolver=None):
+    def __init__(self, field_map: Optional[Dict[str, str]] = None, metric_map: Optional[Dict[str, str]] = None,
+                 metric_transforms: Optional[Dict[str, Dict]] = None, metric_resolver=None):
         self.field_map = field_map or {}
         self.metric_map = metric_map or {}
         self.metric_transforms = metric_transforms or {}

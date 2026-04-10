@@ -162,7 +162,7 @@ class NRQLLexer:
         """Parse a double-quoted string literal: "value" -> STRING token."""
         start = self.pos
         self.pos += 1  # skip opening "
-        buf = []
+        buf: list[str] = []
         while self.pos < len(self.src):
             c = self.src[self.pos]
             if c == '"':

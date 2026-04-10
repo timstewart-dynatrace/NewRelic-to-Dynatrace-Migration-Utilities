@@ -114,8 +114,8 @@ class Settings:
 
     def _initialize(self):
         """Initialize all configuration sections."""
-        self.newrelic = NewRelicConfig()
-        self.dynatrace = DynatraceConfig()
+        self.newrelic = NewRelicConfig()  # type: ignore[call-arg]  # reads from env
+        self.dynatrace = DynatraceConfig()  # type: ignore[call-arg]  # reads from env
         self.migration = MigrationConfig()
 
     @classmethod
