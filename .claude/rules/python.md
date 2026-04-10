@@ -20,11 +20,11 @@
 ## Error Handling
 - Specific exceptions, not bare `except:`
 - Log errors with context via structlog
-- Return structured results (TransformResult, ConversionResult) rather than raising
+- Return structured results (`{Entity}TransformResult`, `ConversionResult`) rather than raising
 
 ## Adding a New Transformer
 1. Create `transformers/new_transformer.py`
-2. Implement `transform()` returning `TransformResult`
+2. Implement `transform()` returning `{Entity}TransformResult`
 3. Add mapping rules to `transformers/mapping_rules.py`
 4. Register in `transformers/__init__.py`
 5. Add to `MigrationOrchestrator` in `migrate.py`

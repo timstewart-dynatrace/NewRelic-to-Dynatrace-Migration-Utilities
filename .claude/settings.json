@@ -1,0 +1,39 @@
+{
+  "projectName": "New Relic to Dynatrace Migration Tool",
+  "projectType": "python",
+  "version": "1.2.0",
+  "description": "Universal migration tool for converting New Relic monitoring configurations to Dynatrace. Migrates dashboards (with a real NRQL-to-DQL compiler), alerts, synthetic monitors, SLOs, and workloads.",
+
+  "repository": {
+    "owner": "jtimothystewart",
+    "name": "Dynatrace-NewRelic",
+    "url": "https://github.com/jtimothystewart/Dynatrace-NewRelic"
+  },
+
+  "standards": {
+    "semanticVersioning": true,
+    "branchingStrategy": "feature/fix",
+    "requiresDocumentation": true,
+    "requiresTests": true,
+    "requiresChangeLog": true
+  },
+
+  "minimumCodeQuality": {
+    "typeHints": true,
+    "docstrings": true,
+    "linting": "ruff",
+    "formatter": "ruff format",
+    "typeChecker": "mypy",
+    "testing": "pytest",
+    "coverage": 80
+  },
+
+  "pythonEnvironment": {
+    "version": "3.9+",
+    "packageManager": "pip",
+    "virtualEnv": "venv",
+    "requirementsFile": "requirements.txt"
+  },
+
+  "customInstructions": "When a task is complete, perform the 'Reflection Protocol': 1. Update MEMORY.md with non-obvious quirks. 2. Log design decisions to DECISIONS.md. 3. Update active phase file with next step. 4. Do automatically before summarizing."
+}
