@@ -2,15 +2,20 @@
 
 ## Running Tests
 ```bash
-pytest tests/ -v                    # All 894 tests
+pytest tests/ -v                    # All 894 unit + 8 integration tests
 pytest tests/unit/test_compiler.py  # 292 compiler tests
 pytest tests/unit/test_cli.py       # CLI tests
 pytest -x --tb=short               # Stop on first failure
-pytest --cov=. --cov-report=html    # Coverage
+pytest --cov=. --cov-fail-under=80  # Coverage with threshold
+mypy compiler/ migration/ validators/ config/  # Type checking
+
+# Integration tests (requires .env with real credentials)
+RUN_INTEGRATION_TESTS=1 pytest tests/integration/ -v
 ```
 
 ## Test Structure
-- 894 total tests across 25 test files in `tests/unit/`
+- 894 unit tests across 25 test files in `tests/unit/`
+- 8 integration tests across 3 files in `tests/integration/` (env-var gated)
 - 292 compiler tests in `test_compiler.py` (25+ test classes by feature)
 - 17 CLI tests in `test_cli.py` (interactive, batch, reference, version, CSV batch)
 - 77 transformer tests in `test_transformers.py` + 32 across 4 new transformer test files

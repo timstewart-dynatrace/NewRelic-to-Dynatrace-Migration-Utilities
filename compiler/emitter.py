@@ -261,8 +261,8 @@ class DQLEmitter:
         'cluster_id', 'principal_id', 'type', 'name', 'mode',
     }
 
-    def __init__(self, field_map: Dict[str, str] = None, metric_map: Dict[str, str] = None,
-                 metric_transforms: Dict[str, Dict] = None, metric_resolver=None):
+    def __init__(self, field_map: Optional[Dict[str, str]] = None, metric_map: Optional[Dict[str, str]] = None,
+                 metric_transforms: Optional[Dict[str, Dict]] = None, metric_resolver=None):
         self.field_map = {**FIELD_MAP, **(field_map or {})}
         self.metric_map = metric_map or {}
         self.metric_transforms = metric_transforms or {}
@@ -274,8 +274,8 @@ class DQLEmitter:
         """Emit a complete DQL query from an NRQL AST."""
         self.warnings = []
         self._agg_counter = 0
-        self._histogram_bin_expr = None  # Set by histogram() handler for by:{bin()} injection
-        self._funnel_steps = []  # Set by funnel() handler for conversion rate fieldsAdd
+        self._histogram_bin_expr: Optional[str] = None  # Set by histogram() handler for by:{bin()} injection
+        self._funnel_steps: List[Tuple[str, str]] = []  # Set by funnel() handler for conversion rate fieldsAdd
         self._query_class = 'spans'  # Default; updated below after classify
 
         # Handle SHOW EVENT TYPES
@@ -469,8 +469,8 @@ class DQLEmitter:
         # Build the shifted pipeline: replace fetch line's time range
         lines = dql.split('\n')
         # Skip comment lines at the top
-        pipeline_lines = []
-        comment_lines = []
+        pipeline_lines: List[str] = []
+        comment_lines: List[str] = []
         for line in lines:
             if line.strip().startswith('//') and not pipeline_lines:
                 comment_lines.append(line)
@@ -513,6 +513,7 @@ class DQLEmitter:
     def _emit_join_clause(self, query: Query, base_dql: str) -> str:
         """Emit JOIN as DQL lookup command."""
         jc = query.join_clause
+        assert jc is not None  # caller checks this
         sub = jc.subquery
 
         # Determine subquery fetch type
@@ -800,7 +801,7 @@ class DQLEmitter:
             # Arithmetic between two agg branches, or agg with literal
             if has_agg_left and (has_agg_right or isinstance(node.right, LiteralExpr)):
                 # Need at least 2 distinct agg calls to qualify
-                aggs = []
+                aggs: List[FunctionCall] = []
                 self._collect_aggs(node, aggs)
                 return len(aggs) >= 2
         return False
@@ -916,7 +917,7 @@ class DQLEmitter:
 
         if note:
             dql = f"// {note}\n{dql}"
-        return dql
+        return str(dql)
 
     def _extract_metric_aggs(self, items: List[SelectItem]) -> List[Tuple[str, str, str]]:
         """Extract (func, dt_func, raw_field) tuples from SELECT items for metric queries."""
@@ -974,8 +975,8 @@ class DQLEmitter:
                 validated, warning = self.metric_resolver(field_key, raw_field, dt_metric)
                 if warning:
                     self.warnings.append(warning)
-                return validated
-            return dt_metric
+                return str(validated)
+            return str(dt_metric)
 
         # 2. Live resolver (handles fuzzy matching, text search)
         if self.metric_resolver:
@@ -983,7 +984,7 @@ class DQLEmitter:
             if warning:
                 self.warnings.append(warning)
             if resolved:
-                return resolved
+                return str(resolved)
 
         # Already a DT metric?
         if raw_field.startswith('dt.') or raw_field.startswith('builtin:'):
@@ -1593,14 +1594,14 @@ class DQLEmitter:
         if name_low == 'filter' and node.where_clause and node.args:
             inner = node.args[0]
             if isinstance(inner, FunctionCall):
-                dt_if = FILTER_IF_MAP.get(inner.name.lower())
-                if dt_if:
+                dt_if_name: Optional[str] = FILTER_IF_MAP.get(inner.name.lower())
+                if dt_if_name is not None:
                     field_str = ', '.join(self._emit_expr(a) for a in inner.args) if inner.args else ''
                     cond_str = self._emit_condition(node.where_clause)
                     if field_str and not isinstance(inner.args[0], StarExpr):
-                        return f"{dt_if}({field_str}, {cond_str})"
+                        return f"{dt_if_name}({field_str}, {cond_str})"
                     else:
-                        return f"{dt_if}({cond_str})"
+                        return f"{dt_if_name}({cond_str})"
                 else:
                     # Generic: func(field) with WHERE -> can't convert to If-variant
                     self.warnings.append(
@@ -1645,7 +1646,7 @@ class DQLEmitter:
         if name_low == 'histogram':
             field_expr = self._emit_expr(node.args[0]) if node.args else "duration"
             # Extract bin width from args
-            bin_width = None
+            bin_width: str = "1"
             if len(node.args) >= 4:
                 bin_width = self._emit_expr(node.args[3])
             elif len(node.args) >= 3:
@@ -1771,16 +1772,16 @@ class DQLEmitter:
                 arg = node.args[i]
                 if i + 1 < len(node.args):
                     if isinstance(arg, Condition):
-                        cond = self._emit_condition(arg)
+                        cond_str = self._emit_condition(arg)
                         label = self._emit_expr(node.args[i + 1])
-                        pairs.append((cond, label))
+                        pairs.append((cond_str, label))
                         i += 2
                     elif isinstance(arg, FunctionCall):
                         # Bare function condition: matchesPhrase(field, val) as 'label'
                         # Emit as a DQL boolean expression
-                        cond = self._emit_function(arg)
+                        cond_str = self._emit_function(arg)
                         label = self._emit_expr(node.args[i + 1])
-                        pairs.append((cond, label))
+                        pairs.append((cond_str, label))
                         i += 2
                     else:
                         i += 1
@@ -1791,8 +1792,8 @@ class DQLEmitter:
             # Build nested if chain: if(cond1, "label1", else:if(cond2, "label2", else:"Other"))
             # DQL requires the third parameter to be named 'else:'
             result = "\"Other\""
-            for cond, label in reversed(pairs):
-                result = f"if({cond}, {label}, else:{result})"
+            for pair_cond, label in reversed(pairs):
+                result = f"if({pair_cond}, {label}, else:{result})"
             return result
 
         # -- Multi-percentile: percentile(duration, 50, 90, 95, 99)

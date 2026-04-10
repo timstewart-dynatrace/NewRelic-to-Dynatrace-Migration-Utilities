@@ -332,7 +332,7 @@ class DQLValidator:
                 if not func_match:
                     func_match = re.match(r'(\w+)\s*\(', part)
 
-                if func_match:
+                if func_match and func_match.lastindex is not None:
                     func_name = func_match.group(func_match.lastindex).lower()
                     # Fix invalid timeseries aggs
                     if cmd.lower() == 'maketimeseries' and func_name in invalid_ts_aggs:
@@ -643,7 +643,7 @@ class DQLValidator:
             # Also handle field=value without spaces
             line = re.sub(
                 r'([a-zA-Z_][\w.]*)=(")',  # field="value" without spaces
-                lambda m: f'{m.group(1)}=={m.group(2)}',
+                lambda m: f'{m.group(1)}=={m.group(2)}',  # type: ignore[str-bytes-safe]
                 line
             )
             fixed_lines.append(line)

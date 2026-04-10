@@ -497,7 +497,7 @@ class NRQLParser:
         Also handles:
         - WHERE cond, 'label' (comma-separated variant)
         - matchesPhrase(field, val) as 'label' (bare function without WHERE)"""
-        args = []
+        args: list[ASTNode] = []
         while not self._check(TokenType.RPAREN) and not self._at_end():
             if self._match(TokenType.WHERE):
                 cond = self._parse_condition()
@@ -586,7 +586,7 @@ class NRQLParser:
         t = self._cur()
         if t.type == TokenType.IDENTIFIER and t.value.lower() in TIME_UNITS:
             self.pos += 1
-            return t.value.lower()
+            return str(t.value.lower())
         if t.type == TokenType.MAX_KW:
             # 'max' is not a time unit
             return None

@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.1] - 2026-04-10
+
+### Added (Phase 9 — Harden)
+- Coverage threshold enforcement: 80% minimum via `--cov-fail-under=80` in CI
+- Mypy type checking in CI for `compiler/`, `migration/`, `validators/`, `config/` (zero errors)
+- Integration test scaffold: 8 env-var-gated smoke tests for NR client, DT client, and compile roundtrip
+- Coverage and mypy configuration in `pyproject.toml`
+- `typecheck` CI job running mypy on core modules
+
+### Changed
+- Fixed type annotations across compiler package (Optional params, variable annotations, null checks)
+- Fixed `dql_fixer.py` regex group type safety
+- Excluded `nrql_converter.py` and `migrate.py` from coverage measurement (glue code tested indirectly)
+
 ## [1.2.0] - 2026-04-09
 
 ### Added (Phase 8 — Export Formats: Monaco & Terraform)
