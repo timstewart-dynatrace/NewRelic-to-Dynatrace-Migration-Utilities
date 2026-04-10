@@ -36,7 +36,10 @@ A universal, comprehensive migration framework for converting New Relic monitori
 # Install
 pip install -r requirements.txt
 
-# Configure (create .env file)
+# Try it without any credentials
+python migrate.py compile "SELECT count(*) FROM Transaction SINCE 1 hour ago"
+
+# Configure for full migration (create .env file)
 cp .env.example .env
 # Edit .env with your credentials
 
@@ -44,6 +47,8 @@ cp .env.example .env
 python migrate.py migrate --dry-run  # Validate first
 python migrate.py migrate --full     # Execute migration
 ```
+
+For a detailed walkthrough with sample data, see [docs/quickstart.md](docs/quickstart.md).
 
 ### CLI Reference
 
