@@ -7,8 +7,9 @@
 Universal migration tool for converting New Relic monitoring configurations to Dynatrace. Migrates dashboards (with a real NRQL-to-DQL compiler), alerts, synthetic monitors, SLOs, and workloads. Three-phase pipeline: Export (NR NerdGraph) -> Transform -> Import (DT APIs). Supports config-as-code export (Monaco, Terraform).
 
 **Last Updated:** 2026-04-09
-**Version:** 1.2.1
-**Phases Completed:** 0-8 (all complete)
+**Version:** 1.3.0
+**Phases Completed:** 0-10 (all complete)
+**Phases Completed:** 0-10 (all complete)
 
 ## Quick Reference
 
@@ -60,7 +61,7 @@ python migrate.py --version
 | CLI | Click + Rich | Subcommands with progress display |
 | Logging | structlog | Structured logging |
 | HTTP | requests | API clients |
-| Testing | pytest | 894 unit + 8 integration tests across 28 files |
+| Testing | pytest | 920 unit + 8 integration tests across 29 files |
 
 ## Architecture
 
@@ -105,7 +106,7 @@ All transformers follow a consistent pattern:
 | `config/` | Pydantic BaseSettings from .env |
 | `utils/` | Logging, auth (OAuth), validators |
 | `examples/` | Sample NRQL queries for batch testing |
-| `tests/` | 894 unit + 8 integration tests across 28 files |
+| `tests/` | 920 unit + 8 integration tests across 29 files |
 
 ## Rules
 

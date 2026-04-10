@@ -270,12 +270,22 @@ class DQLEmitter:
         self.warnings: List[str] = []
         self._agg_counter = 0  # for auto-naming aggregations
 
+    # Map NRQL window functions to DQL arrayMoving* equivalents
+    WINDOW_FUNCTION_MAP = {
+        'windowsum': ('sum', 'arrayMovingSum'),
+        'windowavg': ('avg', 'arrayMovingAvg'),
+        'windowcount': ('count', 'arrayMovingSum'),  # count -> sum of counts
+        'windowmax': ('max', 'arrayMovingMax'),
+        'windowmin': ('min', 'arrayMovingMin'),
+    }
+
     def emit(self, query: Query) -> str:
         """Emit a complete DQL query from an NRQL AST."""
         self.warnings = []
         self._agg_counter = 0
         self._histogram_bin_expr: Optional[str] = None  # Set by histogram() handler for by:{bin()} injection
         self._funnel_steps: List[Tuple[str, str]] = []  # Set by funnel() handler for conversion rate fieldsAdd
+        self._window_functions: List[Tuple[str, str, str, int]] = []  # (alias, inner_agg, arrayMovingFunc, window_points)
         self._query_class = 'spans'  # Default; updated below after classify
 
         # Handle SHOW EVENT TYPES
@@ -430,6 +440,35 @@ class DQLEmitter:
                 self.warnings.append(
                     f"SLIDE BY {sb}: couldn't auto-convert. "
                     f"Set interval to slide value and use rolling() window function."
+                )
+
+        # WINDOW FUNCTIONS -> arrayMoving* post-processing
+        # When _emit_function encountered windowSum/Avg/etc., it emitted the inner
+        # aggregation as an aliased expression (e.g., _w_sum=sum(duration)) and stored
+        # metadata here. Now we append fieldsAdd lines with the appropriate
+        # arrayMoving* function referencing the alias.
+        if self._window_functions:
+            for col_alias, agg_expr, array_moving_func, window_secs in self._window_functions:
+                # Determine the timeseries interval to calculate window points
+                ts_interval_secs = 60  # DQL default: 1 minute
+                if query.timeseries and query.timeseries.interval:
+                    parsed = self._interval_to_seconds(query.timeseries.interval)
+                    if parsed:
+                        ts_interval_secs = parsed
+
+                window_points = max(2, window_secs // ts_interval_secs)
+
+                # Derive a readable result column name from the alias
+                readable = col_alias.lstrip('_')
+                result_name = f"window_{readable}"
+                dql += f"\n| fieldsAdd {result_name} = {array_moving_func}({col_alias}, {window_points})"
+
+                window_unit = 's' if window_secs < 60 else ('m' if window_secs < 3600 else 'h')
+                window_val = window_secs if window_secs < 60 else (window_secs // 60 if window_secs < 3600 else window_secs // 3600)
+                self.warnings.append(
+                    f"{array_moving_func}() with {window_points}-point window "
+                    f"(~{window_val}{window_unit}) applied to {agg_expr}. "
+                    f"Adjust window_points if timeseries interval changes."
                 )
 
         # PREDICT -- DT uses Davis AI for predictions
@@ -1949,6 +1988,48 @@ class DQLEmitter:
             if node.args:
                 return f"/* bytecountestimate({self._emit_expr(node.args[0])}) */"
             return "/* bytecountestimate() -> DT Data Explorer */"
+
+        # -- Window functions: windowSum, windowAvg, windowCount, windowMax, windowMin
+        # NRQL: windowSum(field, N UNITS) in TIMESERIES context
+        # DQL:  makeTimeseries _val=sum(field) | fieldsAdd window_val=arrayMovingSum(_val, N)
+        if name_low in self.WINDOW_FUNCTION_MAP:
+            inner_agg, array_moving_func = self.WINDOW_FUNCTION_MAP[name_low]
+
+            # Extract the inner field/expression and window interval
+            if len(node.args) >= 2 and isinstance(node.args[1], TimeInterval):
+                ti = node.args[1]
+                window_secs = int(ti.value * {
+                    'second': 1, 'seconds': 1, 'sec': 1, 's': 1,
+                    'minute': 60, 'minutes': 60, 'min': 60, 'm': 60,
+                    'hour': 3600, 'hours': 3600, 'hr': 3600, 'h': 3600,
+                    'day': 86400, 'days': 86400, 'd': 86400,
+                    'week': 604800, 'weeks': 604800, 'w': 604800,
+                }.get(ti.unit.lower(), 60))
+
+                inner_field = self._emit_expr(node.args[0])
+
+                # For windowCount, inner agg is count() regardless of field
+                if name_low == 'windowcount':
+                    agg_expr = 'count()'
+                    col_alias = '_wc'
+                else:
+                    agg_expr = f"{inner_agg}({inner_field})"
+                    col_alias = f"_w_{inner_agg}"
+
+                # Store window function info for post-processing in emit()
+                self._window_functions.append((col_alias, agg_expr, array_moving_func, window_secs))
+
+                # Emit as aliased aggregation so the column name is predictable
+                return f"{col_alias}={agg_expr}"
+            else:
+                # No time interval — emit with warning
+                inner_field = self._emit_expr(node.args[0]) if node.args else '*'
+                self.warnings.append(
+                    f"{node.name}() missing time window argument; emitting raw aggregation"
+                )
+                if name_low == 'windowcount':
+                    return 'count()'
+                return f"{inner_agg}({inner_field})"
 
         # -- Generic function mapping
         return self._emit_function_call(node)

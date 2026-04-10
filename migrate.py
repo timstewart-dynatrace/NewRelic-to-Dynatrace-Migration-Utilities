@@ -78,12 +78,16 @@ class MigrationOrchestrator:
         newrelic_client: Optional[NewRelicClient] = None,
         dynatrace_client: Optional[DynatraceClient] = None,
         output_dir: str = "./output",
-        dry_run: bool = False
+        dry_run: bool = False,
+        incremental_state: Optional[Any] = None,
+        checkpoint: Optional[Any] = None
     ):
         self.nr_client = newrelic_client
         self.dt_client = dynatrace_client
         self.output_dir = Path(output_dir)
         self.dry_run = dry_run
+        self.inc_state = incremental_state
+        self.checkpoint = checkpoint
 
         # Initialize transformers
         self.dashboard_transformer = DashboardTransformer()
@@ -223,6 +227,22 @@ class MigrationOrchestrator:
         console.print(f"\nExport saved to: {export_file}")
         return export_data
 
+    def _is_entity_changed(self, entity: Dict[str, Any], entity_type: str, index: int) -> bool:
+        """Check if an entity has changed since the last incremental run. Returns True if it should be processed."""
+        if self.inc_state is None:
+            return True
+        nr_guid = entity.get("guid", entity.get("id", f"{entity_type}-{index}"))
+        if not self.inc_state.has_changed(str(nr_guid), entity):
+            return False
+        return True
+
+    def _update_entity_hash(self, entity: Dict[str, Any], entity_type: str, index: int) -> None:
+        """Update the incremental state hash after processing an entity."""
+        if self.inc_state is None:
+            return
+        nr_guid = entity.get("guid", entity.get("id", f"{entity_type}-{index}"))
+        self.inc_state.update(str(nr_guid), entity)
+
     def _transform_phase(
         self,
         export_data: Dict[str, Any],
@@ -239,7 +259,8 @@ class MigrationOrchestrator:
             "management_zones": [],
             "notifications": [],
             "warnings": [],
-            "errors": []
+            "errors": [],
+            "skipped": []
         }
 
         with Progress(
@@ -251,83 +272,146 @@ class MigrationOrchestrator:
             # Transform dashboards
             if "dashboards" in components and "dashboards" in export_data:
                 task = progress.add_task("Transforming dashboards...", total=1)
-                results = self.dashboard_transformer.transform_all(
-                    export_data["dashboards"]
-                )
-                for result in results:
-                    if result.success:
-                        transformed_data["dashboards"].extend(result.data)
-                    transformed_data["warnings"].extend(result.warnings or [])
-                    transformed_data["errors"].extend(result.errors or [])
+                skipped_count = 0
+                items_to_transform = []
+                for i, item in enumerate(export_data["dashboards"]):
+                    if self._is_entity_changed(item, "dashboard", i):
+                        items_to_transform.append((i, item))
+                    else:
+                        skipped_count += 1
+                        transformed_data["skipped"].append({"type": "dashboard", "name": item.get("name", ""), "reason": "unchanged"})
+                if items_to_transform:
+                    results = self.dashboard_transformer.transform_all(
+                        [item for _, item in items_to_transform]
+                    )
+                    for (idx, item), result in zip(items_to_transform, results):
+                        if result.success:
+                            transformed_data["dashboards"].extend(result.data)
+                            self._update_entity_hash(item, "dashboard", idx)
+                        transformed_data["warnings"].extend(result.warnings or [])
+                        transformed_data["errors"].extend(result.errors or [])
                 progress.update(task, completed=1)
-                console.print(f"  ✓ Transformed {len(transformed_data['dashboards'])} dashboards")
+                msg = f"  ✓ Transformed {len(transformed_data['dashboards'])} dashboards"
+                if skipped_count:
+                    msg += f" [dim](skipped {skipped_count} unchanged)[/dim]"
+                console.print(msg)
 
             # Transform alerts
             if "alerts" in components and "alert_policies" in export_data:
                 task = progress.add_task("Transforming alerts...", total=1)
-                results = self.alert_transformer.transform_all(
-                    export_data["alert_policies"]
-                )
-                for result in results:
-                    if result.success:
-                        if result.alerting_profile:
-                            transformed_data["alerting_profiles"].append(result.alerting_profile)
-                        transformed_data["metric_events"].extend(result.metric_events or [])
-                    transformed_data["warnings"].extend(result.warnings or [])
-                    transformed_data["errors"].extend(result.errors or [])
+                skipped_count = 0
+                items_to_transform = []
+                for i, item in enumerate(export_data["alert_policies"]):
+                    if self._is_entity_changed(item, "alert", i):
+                        items_to_transform.append((i, item))
+                    else:
+                        skipped_count += 1
+                        transformed_data["skipped"].append({"type": "alert", "name": item.get("name", ""), "reason": "unchanged"})
+                if items_to_transform:
+                    results = self.alert_transformer.transform_all(
+                        [item for _, item in items_to_transform]
+                    )
+                    for (idx, item), result in zip(items_to_transform, results):
+                        if result.success:
+                            if result.alerting_profile:
+                                transformed_data["alerting_profiles"].append(result.alerting_profile)
+                            transformed_data["metric_events"].extend(result.metric_events or [])
+                            self._update_entity_hash(item, "alert", idx)
+                        transformed_data["warnings"].extend(result.warnings or [])
+                        transformed_data["errors"].extend(result.errors or [])
                 progress.update(task, completed=1)
-                console.print(
+                msg = (
                     f"  ✓ Transformed {len(transformed_data['alerting_profiles'])} alerting profiles, "
                     f"{len(transformed_data['metric_events'])} metric events"
                 )
+                if skipped_count:
+                    msg += f" [dim](skipped {skipped_count} unchanged)[/dim]"
+                console.print(msg)
 
             # Transform synthetic monitors
             if "synthetics" in components and "synthetic_monitors" in export_data:
                 task = progress.add_task("Transforming synthetic monitors...", total=1)
-                results = self.synthetic_transformer.transform_all(
-                    export_data["synthetic_monitors"]
-                )
-                for result in results:
-                    if result.success:
-                        if result.monitor_type == "HTTP":
-                            transformed_data["http_monitors"].append(result.monitor)
-                        else:
-                            transformed_data["browser_monitors"].append(result.monitor)
-                    transformed_data["warnings"].extend(result.warnings or [])
-                    transformed_data["errors"].extend(result.errors or [])
+                skipped_count = 0
+                items_to_transform = []
+                for i, item in enumerate(export_data["synthetic_monitors"]):
+                    if self._is_entity_changed(item, "synthetic", i):
+                        items_to_transform.append((i, item))
+                    else:
+                        skipped_count += 1
+                        transformed_data["skipped"].append({"type": "synthetic", "name": item.get("name", ""), "reason": "unchanged"})
+                if items_to_transform:
+                    results = self.synthetic_transformer.transform_all(
+                        [item for _, item in items_to_transform]
+                    )
+                    for (idx, item), result in zip(items_to_transform, results):
+                        if result.success:
+                            if result.monitor_type == "HTTP":
+                                transformed_data["http_monitors"].append(result.monitor)
+                            else:
+                                transformed_data["browser_monitors"].append(result.monitor)
+                            self._update_entity_hash(item, "synthetic", idx)
+                        transformed_data["warnings"].extend(result.warnings or [])
+                        transformed_data["errors"].extend(result.errors or [])
                 progress.update(task, completed=1)
-                console.print(
+                msg = (
                     f"  ✓ Transformed {len(transformed_data['http_monitors'])} HTTP monitors, "
                     f"{len(transformed_data['browser_monitors'])} browser monitors"
                 )
+                if skipped_count:
+                    msg += f" [dim](skipped {skipped_count} unchanged)[/dim]"
+                console.print(msg)
 
             # Transform SLOs
             if "slos" in components and "slos" in export_data:
                 task = progress.add_task("Transforming SLOs...", total=1)
-                results = self.slo_transformer.transform_all(export_data["slos"])
-                for result in results:
-                    if result.success:
-                        transformed_data["slos"].append(result.slo)
-                    transformed_data["warnings"].extend(result.warnings or [])
-                    transformed_data["errors"].extend(result.errors or [])
+                skipped_count = 0
+                items_to_transform = []
+                for i, item in enumerate(export_data["slos"]):
+                    if self._is_entity_changed(item, "slo", i):
+                        items_to_transform.append((i, item))
+                    else:
+                        skipped_count += 1
+                        transformed_data["skipped"].append({"type": "slo", "name": item.get("name", ""), "reason": "unchanged"})
+                if items_to_transform:
+                    results = self.slo_transformer.transform_all([item for _, item in items_to_transform])
+                    for (idx, item), result in zip(items_to_transform, results):
+                        if result.success:
+                            transformed_data["slos"].append(result.slo)
+                            self._update_entity_hash(item, "slo", idx)
+                        transformed_data["warnings"].extend(result.warnings or [])
+                        transformed_data["errors"].extend(result.errors or [])
                 progress.update(task, completed=1)
-                console.print(f"  ✓ Transformed {len(transformed_data['slos'])} SLOs")
+                msg = f"  ✓ Transformed {len(transformed_data['slos'])} SLOs"
+                if skipped_count:
+                    msg += f" [dim](skipped {skipped_count} unchanged)[/dim]"
+                console.print(msg)
 
             # Transform workloads
             if "workloads" in components and "workloads" in export_data:
                 task = progress.add_task("Transforming workloads...", total=1)
-                results = self.workload_transformer.transform_all(
-                    export_data["workloads"]
-                )
-                for result in results:
-                    if result.success:
-                        transformed_data["management_zones"].append(result.management_zone)
-                    transformed_data["warnings"].extend(result.warnings or [])
-                    transformed_data["errors"].extend(result.errors or [])
+                skipped_count = 0
+                items_to_transform = []
+                for i, item in enumerate(export_data["workloads"]):
+                    if self._is_entity_changed(item, "workload", i):
+                        items_to_transform.append((i, item))
+                    else:
+                        skipped_count += 1
+                        transformed_data["skipped"].append({"type": "workload", "name": item.get("name", ""), "reason": "unchanged"})
+                if items_to_transform:
+                    results = self.workload_transformer.transform_all(
+                        [item for _, item in items_to_transform]
+                    )
+                    for (idx, item), result in zip(items_to_transform, results):
+                        if result.success:
+                            transformed_data["management_zones"].append(result.management_zone)
+                            self._update_entity_hash(item, "workload", idx)
+                        transformed_data["warnings"].extend(result.warnings or [])
+                        transformed_data["errors"].extend(result.errors or [])
                 progress.update(task, completed=1)
-                console.print(
-                    f"  ✓ Transformed {len(transformed_data['management_zones'])} management zones"
-                )
+                msg = f"  ✓ Transformed {len(transformed_data['management_zones'])} management zones"
+                if skipped_count:
+                    msg += f" [dim](skipped {skipped_count} unchanged)[/dim]"
+                console.print(msg)
 
         # Save transformed data
         transform_file = self.output_dir / "transformed" / "dynatrace_config.json"
@@ -340,6 +424,11 @@ class MigrationOrchestrator:
             console.print(f"\n[yellow]Warnings: {len(transformed_data['warnings'])}[/yellow]")
 
         return transformed_data
+
+    def _save_checkpoint_if_needed(self, entity_index: int) -> None:
+        """Save checkpoint to disk periodically (every 10 entities) for crash resilience."""
+        if self.checkpoint and entity_index > 0 and entity_index % 10 == 0:
+            self.checkpoint.save(self.output_dir / ".migration-checkpoint.json")
 
     def _import_phase(
         self,
@@ -361,8 +450,14 @@ class MigrationOrchestrator:
 
             # Import dashboards
             if "dashboards" in components:
+                dashboards = transformed_data.get("dashboards", [])
+                resume_idx = self.checkpoint.get_resume_index("dashboards") if self.checkpoint else 0
+                if resume_idx > 0:
+                    console.print(f"  [dim]Resuming dashboards from index {resume_idx}[/dim]")
                 task = progress.add_task("Importing dashboards...", total=1)
-                for dashboard in transformed_data.get("dashboards", []):
+                for i, dashboard in enumerate(dashboards):
+                    if i < resume_idx:
+                        continue
                     try:
                         result = self.dt_client.create_dashboard(dashboard)
                         if result.success:
@@ -382,12 +477,21 @@ class MigrationOrchestrator:
                             "type": "dashboard",
                             "error": str(e)
                         })
+                    if self.checkpoint:
+                        self.checkpoint.mark_complete("dashboards", i)
+                        self._save_checkpoint_if_needed(i)
                 progress.update(task, completed=1)
 
             # Import alerting profiles
             if "alerts" in components:
+                profiles = transformed_data.get("alerting_profiles", [])
+                resume_idx = self.checkpoint.get_resume_index("alerts") if self.checkpoint else 0
+                if resume_idx > 0:
+                    console.print(f"  [dim]Resuming alerts from index {resume_idx}[/dim]")
                 task = progress.add_task("Importing alerting profiles...", total=1)
-                for profile in transformed_data.get("alerting_profiles", []):
+                for i, profile in enumerate(profiles):
+                    if i < resume_idx:
+                        continue
                     try:
                         result = self.dt_client.create_alerting_profile(profile)
                         if result.success:
@@ -407,6 +511,9 @@ class MigrationOrchestrator:
                             "type": "alerting_profile",
                             "error": str(e)
                         })
+                    if self.checkpoint:
+                        self.checkpoint.mark_complete("alerts", i)
+                        self._save_checkpoint_if_needed(i)
                 progress.update(task, completed=1)
 
             # Import metric events
@@ -773,7 +880,9 @@ def main(
         newrelic_client=nr_client,
         dynatrace_client=dt_client,
         output_dir=output_dir,
-        dry_run=dry_run
+        dry_run=dry_run,
+        incremental_state=inc_state,
+        checkpoint=checkpoint
     )
 
     # Run migration
@@ -803,10 +912,18 @@ def main(
                 diff_table.add_column("Action", style="cyan")
                 diff_table.add_column("Reason", style="dim")
                 for entry in diff.entries:
-                    action_style = {"CREATE": "green", "UPDATE": "yellow", "CONFLICT": "red"}.get(entry.action, "white")
+                    action_style = {"CREATE": "green", "UPDATE": "yellow", "CONFLICT": "red", "ORPHAN": "magenta"}.get(entry.action, "white")
                     diff_table.add_row(f"{entry.entity_type}: {entry.name}", f"[{action_style}]{entry.action}[/{action_style}]", entry.reason)
                 console.print(diff_table)
-                console.print(f"\n[bold]Diff: {diff_summary['creates']} create, {diff_summary['updates']} update, {diff_summary['conflicts']} conflict[/bold]")
+                orphan_count = diff_summary.get('orphans', 0)
+                summary_parts = [
+                    f"{diff_summary['creates']} create",
+                    f"{diff_summary['updates']} update",
+                    f"{diff_summary['conflicts']} conflict",
+                ]
+                if orphan_count:
+                    summary_parts.append(f"{orphan_count} orphan")
+                console.print(f"\n[bold]Diff: {', '.join(summary_parts)}[/bold]")
             else:
                 console.print("[yellow]--diff requires DT credentials for live environment comparison[/yellow]")
 

@@ -3408,29 +3408,9 @@ class NRQLtoDQLConverter:
 
         result = re.sub(r"\bbuckets\s*\(", "bin(", result, flags=re.IGNORECASE)
 
-        # 15. Window function conversions (partial)
-        window_funcs = {
-            "windowSum": "sum",
-            "windowAvg": "avg",
-            "windowCount": "count",
-            "windowMax": "max",
-            "windowMin": "min",
-        }
-        for nrql_func, dql_agg in window_funcs.items():
-            pattern = rf"\b{nrql_func}\s*\(\s*([^,]+?)\s*,\s*(\d+)\s+(\w+)\s*\)"
-
-            def make_window_converter(fn=nrql_func):
-                def convert_window(match):
-                    inner_expr = match.group(1).strip()
-                    window_size = match.group(2)
-                    window_unit = match.group(3)
-                    return (
-                        f"{inner_expr} /* TODO: NR {fn}({window_size} {window_unit}) "
-                        f"- use DQL: timeseries ... | fieldsAdd rolling=arrayCumulativeSum(val) or rollup parameter */"
-                    )
-                return convert_window
-
-            result = re.sub(pattern, make_window_converter(), result, flags=re.IGNORECASE)
+        # 15. Window function conversions
+        # Now handled by the AST compiler (emitter.py WINDOW_FUNCTION_MAP).
+        # The compiler emits makeTimeseries with inner aggregation + fieldsAdd arrayMoving*.
 
         # 16. Hard/impossible conversions
         def convert_histogram(match):

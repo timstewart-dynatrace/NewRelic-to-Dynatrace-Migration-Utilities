@@ -14,7 +14,7 @@ class DiffEntry:
 
     entity_type: str
     name: str
-    action: str  # "CREATE", "UPDATE", "CONFLICT"
+    action: str  # "CREATE", "UPDATE", "CONFLICT", "ORPHAN"
     reason: str  # e.g., "Not found in DT", "Name match found", "Multiple matches"
     dt_id: Optional[str] = None
 
@@ -99,6 +99,42 @@ class DiffReport:
                 name = entity.get("name", "")
                 report.add(entity_type, name, "CREATE", "No registry lookup available")
 
+        # Orphan detection: DT entities not in transformed set
+        transformed_names = {
+            d.get("name", "") for d in transformed_data.get("dashboards", [])
+        }
+        if hasattr(registry, "list_dashboards"):
+            try:
+                for dt_dash in registry.list_dashboards() or []:
+                    dt_name = dt_dash.get("name", "")
+                    if dt_name and dt_name not in transformed_names:
+                        report.add(
+                            "dashboard",
+                            dt_name,
+                            "ORPHAN",
+                            "Exists in DT but not in NR export",
+                        )
+            except Exception:
+                pass  # Gracefully skip if registry method fails
+
+        # Same for management zones
+        transformed_mz_names = {
+            mz.get("name", "") for mz in transformed_data.get("management_zones", [])
+        }
+        if hasattr(registry, "list_management_zones"):
+            try:
+                for dt_mz in registry.list_management_zones() or []:
+                    dt_name = dt_mz.get("name", "")
+                    if dt_name and dt_name not in transformed_mz_names:
+                        report.add(
+                            "management_zone",
+                            dt_name,
+                            "ORPHAN",
+                            "Exists in DT but not in NR export",
+                        )
+            except Exception:
+                pass
+
         return report
 
     def summary(self) -> Dict[str, int]:
@@ -106,7 +142,13 @@ class DiffReport:
         creates = sum(1 for e in self.entries if e.action == "CREATE")
         updates = sum(1 for e in self.entries if e.action == "UPDATE")
         conflicts = sum(1 for e in self.entries if e.action == "CONFLICT")
-        return {"creates": creates, "updates": updates, "conflicts": conflicts}
+        orphans = sum(1 for e in self.entries if e.action == "ORPHAN")
+        return {
+            "creates": creates,
+            "updates": updates,
+            "conflicts": conflicts,
+            "orphans": orphans,
+        }
 
     def get_creates(self) -> List[DiffEntry]:
         """Return all entries with CREATE action."""
@@ -115,3 +157,7 @@ class DiffReport:
     def get_updates(self) -> List[DiffEntry]:
         """Return all entries with UPDATE action."""
         return [e for e in self.entries if e.action == "UPDATE"]
+
+    def get_orphans(self) -> List[DiffEntry]:
+        """Return all entries with ORPHAN action."""
+        return [e for e in self.entries if e.action == "ORPHAN"]

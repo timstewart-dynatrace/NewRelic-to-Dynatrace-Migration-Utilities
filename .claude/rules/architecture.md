@@ -5,7 +5,7 @@
 ```
 Dynatrace-NewRelic/
 ├── migrate.py                         # CLI entry point (migrate, compile, convert, reference, batch, audit-slos)
-├── _version.py                        # Version (1.2.1)
+├── _version.py                        # Version (1.3.0)
 ├── pyproject.toml                     # Project config, pip install, pytest
 ├── requirements.txt                   # Python dependencies
 ├── .env.example                       # Environment template
@@ -66,7 +66,7 @@ Dynatrace-NewRelic/
 ├── examples/
 │   └── example_queries.nrql          # Sample NRQL queries for batch testing
 │
-└── tests/                            # 894 unit + 8 integration tests across 28 files
+└── tests/                            # 920 unit + 8 integration tests across 29 files
     ├── conftest.py
     └── unit/
         ├── test_compiler.py          # 292 compiler tests (25+ classes)

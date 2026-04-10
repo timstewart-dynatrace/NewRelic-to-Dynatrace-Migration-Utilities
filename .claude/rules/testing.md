@@ -14,7 +14,7 @@ RUN_INTEGRATION_TESTS=1 pytest tests/integration/ -v
 ```
 
 ## Test Structure
-- 894 unit tests across 25 test files in `tests/unit/`
+- 920 unit tests across 26 test files in `tests/unit/`
 - 8 integration tests across 3 files in `tests/integration/` (env-var gated)
 - 292 compiler tests in `test_compiler.py` (25+ test classes by feature)
 - 17 CLI tests in `test_cli.py` (interactive, batch, reference, version, CSV batch)
