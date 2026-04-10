@@ -2139,3 +2139,101 @@ class TestNestedFilterInAggregation:
         assert result.success
         assert "avgIf(" in result.dql
         assert "duration" in result.dql
+
+
+# ===== Group 27: Window Functions (windowSum, windowAvg, etc.) =====
+
+class TestWindowFunctions:
+    """NRQL window functions -> DQL makeTimeseries + arrayMoving* post-processing."""
+
+    def test_should_compile_window_sum(self, compiler):
+        result = compiler.compile(
+            "SELECT windowSum(duration, 5 MINUTES) FROM Transaction TIMESERIES"
+        )
+        assert result.success
+        assert "TODO" not in result.dql
+        assert "makeTimeseries" in result.dql
+        assert "sum(duration)" in result.dql
+        assert "arrayMovingSum(" in result.dql
+
+    def test_should_compile_window_avg(self, compiler):
+        result = compiler.compile(
+            "SELECT windowAvg(duration, 5 MINUTES) FROM Transaction TIMESERIES"
+        )
+        assert result.success
+        assert "TODO" not in result.dql
+        assert "makeTimeseries" in result.dql
+        assert "avg(duration)" in result.dql
+        assert "arrayMovingAvg(" in result.dql
+
+    def test_should_compile_window_count(self, compiler):
+        result = compiler.compile(
+            "SELECT windowCount(*, 5 MINUTES) FROM Transaction TIMESERIES"
+        )
+        assert result.success
+        assert "TODO" not in result.dql
+        assert "makeTimeseries" in result.dql
+        assert "count()" in result.dql
+        # windowCount uses arrayMovingSum on count values
+        assert "arrayMovingSum(" in result.dql
+
+    def test_should_compile_window_max(self, compiler):
+        result = compiler.compile(
+            "SELECT windowMax(duration, 5 MINUTES) FROM Transaction TIMESERIES"
+        )
+        assert result.success
+        assert "TODO" not in result.dql
+        assert "makeTimeseries" in result.dql
+        assert "max(duration)" in result.dql
+        assert "arrayMovingMax(" in result.dql
+
+    def test_should_compile_window_min(self, compiler):
+        result = compiler.compile(
+            "SELECT windowMin(duration, 5 MINUTES) FROM Transaction TIMESERIES"
+        )
+        assert result.success
+        assert "TODO" not in result.dql
+        assert "makeTimeseries" in result.dql
+        assert "min(duration)" in result.dql
+        assert "arrayMovingMin(" in result.dql
+
+    def test_should_calculate_window_points_from_interval(self, compiler):
+        """1 HOUR window with 5 MINUTES interval = 12 points."""
+        result = compiler.compile(
+            "SELECT windowSum(duration, 1 HOUR) FROM Transaction TIMESERIES 5 MINUTES"
+        )
+        assert result.success
+        assert "arrayMovingSum(" in result.dql
+        # 1 hour / 5 minutes = 12 points
+        assert ", 12)" in result.dql
+
+    def test_should_use_default_interval_for_window_points(self, compiler):
+        """No explicit TIMESERIES interval -> default 1m -> 5 MINUTES = 5 points."""
+        result = compiler.compile(
+            "SELECT windowAvg(duration, 5 MINUTES) FROM Transaction TIMESERIES"
+        )
+        assert result.success
+        assert ", 5)" in result.dql
+
+    def test_should_handle_window_with_hour_unit(self, compiler):
+        result = compiler.compile(
+            "SELECT windowSum(duration, 2 HOURS) FROM Transaction TIMESERIES 30 MINUTES"
+        )
+        assert result.success
+        assert "arrayMovingSum(" in result.dql
+        # 2 hours / 30 minutes = 4 points
+        assert ", 4)" in result.dql
+
+    def test_should_emit_warning_for_window_function(self, compiler):
+        result = compiler.compile(
+            "SELECT windowSum(duration, 5 MINUTES) FROM Transaction TIMESERIES"
+        )
+        assert result.success
+        assert any("arrayMovingSum()" in w for w in result.warnings)
+
+    def test_should_produce_valid_dql_structure(self, compiler):
+        """Window function output passes structural DQL validation."""
+        result = compiler.compile(
+            "SELECT windowSum(duration, 5 MINUTES) FROM Transaction TIMESERIES"
+        )
+        assert_valid_dql(result)

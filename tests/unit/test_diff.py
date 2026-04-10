@@ -39,7 +39,7 @@ class TestDiffReport:
         report.add("management_zone", "MZ A", "CONFLICT", "Multiple matches")
 
         summary = report.summary()
-        assert summary == {"creates": 2, "updates": 1, "conflicts": 1}
+        assert summary == {"creates": 2, "updates": 1, "conflicts": 1, "orphans": 0}
 
     def test_should_identify_creates(self, mock_registry):
         transformed = {
@@ -77,8 +77,102 @@ class TestDiffReport:
         assert creates[0].name == "Brand New Dash"
 
     def test_should_handle_empty_data(self, mock_registry):
+        mock_registry.list_dashboards.return_value = []
+        mock_registry.list_management_zones.return_value = []
         report = DiffReport.generate_diff({}, mock_registry)
         assert len(report.entries) == 0
-        assert report.summary() == {"creates": 0, "updates": 0, "conflicts": 0}
+        assert report.summary() == {"creates": 0, "updates": 0, "conflicts": 0, "orphans": 0}
         assert report.get_creates() == []
         assert report.get_updates() == []
+        assert report.get_orphans() == []
+
+
+class TestOrphanDetection:
+    def test_should_detect_dashboard_orphans(self):
+        """Registry has dashboards A, B, C; transformed has A; B and C are orphans."""
+        registry = MagicMock()
+        registry.dashboard_exists.side_effect = lambda name: "dt-a" if name == "A" else None
+        registry.find_management_zone.return_value = None
+        registry.list_dashboards.return_value = [
+            {"name": "A"},
+            {"name": "B"},
+            {"name": "C"},
+        ]
+        registry.list_management_zones.return_value = []
+
+        transformed = {"dashboards": [{"name": "A"}]}
+        report = DiffReport.generate_diff(transformed, registry)
+
+        orphans = report.get_orphans()
+        assert len(orphans) == 2
+        orphan_names = {e.name for e in orphans}
+        assert orphan_names == {"B", "C"}
+        assert all(e.action == "ORPHAN" for e in orphans)
+        assert all(e.entity_type == "dashboard" for e in orphans)
+
+    def test_should_detect_management_zone_orphans(self):
+        """Registry has MZs X, Y; transformed has X; Y is orphan."""
+        registry = MagicMock()
+        registry.dashboard_exists.return_value = None
+        registry.find_management_zone.side_effect = lambda name: "dt-x" if name == "X" else None
+        registry.list_dashboards.return_value = []
+        registry.list_management_zones.return_value = [
+            {"name": "X"},
+            {"name": "Y"},
+        ]
+
+        transformed = {"management_zones": [{"name": "X"}]}
+        report = DiffReport.generate_diff(transformed, registry)
+
+        orphans = report.get_orphans()
+        assert len(orphans) == 1
+        assert orphans[0].name == "Y"
+        assert orphans[0].entity_type == "management_zone"
+        assert orphans[0].action == "ORPHAN"
+
+    def test_should_not_flag_orphans_when_registry_lacks_method(self):
+        """Registry without list_dashboards; orphan detection skipped gracefully."""
+        registry = MagicMock(spec=["dashboard_exists", "find_management_zone"])
+        registry.dashboard_exists.return_value = None
+        registry.find_management_zone.return_value = None
+
+        transformed = {"dashboards": [{"name": "A"}]}
+        report = DiffReport.generate_diff(transformed, registry)
+
+        orphans = report.get_orphans()
+        assert len(orphans) == 0
+
+    def test_should_handle_empty_dt_environment(self):
+        """Registry returns empty lists; no orphans."""
+        registry = MagicMock()
+        registry.dashboard_exists.return_value = None
+        registry.find_management_zone.return_value = None
+        registry.list_dashboards.return_value = []
+        registry.list_management_zones.return_value = []
+
+        transformed = {"dashboards": [{"name": "A"}]}
+        report = DiffReport.generate_diff(transformed, registry)
+
+        orphans = report.get_orphans()
+        assert len(orphans) == 0
+
+    def test_orphan_summary_included(self):
+        """Verify summary() returns orphans key with correct count."""
+        registry = MagicMock()
+        registry.dashboard_exists.return_value = None
+        registry.find_management_zone.return_value = None
+        registry.list_dashboards.return_value = [
+            {"name": "Orphan1"},
+            {"name": "Orphan2"},
+            {"name": "Orphan3"},
+        ]
+        registry.list_management_zones.return_value = [
+            {"name": "MZ Orphan"},
+        ]
+
+        transformed = {"dashboards": [], "management_zones": []}
+        report = DiffReport.generate_diff(transformed, registry)
+
+        summary = report.summary()
+        assert "orphans" in summary
+        assert summary["orphans"] == 4

@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-04-10
+
+### Added (Phase 10 — Fill Functional Gaps)
+- Incremental migration: `--incremental` now actually skips unchanged entities via content hashing
+- Resume from checkpoint: `--resume` skips already-imported entities with periodic checkpoint saving
+- Window function compilation: `windowSum`, `windowAvg`, `windowCount`, `windowMax`, `windowMin` → DQL `arrayMovingSum/Avg/Max/Min` (10 new compiler tests)
+- Orphan detection in `--diff`: flags DT entities with no NR source as ORPHAN (5 new tests)
+- 11 new incremental/resume tests (IncrementalState wiring, checkpoint persistence, orchestrator integration)
+- 26 new tests total — 920 unit tests + 8 integration tests across 29 files
+
+### Changed
+- `MigrationOrchestrator` accepts `incremental_state` and `checkpoint` parameters
+- `_transform_phase` checks `IncrementalState.has_changed()` before each entity
+- `_import_phase` uses `MigrationCheckpoint.get_resume_index()` to skip completed entities
+- Checkpoint saved every 10 entities during import for crash resilience
+- Diff display includes ORPHAN entries with magenta styling
+
 ## [1.2.1] - 2026-04-10
 
 ### Added (Phase 9 — Harden)
