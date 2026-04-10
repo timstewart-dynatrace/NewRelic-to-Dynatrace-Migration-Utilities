@@ -66,4 +66,4 @@ ignore = [
 ]
 
 [tool.setuptools.packages.find]
-include = ["compiler*", "clients*", "config*", "transformers*", "validators*", "utils*", "registry*", "migration*"]
+include = ["compiler*", "clients*", "config*", "transformers*", "validators*", "utils*", "registry*", "migration*", "exporters*"]
