@@ -1,8 +1,8 @@
 """Roundtrip compilation tests: NRQL -> DQL, optionally validated against live DT."""
 import os
 
-from compiler.compiler import NRQLCompiler
 from clients.dynatrace_client import DynatraceClient
+from compiler.compiler import NRQLCompiler
 from tests.integration.conftest import requires_dt, requires_integration
 
 
