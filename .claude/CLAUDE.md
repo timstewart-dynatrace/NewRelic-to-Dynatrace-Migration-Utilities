@@ -9,7 +9,6 @@ Universal migration tool for converting New Relic monitoring configurations to D
 **Last Updated:** 2026-04-09
 **Version:** 1.3.0
 **Phases Completed:** 0-10 (all complete)
-**Phases Completed:** 0-10 (all complete)
 
 ## Quick Reference
 
@@ -114,7 +113,18 @@ All transformers follow a consistent pattern:
 @.claude/rules/architecture.md
 @.claude/rules/python.md
 @.claude/rules/testing.md
-@.claude/rules/dql-reference.md
+@.claude/rules/development.md
+@.claude/rules/deployment.md
+
+## Skills (domain knowledge)
+
+### Always active
+@/Users/Shared/GitHub/PROJECTS/VisualCode-AI-Template/SKILLS/dynatrace-dql/SKILL.md
+@/Users/Shared/GitHub/PROJECTS/VisualCode-AI-Template/SKILLS/nrql-to-dql/SKILL.md
+@/Users/Shared/GitHub/PROJECTS/VisualCode-AI-Template/SKILLS/dynatrace-apis/SKILL.md
+@/Users/Shared/GitHub/PROJECTS/VisualCode-AI-Template/SKILLS/dynatrace-document-api/SKILL.md
+@/Users/Shared/GitHub/PROJECTS/VisualCode-AI-Template/SKILLS/dynatrace-monaco/SKILL.md
+@/Users/Shared/GitHub/PROJECTS/VisualCode-AI-Template/SKILLS/dynatrace-terraform/SKILL.md
 
 ## Key Constraints
 
