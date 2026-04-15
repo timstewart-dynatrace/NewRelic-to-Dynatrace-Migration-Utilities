@@ -1,6 +1,7 @@
 # Migration Coverage — What This Tool Can and Cannot Migrate
 
 > **Last audited:** 2026-04-15 (post-Phase-23)
+> **Companion:** `docs/gen2-only-capabilities.md` — the 8 capabilities only `--legacy` can emit (per-severity delay ladders, typed problem-notification integrations, template-value auto-tagging, entity-ID-targeted MZ rules, Config v1 dashboard metadata, synthetic KPMs, private-location lookup, Config v1 dashboard fallback).
 > **Scope:** Exhaustive inventory of every New Relic surface area, mapped to Dynatrace, with this tool's current coverage status.
 > **Companion:** Coverage-matrix wording aligns with `topics/nrlc/docs/COVERAGE-MATRIX.md` in the Best-Practice-Notebooks-Generator repo (external reference).
 

@@ -6,6 +6,18 @@ Log decisions **at the time** they're made, not retroactively.
 
 ---
 
+## 2026-04-15 — Curate Gen2-only capabilities as a public list (not a backlog)
+
+**Chosen:** Publish `docs/gen2-only-capabilities.md` enumerating the 8 concrete capabilities the `--legacy` path has that the Gen3 default does not. Each entry includes the Gen2 mechanism, the Gen3 gap, and a workaround or "use `--legacy`" recommendation.
+
+**Alternatives:** (a) Close every gap in Phase 24+; (b) Silently accept the gaps; (c) Curate the list explicitly.
+
+**Why:** Closing all 8 gaps at parity is not feasible without upstream DT Platform work (Workflow connectors for Jira/ServiceNow/OpsGenie/xMatters/VictorOps/Teams; Segment semantics for entity-ID targeting; OpenPipeline template-reference fields). Operators need to know *which* gaps exist so they can decide whether `--legacy` is appropriate. A public doc beats tribal knowledge.
+
+**Trade-offs:** Some operators may default to `--legacy` when Gen3 would work for them; we mitigate by framing the doc as "when to use `--legacy`" with a summary checklist.
+
+**Revisit if:** DT ships typed Workflow connectors for the remaining channel types, adds entity-ID Segment targeting, or adds `{TAG:name}` template support in OpenPipeline. Update the doc as each gap closes.
+
 ## 2026-04-15 — Defer `--legacy` / Gen2 code removal
 
 **Chosen:** Keep `transformers/legacy/`, `clients/legacy/`, `exporters/legacy/`, and `tests/legacy/` in place indefinitely. Do not schedule removal.

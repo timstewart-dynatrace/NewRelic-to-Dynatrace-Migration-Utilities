@@ -46,6 +46,16 @@ Management Zones, Auto-Tag Rules, Problem Notifications, and Config v1
 dashboards/synthetics/SLOs. This path is a stop-gap; it will be removed
 once Gen3 rollout is complete on supported tenants.
 
+**When must you use `--legacy`?** Eight specific capabilities have no
+Gen3 equivalent — per-severity alerting delay ladders, typed problem-
+notification integrations (Jira/ServiceNow/OpsGenie/xMatters/VictorOps/
+Teams), template-value auto-tagging (`{TAG:name}`), entity-ID-targeted
+Management Zone rules, Config v1 dashboard `preset`/`tags` metadata,
+Config v1 dashboard fallback when Documents API is disabled, and
+private-synthetic-location inventory lookup. See
+[`docs/gen2-only-capabilities.md`](docs/gen2-only-capabilities.md) for
+the complete list with workarounds.
+
 > The `nrql-engine` repo will relocate to `dynatrace-dma` in an upcoming
 > release. URLs in generated artifacts and docs will be repointed via a
 > follow-up patch release.
