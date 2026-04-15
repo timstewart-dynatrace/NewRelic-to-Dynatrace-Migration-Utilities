@@ -200,37 +200,15 @@ class NRQLCompiler:
 
     @staticmethod
     def _expand_nr_shorthands(nrql: str) -> str:
+        """Delegate to the centralized `compiler.shorthands` module.
+
+        Kept as a thin wrapper for backward compatibility; new code should
+        import `expand_nr_shorthands` directly from `compiler.shorthands`.
+        The pattern list is synced with nrql-engine
+        (`src/compiler/compiler.ts` `expandNrShorthands`).
         """
-        Expand NR shorthand metric names into function(field) calls.
-
-        NR has magic field names in SELECT that are actually aggregation shorthands:
-          averageduration    -> average(duration)
-          averageResponseTime -> average(duration)  (same underlying metric)
-          maxduration        -> max(duration)
-          minduration        -> min(duration)
-          medianDuration     -> median(duration)
-
-        These appear as bare identifiers without parentheses and would otherwise
-        be treated as field references by the parser.
-        """
-        # Map of shorthand -> expanded form
-        # Use word boundary to avoid matching inside longer identifiers
-        shorthands = {
-            r'\baverage[Dd]uration\b': 'average(duration)',
-            r'\baverage[Rr]esponse[Tt]ime\b': 'average(duration)',
-            r'\bmax[Dd]uration\b': 'max(duration)',
-            r'\bmin[Dd]uration\b': 'min(duration)',
-            r'\bmedian[Dd]uration\b': 'median(duration)',
-            r'\bapdex[Ss]core\b': 'apdex(duration)',
-            r'\bapdex[Pp]erf[Zz]one\b': 'apdex(duration)',
-            r'\berror[Rr]ate\b': 'percentage(count(*), WHERE error IS TRUE)',
-            r'\bthroughput\b': 'rate(count(*), 1 minute)',
-        }
-
-        for pattern, replacement in shorthands.items():
-            nrql = re.sub(pattern, replacement, nrql)
-
-        return nrql
+        from .shorthands import expand_nr_shorthands
+        return expand_nr_shorthands(nrql)
 
     @staticmethod
     def _ms_to_duration_literal(ms: float) -> str:
