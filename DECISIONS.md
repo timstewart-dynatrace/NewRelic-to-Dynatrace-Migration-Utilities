@@ -6,6 +6,42 @@ Log decisions **at the time** they're made, not retroactively.
 
 ---
 
+## 2026-04-15 — Defer `--legacy` / Gen2 code removal
+
+**Chosen:** Keep `transformers/legacy/`, `clients/legacy/`, `exporters/legacy/`, and `tests/legacy/` in place indefinitely. Do not schedule removal.
+
+**Alternatives:** (a) remove legacy code at v2.0.0 release; (b) remove at v3.0.0 once adoption telemetry proves Gen3 ubiquity; (c) keep indefinitely.
+
+**Why:** Some customer tenants are still on classic Dynatrace without Gen3 Platform APIs (Workflows, OpenPipeline, Segments, Document API). Removing the legacy path would lock them out of migration entirely. The code is isolated under `legacy/` subdirectories, guarded by a `--legacy` flag, and covered by `tests/legacy/` so regressions stay visible. There is no maintenance hotspot justifying removal today.
+
+**Trade-offs:** ~15% more code to maintain; regressions in legacy paths could pass review if reviewers assume they're dead code. Mitigation: tests/legacy/ runs on every PR.
+
+**Revisit if:** Adoption telemetry (if added in a future phase) shows < 1% of active users still invoke `--legacy` OR Dynatrace confirms end-of-life for the Gen2 surfaces used by the legacy transformers. Gate with a 6-month deprecation notice before removing.
+
+## 2026-04-15 — Centralize project URLs in `config/project_links.py`
+
+**Chosen:** One file (`config/project_links.py`) is the source of truth for external URLs. All code imports from it; nothing hardcodes URLs.
+
+**Alternatives:** Hardcode URLs at each callsite (current Python practice); use environment variables; use a YAML config file.
+
+**Why:** `nrql-engine` relocation to `dynatrace-dma` is imminent. A single file to edit beats grepping every doc.
+
+**Trade-offs:** One more module to remember; developers adding a URL must update `project_links.py` + `HISTORY.md`.
+
+**Revisit if:** The set of canonical URLs grows past ~20 entries (then split by domain).
+
+## 2026-04-15 — Coded warnings/errors via `utils/error_taxonomy`
+
+**Chosen:** New code uses `WarningCode` / `ErrorCode` enums + `CodedMessage` dataclass. Existing plain-string warnings kept for backward compat.
+
+**Alternatives:** Status quo (free-form strings); severity levels only; error numbers (E001, E002…).
+
+**Why:** Ad-hoc warnings can't be grouped or filtered in reports. Enum codes let downstream reporting bucket warnings by category (SECRET_MANUAL, DAVIS_REPLACES, etc.) without regex-matching English text.
+
+**Trade-offs:** Old call sites still emit plain strings until a migration sweep; reports must handle both shapes.
+
+**Revisit if:** The enum grows past ~30 codes (then split into WarningCategory + Detail).
+
 ## 2026-04-08 — AST-based compiler over regex replacement
 
 **Chosen:** Full AST compiler (lexer → parser → emitter) for NRQL-to-DQL translation

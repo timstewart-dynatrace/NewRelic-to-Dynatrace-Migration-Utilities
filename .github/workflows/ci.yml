@@ -71,3 +71,21 @@ jobs:
 
       - name: Run mypy
         run: mypy compiler/ migration/ validators/ config/
+
+  # Phase 19b — regression guard for nrql-engine compiler parity.
+  # Keeps TS sibling (/Users/Shared/GitHub/PROJECTS/nrql-engine/) and this
+  # Python project aligned on shorthand expansion, K8s metric overrides,
+  # and DQL fixer method coverage. Fails if either side drifts.
+  nrql-engine-parity:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Run parity regression tests
+        run: pytest tests/unit/test_phase19b_engine_parity.py -v
