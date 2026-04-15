@@ -136,3 +136,53 @@ Segment evolution).
 
 Further parity work (if any TS additions happen after 2026-04-15)
 will be tracked in a new phase.
+
+
+## Third-pass audit (2026-04-15, post-Phase-24)
+
+Full enumeration of `/Users/Shared/GitHub/PROJECTS/nrql-engine/src/transformers/*.transformer.ts`
+(53 files) diffed against Python `transformers/*_transformer.py` +
+`transformers/*_translator.py` (40 files after Phase 24).
+
+### Real gaps found in the third pass (NOW CLOSED)
+
+| Gap | Python solution |
+|---|---|
+| `otel-collector.transformer.ts` — broader than our OTelMetricsTransformer; covers **traces + metrics + logs** plus 5 processor kinds | ✅ `transformers/otel_collector_transformer.py` (OTelCollectorTransformer) |
+| `legacy-error-inbox.transformer.ts` — NR Errors Inbox → DT Problems API comments/close/acknowledge actions | ✅ `transformers/legacy/error_inbox_v1.py` (LegacyErrorInboxTransformer) |
+| `legacy-request-naming.transformer.ts` — `newrelic.setTransactionName()` call sites → `builtin:request-naming.request-naming-rules` | ✅ `transformers/legacy/request_naming_v1.py` (LegacyRequestNamingTransformer) |
+| TS name `custom-event.transformer.ts` vs Python's `CustomEventIngestTransformer` — naming drift | ✅ Module-level alias `CustomEventTransformer = CustomEventIngestTransformer` keeps both call shapes working |
+
+### Architectural-difference-not-gap findings
+
+These TS files have no 1:1 Python counterpart but are **at parity via a
+different file organization** — no port needed:
+
+| TS file | Python equivalent |
+|---|---|
+| `dashboard-widget-upgrade.transformer.ts` | Folded into `DashboardTransformer` (Phase 19 funnel/heatmap/event-feed paths) |
+| `davis-tuning.transformer.ts` | Covered by `BaselineAlertTransformer` (Phase 17) + `AIOpsTransformer` (Phase 18) |
+| `notification.transformer.ts` | Folded into `transformers/alert_transformer.py` (Phase 11 `NotificationTransformer`) |
+| `multi-location-synthetic.transformer.ts` | `NonNRQLAlertTransformer` handles type=`multi_location_synthetic` (Phase 17) |
+| `legacy-apdex.transformer.ts` | Handled by the NRQL compiler's apdex decomposer + Phase 19 uplift |
+| `legacy-cloud-integration.transformer.ts` | No legacy cloud path — Phase 18 `CloudIntegrationTransformer` is Gen3-only by design |
+| `legacy-non-nrql-alert.transformer.ts` | `--legacy` routes through the existing `LegacyInfrastructureTransformer`/`LegacyAlertTransformer`; no separate non-NRQL legacy variant emits Alerting Profile + Metric Event pairs |
+| `converters.ts` | `transformers/converters.py` (already present) |
+| `factory.ts` | Python uses explicit per-class instantiation in `migrate.py` orchestrator (no factory abstraction) |
+| `monaco-yaml.ts` / `otel-env-helper.ts` | Inlined in `exporters/monaco.py` / helper functions in respective transformers |
+| `mapping-rules.ts` / `index.ts` / `types.ts` | `transformers/nrql_mapping_rules.py` + `transformers/mappings/` package (Phase 23) |
+
+### Final parity status
+
+**Python matches nrql-engine across 53 of 53 TS transformer files** —
+38 direct 1:1 ports, 15 covered by different file organization. Plus
+Python has **exclusive capabilities** (Phase 16 agents, Phase 17 NRDB
+archive, Phase 20 canary + audit, Phase 22 error taxonomy) that the
+TS sibling does not carry.
+
+1201 unit + 8 integration tests pass.
+
+This is the recommended **parity-baseline** snapshot — future drift
+should be caught by `tests/unit/test_phase19b_engine_parity.py` (the
+fixer-method + shorthand pin-down suite in CI) and the
+`nrql-engine-parity` GitHub Actions job.

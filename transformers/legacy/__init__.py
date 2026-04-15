@@ -19,10 +19,12 @@ from .alert_transformer_v1 import AlertTransformer as LegacyAlertTransformer
 from .alert_transformer_v1 import NotificationTransformer as LegacyNotificationTransformer
 from .dashboard_transformer_v1 import DashboardTransformer as LegacyDashboardTransformer
 from .drop_rule_transformer_v1 import DropRuleTransformer as LegacyDropRuleTransformer
+from .error_inbox_v1 import LegacyErrorInboxTransformer
 from .infrastructure_transformer_v1 import (
     InfrastructureTransformer as LegacyInfrastructureTransformer,
 )
 from .log_parsing_transformer_v1 import LogParsingTransformer as LegacyLogParsingTransformer
+from .request_naming_v1 import LegacyRequestNamingTransformer
 from .slo_transformer_v1 import SLOTransformer as LegacySLOTransformer
 from .synthetic_transformer_v1 import SyntheticTransformer as LegacySyntheticTransformer
 from .tag_transformer_v1 import TagTransformer as LegacyTagTransformer
@@ -33,8 +35,10 @@ __all__ = [
     "LegacyNotificationTransformer",
     "LegacyDashboardTransformer",
     "LegacyDropRuleTransformer",
+    "LegacyErrorInboxTransformer",
     "LegacyInfrastructureTransformer",
     "LegacyLogParsingTransformer",
+    "LegacyRequestNamingTransformer",
     "LegacySLOTransformer",
     "LegacySyntheticTransformer",
     "LegacyTagTransformer",

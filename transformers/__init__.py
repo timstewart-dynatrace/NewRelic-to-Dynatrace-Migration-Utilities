@@ -34,6 +34,7 @@ from .non_nrql_alert_transformer import NonNRQLAlertTransformer
 from .npm_transformer import NPMTransformer
 from .nrql_converter import NRQLtoDQLConverter
 from .on_host_integration_transformer import OnHostIntegrationTransformer
+from .otel_collector_transformer import OTelCollectorTransformer
 from .otel_metrics_transformer import OTelMetricsTransformer
 from .prometheus_transformer import PrometheusTransformer
 from .saved_filter_notebook_transformer import SavedFilterNotebookTransformer
@@ -91,5 +92,15 @@ __all__ = [
     "MetricNormalizationTransformer",
     "SyntheticSpecializedTransformer",
     "SavedFilterNotebookTransformer",
+    "OTelCollectorTransformer",
+    # Alias for TS-parity: nrql-engine calls this CustomEventTransformer;
+    # Python named it CustomEventIngestTransformer in Phase 17. Both work.
+    "CustomEventTransformer",
     "NRQLtoDQLConverter",
 ]
+
+# Naming alias — TS sibling uses `CustomEventTransformer`; Python's
+# Phase-17 name was `CustomEventIngestTransformer`. Keep both pointing
+# at the same implementation so code written against either name
+# continues to work.
+CustomEventTransformer = CustomEventIngestTransformer
