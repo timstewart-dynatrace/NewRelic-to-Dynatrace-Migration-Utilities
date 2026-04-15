@@ -80,7 +80,9 @@ class MigrationOrchestrator:
         output_dir: str = "./output",
         dry_run: bool = False,
         incremental_state: Optional[Any] = None,
-        checkpoint: Optional[Any] = None
+        checkpoint: Optional[Any] = None,
+        legacy_mode: bool = False,
+        canary_plan: Optional[Any] = None,  # migration.canary.CanaryPlan
     ):
         self.nr_client = newrelic_client
         self.dt_client = dynatrace_client
@@ -88,17 +90,50 @@ class MigrationOrchestrator:
         self.dry_run = dry_run
         self.inc_state = incremental_state
         self.checkpoint = checkpoint
+        self.legacy_mode = legacy_mode
+        # Phase 20: CanaryPlan controls two-wave import. Default (None) ->
+        # no-op split so existing behavior is unchanged.
+        from migration.canary import CanaryPlan
+        self.canary_plan = canary_plan or CanaryPlan()
 
-        # Initialize transformers
-        self.dashboard_transformer = DashboardTransformer()
-        self.alert_transformer = AlertTransformer()
-        self.synthetic_transformer = SyntheticTransformer()
-        self.slo_transformer = SLOTransformer()
-        self.workload_transformer = WorkloadTransformer()
-        self.infrastructure_transformer = InfrastructureTransformer()
-        self.log_parsing_transformer = LogParsingTransformer()
-        self.tag_transformer = TagTransformer()
-        self.drop_rule_transformer = DropRuleTransformer()
+        # Initialize transformers. Legacy mode swaps in the Gen2 implementations
+        # that emit Alerting Profiles, Management Zones, Auto-Tag Rules, etc.
+        if legacy_mode:
+            from transformers.legacy import (
+                LegacyAlertTransformer,
+                LegacyDashboardTransformer,
+                LegacyDropRuleTransformer,
+                LegacyInfrastructureTransformer,
+                LegacyLogParsingTransformer,
+                LegacySLOTransformer,
+                LegacySyntheticTransformer,
+                LegacyTagTransformer,
+                LegacyWorkloadTransformer,
+            )
+            logger.warning(
+                "Running in Gen2 compatibility mode (--legacy). "
+                "Gen3 features (Workflows, OpenPipeline, Segments, Document API) "
+                "will NOT be used. This mode is a stop-gap for classic tenants."
+            )
+            self.dashboard_transformer = LegacyDashboardTransformer()
+            self.alert_transformer = LegacyAlertTransformer()
+            self.synthetic_transformer = LegacySyntheticTransformer()
+            self.slo_transformer = LegacySLOTransformer()
+            self.workload_transformer = LegacyWorkloadTransformer()
+            self.infrastructure_transformer = LegacyInfrastructureTransformer()
+            self.log_parsing_transformer = LegacyLogParsingTransformer()
+            self.tag_transformer = LegacyTagTransformer()
+            self.drop_rule_transformer = LegacyDropRuleTransformer()
+        else:
+            self.dashboard_transformer = DashboardTransformer()
+            self.alert_transformer = AlertTransformer()
+            self.synthetic_transformer = SyntheticTransformer()
+            self.slo_transformer = SLOTransformer()
+            self.workload_transformer = WorkloadTransformer()
+            self.infrastructure_transformer = InfrastructureTransformer()
+            self.log_parsing_transformer = LogParsingTransformer()
+            self.tag_transformer = TagTransformer()
+            self.drop_rule_transformer = DropRuleTransformer()
 
         # Create output directories
         self.output_dir.mkdir(parents=True, exist_ok=True)
@@ -249,18 +284,23 @@ class MigrationOrchestrator:
         components: List[str]
     ) -> Dict[str, Any]:
         """Transform exported data to Dynatrace format."""
+        if self.legacy_mode:
+            return self._transform_phase_legacy(export_data, components)
+        # Gen3 transformed payload buckets.
+        # Each value is the JSON-ready Settings 2.0 envelope, Workflow JSON,
+        # or Document API content the corresponding DT client method consumes.
         transformed_data = {
-            "dashboards": [],
-            "alerting_profiles": [],
-            "metric_events": [],
-            "http_monitors": [],
-            "browser_monitors": [],
-            "slos": [],
-            "management_zones": [],
-            "notifications": [],
+            "dashboards": [],            # Document API content payloads
+            "workflows": [],             # Automation API workflow JSON
+            "anomaly_detectors": [],     # builtin:davis.anomaly-detectors envelopes
+            "synthetic_tests": [],       # builtin:synthetic_test envelopes
+            "slos": [],                  # builtin:monitoring.slo envelopes
+            "segments": [],              # builtin:segment envelopes
+            "iam_policies": [],          # builtin:iam.policy envelopes
+            "openpipeline_processors": [],  # builtin:openpipeline.* envelopes
             "warnings": [],
             "errors": [],
-            "skipped": []
+            "skipped": [],
         }
 
         with Progress(
@@ -313,16 +353,18 @@ class MigrationOrchestrator:
                     )
                     for (idx, item), result in zip(items_to_transform, results):
                         if result.success:
-                            if result.alerting_profile:
-                                transformed_data["alerting_profiles"].append(result.alerting_profile)
-                            transformed_data["metric_events"].extend(result.metric_events or [])
+                            if result.workflow:
+                                transformed_data["workflows"].append(result.workflow)
+                            transformed_data["anomaly_detectors"].extend(
+                                result.anomaly_detectors or []
+                            )
                             self._update_entity_hash(item, "alert", idx)
                         transformed_data["warnings"].extend(result.warnings or [])
                         transformed_data["errors"].extend(result.errors or [])
                 progress.update(task, completed=1)
                 msg = (
-                    f"  ✓ Transformed {len(transformed_data['alerting_profiles'])} alerting profiles, "
-                    f"{len(transformed_data['metric_events'])} metric events"
+                    f"  ✓ Transformed {len(transformed_data['workflows'])} workflows, "
+                    f"{len(transformed_data['anomaly_detectors'])} Davis anomaly detectors"
                 )
                 if skipped_count:
                     msg += f" [dim](skipped {skipped_count} unchanged)[/dim]"
@@ -345,17 +387,14 @@ class MigrationOrchestrator:
                     )
                     for (idx, item), result in zip(items_to_transform, results):
                         if result.success:
-                            if result.monitor_type == "HTTP":
-                                transformed_data["http_monitors"].append(result.monitor)
-                            else:
-                                transformed_data["browser_monitors"].append(result.monitor)
+                            transformed_data["synthetic_tests"].append(result.monitor)
                             self._update_entity_hash(item, "synthetic", idx)
                         transformed_data["warnings"].extend(result.warnings or [])
                         transformed_data["errors"].extend(result.errors or [])
                 progress.update(task, completed=1)
                 msg = (
-                    f"  ✓ Transformed {len(transformed_data['http_monitors'])} HTTP monitors, "
-                    f"{len(transformed_data['browser_monitors'])} browser monitors"
+                    f"  ✓ Transformed {len(transformed_data['synthetic_tests'])} "
+                    "synthetic tests (builtin:synthetic_test)"
                 )
                 if skipped_count:
                     msg += f" [dim](skipped {skipped_count} unchanged)[/dim]"
@@ -403,12 +442,18 @@ class MigrationOrchestrator:
                     )
                     for (idx, item), result in zip(items_to_transform, results):
                         if result.success:
-                            transformed_data["management_zones"].append(result.management_zone)
+                            if result.segment:
+                                transformed_data["segments"].append(result.segment)
+                            if result.iam_policy:
+                                transformed_data["iam_policies"].append(result.iam_policy)
                             self._update_entity_hash(item, "workload", idx)
                         transformed_data["warnings"].extend(result.warnings or [])
                         transformed_data["errors"].extend(result.errors or [])
                 progress.update(task, completed=1)
-                msg = f"  ✓ Transformed {len(transformed_data['management_zones'])} management zones"
+                msg = (
+                    f"  ✓ Transformed {len(transformed_data['segments'])} segments + "
+                    f"{len(transformed_data['iam_policies'])} IAM policies"
+                )
                 if skipped_count:
                     msg += f" [dim](skipped {skipped_count} unchanged)[/dim]"
                 console.print(msg)
@@ -430,12 +475,152 @@ class MigrationOrchestrator:
         if self.checkpoint and entity_index > 0 and entity_index % 10 == 0:
             self.checkpoint.save(self.output_dir / ".migration-checkpoint.json")
 
+    # ------------------------------------------------------------------
+    # Legacy (Gen2) transform + import paths
+    # ------------------------------------------------------------------
+
+    def _transform_phase_legacy(
+        self, export_data: Dict[str, Any], components: List[str]
+    ) -> Dict[str, Any]:
+        """Gen2 transform path — populates Alerting Profiles / Metric Events /
+        Management Zones / Auto-Tag Rules / Config v1 dashboards/synthetics
+        buckets consumed by `_import_phase_legacy`."""
+        transformed = {
+            "dashboards": [],
+            "alerting_profiles": [],
+            "metric_events": [],
+            "http_monitors": [],
+            "browser_monitors": [],
+            "slos": [],
+            "management_zones": [],
+            "warnings": [],
+            "errors": [],
+            "skipped": [],
+        }
+
+        if "dashboards" in components and "dashboards" in export_data:
+            for result in self.dashboard_transformer.transform_all(
+                export_data["dashboards"]
+            ):
+                if result.success:
+                    transformed["dashboards"].extend(result.data)
+                transformed["warnings"].extend(result.warnings or [])
+                transformed["errors"].extend(result.errors or [])
+
+        if "alerts" in components and "alert_policies" in export_data:
+            for result in self.alert_transformer.transform_all(
+                export_data["alert_policies"]
+            ):
+                if result.success:
+                    if result.alerting_profile:
+                        transformed["alerting_profiles"].append(result.alerting_profile)
+                    transformed["metric_events"].extend(result.metric_events or [])
+                transformed["warnings"].extend(result.warnings or [])
+                transformed["errors"].extend(result.errors or [])
+
+        if "synthetics" in components and "synthetic_monitors" in export_data:
+            for result in self.synthetic_transformer.transform_all(
+                export_data["synthetic_monitors"]
+            ):
+                if result.success:
+                    if result.monitor_type == "HTTP":
+                        transformed["http_monitors"].append(result.monitor)
+                    else:
+                        transformed["browser_monitors"].append(result.monitor)
+                transformed["warnings"].extend(result.warnings or [])
+                transformed["errors"].extend(result.errors or [])
+
+        if "slos" in components and "slos" in export_data:
+            for result in self.slo_transformer.transform_all(
+                export_data["slos"]
+            ):
+                if result.success:
+                    transformed["slos"].append(result.slo)
+                transformed["warnings"].extend(result.warnings or [])
+                transformed["errors"].extend(result.errors or [])
+
+        if "workloads" in components and "workloads" in export_data:
+            for result in self.workload_transformer.transform_all(
+                export_data["workloads"]
+            ):
+                if result.success:
+                    transformed["management_zones"].append(result.management_zone)
+                transformed["warnings"].extend(result.warnings or [])
+                transformed["errors"].extend(result.errors or [])
+
+        transform_file = self.output_dir / "transformed" / "dynatrace_config_legacy.json"
+        with open(transform_file, "w") as f:
+            json.dump(transformed, f, indent=2, default=str)
+        console.print(
+            f"\n[yellow]Legacy transformed data saved to: {transform_file}[/yellow]"
+        )
+        return transformed
+
+    def _import_phase_legacy(
+        self, transformed_data: Dict[str, Any], components: List[str]
+    ) -> Dict[str, Any]:
+        """Gen2 import path via LegacyDynatraceV1Client."""
+        results = {"successful": [], "failed": [], "skipped": []}
+        client = self.dt_client  # LegacyDynatraceV1Client in legacy mode
+
+        def _push(items, fn, type_name):
+            for item in items:
+                try:
+                    r = fn(item)
+                    bucket = results["successful"] if r.success else results["failed"]
+                    bucket.append(
+                        {
+                            "type": type_name,
+                            "name": r.entity_name,
+                            "id": r.dynatrace_id,
+                            "error": r.error_message,
+                        }
+                    )
+                except Exception as e:  # noqa: BLE001
+                    results["failed"].append({"type": type_name, "error": str(e)})
+
+        if "dashboards" in components:
+            _push(transformed_data.get("dashboards", []), client.create_dashboard, "dashboard")
+        if "alerts" in components:
+            _push(
+                transformed_data.get("alerting_profiles", []),
+                client.create_alerting_profile,
+                "alerting_profile",
+            )
+            _push(
+                transformed_data.get("metric_events", []),
+                client.create_metric_event,
+                "metric_event",
+            )
+        if "synthetics" in components:
+            _push(
+                transformed_data.get("http_monitors", []),
+                client.create_http_monitor,
+                "http_monitor",
+            )
+            _push(
+                transformed_data.get("browser_monitors", []),
+                client.create_browser_monitor,
+                "browser_monitor",
+            )
+        if "slos" in components:
+            _push(transformed_data.get("slos", []), client.create_slo, "slo")
+        if "workloads" in components:
+            _push(
+                transformed_data.get("management_zones", []),
+                client.create_management_zone,
+                "management_zone",
+            )
+        return results
+
     def _import_phase(
         self,
         transformed_data: Dict[str, Any],
         components: List[str]
     ) -> Dict[str, Any]:
         """Import transformed data to Dynatrace."""
+        if self.legacy_mode:
+            return self._import_phase_legacy(transformed_data, components)
         import_results = {
             "successful": [],
             "failed": [],
@@ -482,159 +667,117 @@ class MigrationOrchestrator:
                         self._save_checkpoint_if_needed(i)
                 progress.update(task, completed=1)
 
-            # Import alerting profiles
-            if "alerts" in components:
-                profiles = transformed_data.get("alerting_profiles", [])
-                resume_idx = self.checkpoint.get_resume_index("alerts") if self.checkpoint else 0
-                if resume_idx > 0:
-                    console.print(f"  [dim]Resuming alerts from index {resume_idx}[/dim]")
-                task = progress.add_task("Importing alerting profiles...", total=1)
-                for i, profile in enumerate(profiles):
-                    if i < resume_idx:
-                        continue
-                    try:
-                        result = self.dt_client.create_alerting_profile(profile)
-                        if result.success:
-                            import_results["successful"].append({
-                                "type": "alerting_profile",
-                                "name": result.entity_name,
-                                "id": result.dynatrace_id
-                            })
-                        else:
-                            import_results["failed"].append({
-                                "type": "alerting_profile",
-                                "name": result.entity_name,
-                                "error": result.error_message
-                            })
-                    except Exception as e:
-                        import_results["failed"].append({
-                            "type": "alerting_profile",
-                            "error": str(e)
-                        })
-                    if self.checkpoint:
-                        self.checkpoint.mark_complete("alerts", i)
-                        self._save_checkpoint_if_needed(i)
-                progress.update(task, completed=1)
+            # ---- Gen3 import paths ----------------------------------------
+            #
+            # Each loop pushes the corresponding transformed payload type to the
+            # appropriate Gen3 endpoint via the composed DynatraceClient:
+            #   anomaly_detectors   -> Settings 2.0 (builtin:davis.anomaly-detectors)
+            #   workflows           -> Automation API
+            #   synthetic_tests     -> Settings 2.0 (builtin:synthetic_test)
+            #   slos                -> Settings 2.0 (builtin:monitoring.slo)
+            #   segments            -> Settings 2.0 (builtin:segment)
+            #   iam_policies        -> Settings 2.0 (builtin:iam.policy)
+            #   openpipeline_*      -> Settings 2.0 (builtin:openpipeline.*)
+            # ---------------------------------------------------------------
 
-            # Import metric events
-            task = progress.add_task("Importing metric events...", total=1)
-            for event in transformed_data.get("metric_events", []):
+            canary_plan = self.canary_plan
+
+            def _import_one(entity, type_name):
                 try:
-                    result = self.dt_client.create_metric_event(event)
+                    result = fn_holder["fn"](entity)
                     if result.success:
                         import_results["successful"].append({
-                            "type": "metric_event",
+                            "type": type_name,
                             "name": result.entity_name,
-                            "id": result.dynatrace_id
+                            "id": result.dynatrace_id,
                         })
                     else:
                         import_results["failed"].append({
-                            "type": "metric_event",
+                            "type": type_name,
                             "name": result.entity_name,
-                            "error": result.error_message
+                            "error": result.error_message,
                         })
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001
                     import_results["failed"].append({
-                        "type": "metric_event",
-                        "error": str(e)
+                        "type": type_name,
+                        "error": str(e),
                     })
-            progress.update(task, completed=1)
 
-            # Import synthetic monitors
+            fn_holder = {"fn": None}
+
+            def _push(items, label, fn, type_name):
+                if not items:
+                    return
+                fn_holder["fn"] = fn
+                task = progress.add_task(f"Importing {label}...", total=1)
+                # Phase 20: split into canary + rest waves.
+                canary, rest = canary_plan.split(items)
+                for entity in canary:
+                    _import_one(entity, type_name)
+                if rest:
+                    proceed = canary_plan.approval_gate(label, len(canary), len(items))
+                    if not proceed:
+                        import_results["skipped"].append({
+                            "type": type_name,
+                            "reason": f"Canary halt — operator declined wave 2 for {label}",
+                            "remaining": len(rest),
+                        })
+                    else:
+                        for entity in rest:
+                            _import_one(entity, type_name)
+                progress.update(task, completed=1)
+
+            if "alerts" in components:
+                _push(
+                    transformed_data.get("anomaly_detectors", []),
+                    "Davis anomaly detectors",
+                    self.dt_client.create_anomaly_detector,
+                    "anomaly_detector",
+                )
+                _push(
+                    transformed_data.get("workflows", []),
+                    "automation workflows",
+                    self.dt_client.create_workflow,
+                    "workflow",
+                )
+
             if "synthetics" in components:
-                task = progress.add_task("Importing synthetic monitors...", total=1)
-                for monitor in transformed_data.get("http_monitors", []):
-                    try:
-                        result = self.dt_client.create_http_monitor(monitor)
-                        if result.success:
-                            import_results["successful"].append({
-                                "type": "http_monitor",
-                                "name": result.entity_name,
-                                "id": result.dynatrace_id
-                            })
-                        else:
-                            import_results["failed"].append({
-                                "type": "http_monitor",
-                                "name": result.entity_name,
-                                "error": result.error_message
-                            })
-                    except Exception as e:
-                        import_results["failed"].append({
-                            "type": "http_monitor",
-                            "error": str(e)
-                        })
+                _push(
+                    transformed_data.get("synthetic_tests", []),
+                    "synthetic tests",
+                    self.dt_client.create_synthetic_test,
+                    "synthetic_test",
+                )
 
-                for monitor in transformed_data.get("browser_monitors", []):
-                    try:
-                        result = self.dt_client.create_browser_monitor(monitor)
-                        if result.success:
-                            import_results["successful"].append({
-                                "type": "browser_monitor",
-                                "name": result.entity_name,
-                                "id": result.dynatrace_id
-                            })
-                        else:
-                            import_results["failed"].append({
-                                "type": "browser_monitor",
-                                "name": result.entity_name,
-                                "error": result.error_message
-                            })
-                    except Exception as e:
-                        import_results["failed"].append({
-                            "type": "browser_monitor",
-                            "error": str(e)
-                        })
-                progress.update(task, completed=1)
-
-            # Import SLOs
             if "slos" in components:
-                task = progress.add_task("Importing SLOs...", total=1)
-                for slo in transformed_data.get("slos", []):
-                    try:
-                        result = self.dt_client.create_slo(slo)
-                        if result.success:
-                            import_results["successful"].append({
-                                "type": "slo",
-                                "name": result.entity_name,
-                                "id": result.dynatrace_id
-                            })
-                        else:
-                            import_results["failed"].append({
-                                "type": "slo",
-                                "name": result.entity_name,
-                                "error": result.error_message
-                            })
-                    except Exception as e:
-                        import_results["failed"].append({
-                            "type": "slo",
-                            "error": str(e)
-                        })
-                progress.update(task, completed=1)
+                _push(
+                    transformed_data.get("slos", []),
+                    "SLOs",
+                    self.dt_client.create_slo,
+                    "slo",
+                )
 
-            # Import management zones
             if "workloads" in components:
-                task = progress.add_task("Importing management zones...", total=1)
-                for mz in transformed_data.get("management_zones", []):
-                    try:
-                        result = self.dt_client.create_management_zone(mz)
-                        if result.success:
-                            import_results["successful"].append({
-                                "type": "management_zone",
-                                "name": result.entity_name,
-                                "id": result.dynatrace_id
-                            })
-                        else:
-                            import_results["failed"].append({
-                                "type": "management_zone",
-                                "name": result.entity_name,
-                                "error": result.error_message
-                            })
-                    except Exception as e:
-                        import_results["failed"].append({
-                            "type": "management_zone",
-                            "error": str(e)
-                        })
-                progress.update(task, completed=1)
+                _push(
+                    transformed_data.get("segments", []),
+                    "segments",
+                    self.dt_client.create_segment,
+                    "segment",
+                )
+                _push(
+                    transformed_data.get("iam_policies", []),
+                    "IAM policies",
+                    self.dt_client.create_iam_policy,
+                    "iam_policy",
+                )
+
+            if "openpipeline" in components or "tags" in components or "logs" in components:
+                _push(
+                    transformed_data.get("openpipeline_processors", []),
+                    "OpenPipeline processors",
+                    self.dt_client.create_openpipeline_processor,
+                    "openpipeline_processor",
+                )
 
         console.print(
             f"\n[green]Successfully imported: {len(import_results['successful'])}[/green]"
@@ -654,13 +797,14 @@ class MigrationOrchestrator:
         preview_table.add_column("Names (first 5)", style="white")
 
         type_keys = [
-            ("Dashboards", "dashboards", "dashboardMetadata.name"),
-            ("Alerting Profiles", "alerting_profiles", "name"),
-            ("Metric Events", "metric_events", "summary"),
-            ("HTTP Monitors", "http_monitors", "name"),
-            ("Browser Monitors", "browser_monitors", "name"),
-            ("SLOs", "slos", "name"),
-            ("Management Zones", "management_zones", "name"),
+            ("Dashboards", "dashboards", "name"),
+            ("Workflows", "workflows", "title"),
+            ("Davis Anomaly Detectors", "anomaly_detectors", "value.name"),
+            ("Synthetic Tests", "synthetic_tests", "value.name"),
+            ("SLOs", "slos", "value.name"),
+            ("Segments", "segments", "value.name"),
+            ("IAM Policies", "iam_policies", "value.name"),
+            ("OpenPipeline Processors", "openpipeline_processors", "value.name"),
         ]
 
         for label, key, name_path in type_keys:
@@ -708,21 +852,21 @@ class MigrationOrchestrator:
                 ("Dashboards", len(export_data.get("dashboards", [])),
                  len(transformed.get("dashboards", [])),
                  sum(1 for i in imported.get("successful", []) if i["type"] == "dashboard")),
-                ("Alert Policies", len(export_data.get("alert_policies", [])),
-                 len(transformed.get("alerting_profiles", [])),
-                 sum(1 for i in imported.get("successful", []) if i["type"] == "alerting_profile")),
-                ("Metric Events", "-",
-                 len(transformed.get("metric_events", [])),
-                 sum(1 for i in imported.get("successful", []) if i["type"] == "metric_event")),
-                ("Synthetic Monitors", len(export_data.get("synthetic_monitors", [])),
-                 len(transformed.get("http_monitors", [])) + len(transformed.get("browser_monitors", [])),
-                 sum(1 for i in imported.get("successful", []) if "monitor" in i["type"])),
+                ("Alert Policies → Workflows", len(export_data.get("alert_policies", [])),
+                 len(transformed.get("workflows", [])),
+                 sum(1 for i in imported.get("successful", []) if i["type"] == "workflow")),
+                ("Davis Anomaly Detectors", "-",
+                 len(transformed.get("anomaly_detectors", [])),
+                 sum(1 for i in imported.get("successful", []) if i["type"] == "anomaly_detector")),
+                ("Synthetic Tests", len(export_data.get("synthetic_monitors", [])),
+                 len(transformed.get("synthetic_tests", [])),
+                 sum(1 for i in imported.get("successful", []) if i["type"] == "synthetic_test")),
                 ("SLOs", len(export_data.get("slos", [])),
                  len(transformed.get("slos", [])),
                  sum(1 for i in imported.get("successful", []) if i["type"] == "slo")),
-                ("Workloads/MZs", len(export_data.get("workloads", [])),
-                 len(transformed.get("management_zones", [])),
-                 sum(1 for i in imported.get("successful", []) if i["type"] == "management_zone")),
+                ("Workloads → Segments", len(export_data.get("workloads", [])),
+                 len(transformed.get("segments", [])),
+                 sum(1 for i in imported.get("successful", []) if i["type"] == "segment")),
             ]
 
             for name, exported, transformed_count, imported_count in components_data:
@@ -750,6 +894,9 @@ class MigrationOrchestrator:
 @click.option("--report", is_flag=True, help="Generate conversion report after migration")
 @click.option("--retry", "retry_file", type=click.Path(exists=True), help="Retry failed entities from previous run")
 @click.option("--diff", "show_diff", is_flag=True, help="Compare transformed entities against live DT environment")
+@click.option("--legacy", is_flag=True, help="Gen2 compatibility mode for classic tenants (emits Alerting Profiles, Management Zones, Auto-Tag Rules, Config v1 dashboards/synthetics). Prefer Gen3 default.")
+@click.option("--canary", "canary_pct", type=float, default=None, help="Two-wave import: push CANARY%% of each entity bucket first, then prompt before continuing. Range 1-99.")
+@click.option("--canary-auto-proceed", is_flag=True, help="In canary mode, skip the interactive prompt and proceed automatically (CI / scripted use).")
 def main(
     full: bool,
     export_only: bool,
@@ -764,11 +911,14 @@ def main(
     incremental: bool,
     report: bool,
     retry_file: Optional[str],
-    show_diff: bool
+    show_diff: bool,
+    legacy: bool,
+    canary_pct: Optional[float],
+    canary_auto_proceed: bool,
 ):
     """New Relic to Dynatrace Migration Tool."""
 
-    # Handle rollback
+    # Handle rollback (Phase 20: now executes against DT for Gen3 entity types)
     if rollback_file:
         from migration.state import RollbackManifest
         manifest = RollbackManifest.load(Path(rollback_file))
@@ -776,17 +926,60 @@ def main(
         if not entries:
             console.print("[yellow]Manifest is empty — nothing to rollback[/yellow]")
             return
-        console.print(f"[bold red]Rollback will delete {len(entries)} entities:[/bold red]")
+        console.print(f"[bold red]Rollback targets ({len(entries)} entities):[/bold red]")
         for entry in entries[:10]:
             console.print(f"  • {entry['entity_type']}: {entry['name']} ({entry['dynatrace_id']})")
         if len(entries) > 10:
             console.print(f"  ... and {len(entries) - 10} more")
+        if dry_run:
+            console.print("[yellow]--dry-run set; no deletes executed.[/yellow]")
+            return
         if not click.confirm("Proceed with rollback?"):
             console.print("[yellow]Rollback cancelled[/yellow]")
             return
-        console.print("[bold]Rolling back...[/bold]")
-        # Rollback would call dt_client.delete() for each entry — requires DT credentials
-        console.print(f"[green]Rollback of {len(entries)} entities would be executed (requires DT client)[/green]")
+
+        # Need DT credentials to actually delete.
+        try:
+            settings_obj = get_settings()
+        except Exception as e:  # noqa: BLE001
+            console.print(f"[red]Configuration error: {e}[/red]"); sys.exit(1)
+        if legacy:
+            from clients.legacy import LegacyDynatraceV1Client
+            dt_for_rollback = LegacyDynatraceV1Client(
+                api_token=settings_obj.dynatrace.api_token,
+                environment_url=settings_obj.dynatrace.environment_url,
+            )
+            console.print("[yellow]Rollback in --legacy mode (Gen2 deletes).[/yellow]")
+        else:
+            dt_for_rollback = DynatraceClient(
+                environment_url=settings_obj.dynatrace.environment_url,
+                api_token=settings_obj.dynatrace.api_token,
+            )
+
+        successes = failures = 0
+        for entry in entries:
+            r = dt_for_rollback.delete_entity(
+                entry["entity_type"], entry["dynatrace_id"]
+            ) if hasattr(dt_for_rollback, "delete_entity") else None
+            if r is None:
+                console.print(
+                    f"[yellow]  · {entry['entity_type']} '{entry['name']}': "
+                    "no delete handler on legacy client[/yellow]"
+                )
+                failures += 1
+                continue
+            if r.success:
+                successes += 1
+            else:
+                failures += 1
+                console.print(
+                    f"[red]  · failed {entry['entity_type']} '{entry['name']}': "
+                    f"{r.error_message}[/red]"
+                )
+        console.print(
+            f"[bold]Rollback complete:[/bold] [green]{successes} ok[/green], "
+            f"[red]{failures} failed[/red]"
+        )
         return
 
     # Handle retry of failed entities
@@ -839,11 +1032,21 @@ def main(
             region=settings.newrelic.region
         )
 
+    # CLI flag takes precedence over MIGRATION_LEGACY_MODE env var.
+    legacy_mode = legacy or settings.migration.legacy_mode
+
     if not export_only:
-        dt_client = DynatraceClient(
-            api_token=settings.dynatrace.api_token,
-            environment_url=settings.dynatrace.environment_url
-        )
+        if legacy_mode:
+            from clients.legacy import LegacyDynatraceV1Client
+            dt_client = LegacyDynatraceV1Client(
+                api_token=settings.dynatrace.api_token,
+                environment_url=settings.dynatrace.environment_url,
+            )
+        else:
+            dt_client = DynatraceClient(
+                environment_url=settings.dynatrace.environment_url,
+                api_token=settings.dynatrace.api_token,
+            )
 
         # Validate Dynatrace connection
         if not dt_client.validate_connection():
@@ -875,6 +1078,13 @@ def main(
         else:
             inc_state = IncrementalState()
 
+    # Phase 20: assemble canary plan from CLI flags.
+    from migration.canary import CanaryPlan, auto_approve_gate, cli_prompt_gate
+    canary_plan = CanaryPlan(
+        canary_percent=canary_pct,
+        approval_gate=auto_approve_gate if canary_auto_proceed else cli_prompt_gate,
+    )
+
     # Create orchestrator
     orchestrator = MigrationOrchestrator(
         newrelic_client=nr_client,
@@ -882,7 +1092,9 @@ def main(
         output_dir=output_dir,
         dry_run=dry_run,
         incremental_state=inc_state,
-        checkpoint=checkpoint
+        checkpoint=checkpoint,
+        legacy_mode=legacy_mode,
+        canary_plan=canary_plan,
     )
 
     # Run migration
@@ -1373,28 +1585,38 @@ def cli(ctx):
         click.echo(ctx.get_help())
 
 
+def _load_transformed(input_dir: str, legacy: bool) -> Dict[str, Any]:
+    input_path = Path(input_dir)
+    candidates = [
+        input_path / "transformed" / (
+            "dynatrace_config_legacy.json" if legacy else "dynatrace_config.json"
+        ),
+        input_path / "transformed" / "dynatrace_config.json",
+        input_path / "preview" / "transformed_preview.json",
+        input_path / "dynatrace_config.json",
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            with open(candidate) as f:
+                return json.load(f)
+    console.print(f"[red]Could not find transformed data in {input_dir}[/red]")
+    sys.exit(1)
+
+
 @click.command("export-monaco")
 @click.option("--input", "input_dir", required=True, type=click.Path(exists=True), help="Directory with transformed data")
 @click.option("--output", "output_dir", type=click.Path(), default="./monaco-output", help="Monaco output directory")
-def export_monaco(input_dir: str, output_dir: str):
+@click.option("--legacy", is_flag=True, help="Emit Gen2 (Config v1) Monaco project instead of Gen3 default.")
+def export_monaco(input_dir: str, output_dir: str, legacy: bool):
     """Export transformed data as Monaco config-as-code project."""
-    from exporters.monaco import MonacoExporter
-
-    input_path = Path(input_dir)
-    # Try to load transformed data
-    for candidate in [input_path / "transformed" / "dynatrace_config.json",
-                      input_path / "preview" / "transformed_preview.json",
-                      input_path / "dynatrace_config.json"]:
-        if candidate.exists():
-            with open(candidate) as f:
-                transformed_data = json.load(f)
-            break
+    if legacy:
+        from exporters.legacy import LegacyMonacoExporter as MonacoExporter
+        logger.warning("Monaco export in Gen2 compatibility mode (--legacy).")
     else:
-        console.print(f"[red]Could not find transformed data in {input_dir}[/red]")
-        sys.exit(1)
+        from exporters.monaco import MonacoExporter
 
-    exporter = MonacoExporter()
-    summary = exporter.export(transformed_data, Path(output_dir))
+    transformed_data = _load_transformed(input_dir, legacy=legacy)
+    summary = MonacoExporter().export(transformed_data, Path(output_dir))
 
     console.print(f"\n[green]Monaco project exported to {output_dir}[/green]")
     for entity_type, count in summary.items():
@@ -1404,29 +1626,57 @@ def export_monaco(input_dir: str, output_dir: str):
 @click.command("export-terraform")
 @click.option("--input", "input_dir", required=True, type=click.Path(exists=True), help="Directory with transformed data")
 @click.option("--output", "output_dir", type=click.Path(), default="./terraform-output", help="Terraform output directory")
-def export_terraform(input_dir: str, output_dir: str):
+@click.option("--legacy", is_flag=True, help="Emit Gen2 Terraform resources instead of Gen3 default.")
+def export_terraform(input_dir: str, output_dir: str, legacy: bool):
     """Export transformed data as Terraform HCL configuration."""
-    from exporters.terraform import TerraformExporter
-
-    input_path = Path(input_dir)
-    # Try to load transformed data
-    for candidate in [input_path / "transformed" / "dynatrace_config.json",
-                      input_path / "preview" / "transformed_preview.json",
-                      input_path / "dynatrace_config.json"]:
-        if candidate.exists():
-            with open(candidate) as f:
-                transformed_data = json.load(f)
-            break
+    if legacy:
+        from exporters.legacy import LegacyTerraformExporter as TerraformExporter
+        logger.warning("Terraform export in Gen2 compatibility mode (--legacy).")
     else:
-        console.print(f"[red]Could not find transformed data in {input_dir}[/red]")
-        sys.exit(1)
+        from exporters.terraform import TerraformExporter
 
-    exporter = TerraformExporter()
-    summary = exporter.export(transformed_data, Path(output_dir))
+    transformed_data = _load_transformed(input_dir, legacy=legacy)
+    summary = TerraformExporter().export(transformed_data, Path(output_dir))
 
     console.print(f"\n[green]Terraform config exported to {output_dir}[/green]")
     for entity_type, count in summary.items():
         console.print(f"  {entity_type}: {count}")
+
+
+@click.command("preflight")
+def preflight():
+    """Probe the target Dynatrace tenant for Gen3 API availability.
+
+    Reports Settings 2.0, Document API, and Automation API reachability.
+    Suggests `--legacy` if any Gen3 surface is missing.
+    """
+    try:
+        settings = get_settings()
+    except Exception as e:  # noqa: BLE001
+        console.print(f"[red]Configuration error: {e}[/red]")
+        sys.exit(1)
+
+    client = DynatraceClient(
+        environment_url=settings.dynatrace.environment_url,
+        api_token=settings.dynatrace.api_token,
+    )
+    report = client.preflight_gen3()
+
+    table = Table(title="Dynatrace Gen3 Preflight")
+    table.add_column("API", style="cyan")
+    table.add_column("Reachable", justify="center")
+    for name in ("settings_v2", "document_api", "automation_api"):
+        ok = report.get(name, False)
+        table.add_row(name, "[green]yes[/green]" if ok else "[red]no[/red]")
+    console.print(table)
+
+    if not all(report.values()):
+        console.print(
+            "\n[yellow]One or more Gen3 APIs are not reachable. "
+            "Consider running with `--legacy` until the tenant is upgraded.[/yellow]"
+        )
+        sys.exit(1)
+    console.print("\n[green]Gen3 APIs reachable — default mode is safe to use.[/green]")
 
 
 # Register subcommands
@@ -1438,6 +1688,200 @@ cli.add_command(audit_slos, "audit-slos")
 cli.add_command(batch_compile, "batch")
 cli.add_command(export_monaco, "export-monaco")
 cli.add_command(export_terraform, "export-terraform")
+cli.add_command(preflight, "preflight")
+
+
+@click.command("agents")
+@click.option(
+    "--language",
+    type=click.Choice(
+        ["java", "dotnet", "nodejs", "python", "ruby", "php", "go"],
+        case_sensitive=False,
+    ),
+    required=True,
+    help="APM agent language to migrate on the target host(s).",
+)
+@click.option("--host", "hostname", default="localhost", help="Target hostname.")
+@click.option(
+    "--phase",
+    type=click.Choice(["uninstall", "install-oneagent", "install-otel", "verify", "all"]),
+    default="all",
+)
+@click.option("--dry-run", is_flag=True, help="Print the action plan without executing.")
+def agents_cmd(language: str, hostname: str, phase: str, dry_run: bool):
+    """Per-language APM agent migration orchestrator.
+
+    Emits an ordered action plan (commands + rollback hooks) for an
+    operator or automation layer to execute. Does NOT run shell commands
+    itself — the plan is always printed first.
+    """
+    from agents import SUPPORTED_LANGUAGES
+    Agent = SUPPORTED_LANGUAGES[language.lower()]
+    orch = Agent()
+    host = {"name": hostname, "hostname": hostname}
+    phases = (
+        ["uninstall", "install-oneagent", "verify"]
+        if phase == "all"
+        else [phase]
+    )
+    for p in phases:
+        if p == "uninstall":
+            r = orch.uninstall_nr(host, dry_run=dry_run)
+        elif p == "install-oneagent":
+            r = orch.install_oneagent(host, dry_run=dry_run)
+        elif p == "install-otel":
+            r = orch.install_otel_fallback(host, dry_run=dry_run)
+        else:
+            r = orch.verify(host)
+        if not r.success:
+            for w in r.warnings:
+                console.print(f"[yellow]{w}[/yellow]")
+            for e in r.errors:
+                console.print(f"[red]{e}[/red]")
+            continue
+        table = Table(title=f"{language} / {p} on {hostname}")
+        table.add_column("#", style="dim")
+        table.add_column("Action ID", style="cyan")
+        table.add_column("Description")
+        for i, action in enumerate(r.plan.actions, 1):
+            table.add_row(str(i), action.id, action.description)
+        console.print(table)
+
+
+@click.command("scan-instrumentation")
+@click.option(
+    "--file", "input_file", required=True, type=click.Path(exists=True),
+    help="Source file to scan for newrelic.*() SDK calls.",
+)
+@click.option("--output", "output_file", type=click.Path(), help="Write diff to file.")
+def scan_instrumentation_cmd(input_file: str, output_file: Optional[str]):
+    """Scan a source file for NR SDK calls and print suggested DT replacements."""
+    from transformers.custom_instrumentation_translator import (
+        CustomInstrumentationTranslator,
+    )
+    text = Path(input_file).read_text()
+    translator = CustomInstrumentationTranslator()
+    result = translator.scan_text(text, input_file)
+    diff = translator.render_diff(result)
+    if output_file:
+        Path(output_file).write_text(diff)
+        console.print(f"[green]Diff written to {output_file}[/green]")
+    else:
+        console.print(diff or "[dim]No NR SDK calls found.[/dim]")
+    for w in result.warnings:
+        console.print(f"[yellow]{w}[/yellow]")
+
+
+cli.add_command(agents_cmd, "agents")
+cli.add_command(scan_instrumentation_cmd, "scan-instrumentation")
+
+
+@click.command("archive")
+@click.option("--account", "account_id", required=True, help="NR account id.")
+@click.option("--since", "since", required=True, help="NRQL SINCE value, e.g. '7 days ago' or an ISO timestamp.")
+@click.option("--until", "until", default=None, help="Optional UNTIL value.")
+@click.option("--output", "output_dir", default="./nrdb-archive", type=click.Path())
+@click.option(
+    "--event-types", default=None,
+    help="Comma-separated event types (defaults to the standard NR inventory).",
+)
+def archive_cmd(account_id: str, since: str, until: Optional[str], output_dir: str, event_types: Optional[str]):
+    """Pre-decommission snapshot of NRDB event data (archive-only).
+
+    Produces one JSONL file per event type plus a manifest.json. Resumable
+    via `<EventType>.cursor.json` files.
+    """
+    from tools.nrdb_archive import DEFAULT_EVENT_TYPES, NRDBArchive
+
+    try:
+        settings = get_settings()
+    except Exception as e:  # noqa: BLE001
+        console.print(f"[red]Configuration error: {e}[/red]")
+        sys.exit(1)
+
+    nr_client = NewRelicClient(
+        api_key=settings.newrelic.api_key,
+        account_id=settings.newrelic.account_id,
+        region=settings.newrelic.region,
+    )
+
+    def run_query(nrql: str, cursor: Optional[str]) -> Dict[str, Any]:
+        return nr_client.execute_nrql(nrql, cursor=cursor)
+
+    types = (
+        [t.strip() for t in event_types.split(",")]
+        if event_types
+        else DEFAULT_EVENT_TYPES
+    )
+    archiver = NRDBArchive(run_query=run_query, account_id=account_id)
+    manifest = archiver.archive(
+        since=since, until=until, output_dir=output_dir, event_types=types,
+    )
+    console.print(f"\n[green]Archive complete: {output_dir}[/green]")
+    for etype, count in manifest.per_type_counts.items():
+        console.print(f"  {etype}: {count} records")
+    if manifest.errors:
+        console.print(f"\n[yellow]Errors ({len(manifest.errors)}):[/yellow]")
+        for etype, err in manifest.errors.items():
+            console.print(f"  {etype}: {err}")
+
+
+cli.add_command(archive_cmd, "archive")
+
+
+@click.command("audit")
+@click.option(
+    "--baseline", "baseline_path", required=True, type=click.Path(exists=True),
+    help="Path to a transformed_data JSON (e.g. output/transformed/dynatrace_config.json).",
+)
+@click.option("--output", "output_path", type=click.Path(), default=None,
+              help="Optional path to write the JSON drift report.")
+def audit_cmd(baseline_path: str, output_path: Optional[str]):
+    """Compare a baseline export against the live DT tenant (Phase 20).
+
+    Detects RENAMED / DELETED / MODIFIED / EXTRA drift. Read-only — does
+    not write to Dynatrace. Exits 1 when any drift is found.
+    """
+    from migration.audit import live_snapshot, run_audit
+
+    try:
+        settings_obj = get_settings()
+    except Exception as e:  # noqa: BLE001
+        console.print(f"[red]Configuration error: {e}[/red]"); sys.exit(1)
+
+    dt = DynatraceClient(
+        environment_url=settings_obj.dynatrace.environment_url,
+        api_token=settings_obj.dynatrace.api_token,
+    )
+    report = run_audit(Path(baseline_path), lambda: live_snapshot(dt))
+
+    table = Table(title="Migration drift audit")
+    table.add_column("Kind", style="cyan")
+    table.add_column("Type", style="white")
+    table.add_column("Name", style="white")
+    table.add_column("Detail", style="dim")
+    for d in report.drifts:
+        kind_style = {
+            "DELETED": "red", "RENAMED": "yellow",
+            "MODIFIED": "magenta", "EXTRA": "blue",
+        }.get(d.kind, "white")
+        table.add_row(
+            f"[{kind_style}]{d.kind}[/{kind_style}]",
+            d.entity_type, d.name, d.detail or "",
+        )
+    if report.drifts:
+        console.print(table)
+    else:
+        console.print("[green]No drift detected.[/green]")
+
+    if output_path:
+        Path(output_path).write_text(report.to_json())
+        console.print(f"[dim]JSON report -> {output_path}[/dim]")
+
+    sys.exit(1 if report.has_drift() else 0)
+
+
+cli.add_command(audit_cmd, "audit")
 
 
 if __name__ == "__main__":
