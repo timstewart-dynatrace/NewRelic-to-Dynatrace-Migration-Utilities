@@ -107,3 +107,32 @@ project test counts approximate the same number of assertions
 
 **Tracked in Phase 24 — second-wave parity port** (new, pending —
 release-hold also applies).
+
+
+## Phase 24 status (executed 2026-04-15)
+
+All 8 second-wave candidates ported and tested:
+
+| Candidate | Status | Python module |
+|---|---|---|
+| `DatabaseMonitoringTransformer` | ✅ DONE | `transformers/database_monitoring_transformer.py` — 10 DB engines mapped to `builtin:dynatrace.extension.db.*` |
+| `OnHostIntegrationTransformer` | ✅ DONE | `transformers/on_host_integration_transformer.py` — 12 techs (NGINX/HAProxy/Kafka/RabbitMQ/Elasticsearch/Memcached/Couchbase/Consul/Apache/etcd/Varnish/Zookeeper) |
+| `SecuritySignalsTransformer` | ✅ DONE | `transformers/security_signals_transformer.py` — AppSec envelope + per-signature OpenPipeline enrichment |
+| `CustomEntityTransformer` | ✅ DONE | `transformers/custom_entity_transformer.py` — custom-device POST payload + enrichment matcher |
+| `LogArchiveTransformer` | ✅ DONE | `transformers/log_archive_transformer.py` — Grail bucket + OpenPipeline egress (S3/GCS/Azure Blob) |
+| `MetricNormalizationTransformer` | ✅ DONE | `transformers/metric_normalization_transformer.py` — rename / aggregate / drop processor types |
+| `SyntheticSpecializedTransformer` | ✅ DONE | `transformers/synthetic_specialized_transformer.py` — CERT_CHECK with `certificateExpiryDate` rule; BROKEN_LINKS as multi-step HTTP (capped at 50) |
+| `SavedFilterNotebookTransformer` | ✅ DONE | `transformers/saved_filter_notebook_transformer.py` — NR Data Apps → Document API `type=='notebook'`; markdown + NRQL→DQL cells |
+
+31 new tests; total 1182 unit + 8 integration tests pass.
+
+## Overall parity status
+
+**Python project is now at or above nrql-engine parity on every
+capability either project implements**, with the exceptions documented
+in `docs/gen2-only-capabilities.md` (those are platform-level gaps,
+not tooling gaps — they require upstream DT Workflow / OpenPipeline /
+Segment evolution).
+
+Further parity work (if any TS additions happen after 2026-04-15)
+will be tracked in a new phase.

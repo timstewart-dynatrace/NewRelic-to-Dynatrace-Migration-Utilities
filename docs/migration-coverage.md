@@ -1,6 +1,6 @@
 # Migration Coverage — What This Tool Can and Cannot Migrate
 
-> **Last audited:** 2026-04-15 (post-Phase-23)
+> **Last audited:** 2026-04-15 (post-Phase-24)
 > **Companion:** `docs/gen2-only-capabilities.md` — the 8 capabilities only `--legacy` can emit (per-severity delay ladders, typed problem-notification integrations, template-value auto-tagging, entity-ID-targeted MZ rules, Config v1 dashboard metadata, synthetic KPMs, private-location lookup, Config v1 dashboard fallback).
 > **Scope:** Exhaustive inventory of every New Relic surface area, mapped to Dynatrace, with this tool's current coverage status.
 > **Companion:** Coverage-matrix wording aligns with `topics/nrlc/docs/COVERAGE-MATRIX.md` in the Best-Practice-Notebooks-Generator repo (external reference).
@@ -353,9 +353,9 @@ Delivered as `transformers/mobile_rum_transformer.py` (Phase 16). Supports 8 pla
 
 | Status | Count | Examples |
 |---|---|---|
-| ✅ Full auto-migration | ~160 | All Phase 14–19 deliverables + **Key Transactions → SLO + enrichment + Workflow**, **OTel metrics ingestion**, **StatsD (ActiveGate)**, **CloudWatch Metric Streams (Firehose)**, **MetricTransform plugin hook**, **per-concern mapping modules**, **numeric confidence score sync** |
-| 🟡 Partial / scaffold / manual-review | ~25 | Scripted browser monitors, Grok parsing rules, Session Replay activation, NR→DT txn-naming (config-time), Go OneAgent (falls back to OTel), SCIM/Auth-domain runbooks, API-key re-creation, NR Decisions→Davis (replaced, not migrated) |
-| 🔴 Gap (not yet handled) | ~2 | NR Flex scripts, IoT/Embedded, Security Signals, Live Tail |
+| ✅ Full auto-migration | ~170 | All Phase 14–23 deliverables + **Phase 24 second-wave**: Database Monitoring (10 engines), on-host integrations (12 techs), Security Signals/IAST, custom entities, Log Live Archive + egress, metric normalization (rename/aggregate/drop), specialized synthetic (cert-check + broken-links), saved-filter notebooks |
+| 🟡 Partial / scaffold / manual-review | ~25 | Scripted browser monitors, Grok parsing rules, Session Replay activation, NR→DT txn-naming (config-time), Go OneAgent (falls back to OTel), SCIM/Auth-domain runbooks, API-key re-creation, NR Decisions→Davis (replaced, not migrated), Gen2-only capabilities listed in `docs/gen2-only-capabilities.md` |
+| 🔴 Gap (not yet handled) | ~2 | NR Flex scripts, IoT/Embedded, Live Tail |
 | ⛔ Out of scope | ~8 | NRDB historical data, Nerdpacks, NR1 CLI, platform features (Davis, Smartscape, log patterns, error fingerprinting), secrets |
 
 ## Absolute limits — what will never migrate
