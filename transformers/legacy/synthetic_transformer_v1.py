@@ -1,20 +1,13 @@
 """
-Synthetic Monitor Transformer — Gen3 target.
-
-Emits Settings 2.0 payloads targeting schema `builtin:synthetic_test`. The
-monitor body is wrapped in the `{schemaId, scope, value}` Settings 2.0
-envelope expected by `settingsObjectsClient.postSettingsObjects`.
-
-Legacy (Config v1 `/synthetic/monitors`) behavior is preserved in
-`transformers/legacy/synthetic_transformer_v1.py`.
+Synthetic Monitor Transformer - Converts New Relic synthetics to Dynatrace format.
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
 import structlog
 
-from .mapping_rules import (
+from ..mapping_rules import (
     MONITOR_PERIOD_MAP,
     SYNTHETIC_MONITOR_TYPE_MAP,
 )
@@ -24,13 +17,16 @@ logger = structlog.get_logger()
 
 @dataclass
 class SyntheticTransformResult:
-    """Result of synthetic monitor transformation (Gen3)."""
-
+    """Result of synthetic monitor transformation."""
     success: bool
-    monitor: Optional[Dict[str, Any]] = None  # full Settings 2.0 payload
+    monitor: Optional[Dict[str, Any]] = None
     monitor_type: str = ""  # HTTP or BROWSER
-    warnings: List[str] = field(default_factory=list)
-    errors: List[str] = field(default_factory=list)
+    warnings: List[str] = None
+    errors: List[str] = None
+
+    def __post_init__(self):
+        self.warnings = self.warnings or []
+        self.errors = self.errors or []
 
 
 class SyntheticTransformer:
@@ -65,22 +61,15 @@ class SyntheticTransformer:
             dt_monitor_type = SYNTHETIC_MONITOR_TYPE_MAP.get(monitor_type, "HTTP")
 
             if dt_monitor_type == "HTTP":
-                inner = self._transform_to_http_monitor(nr_monitor, warnings)
+                result = self._transform_to_http_monitor(nr_monitor, warnings)
             elif dt_monitor_type == "BROWSER":
-                inner = self._transform_to_browser_monitor(nr_monitor, warnings)
+                result = self._transform_to_browser_monitor(nr_monitor, warnings)
             else:
                 errors.append(f"Unknown monitor type: {monitor_type}")
                 return SyntheticTransformResult(
                     success=False,
                     errors=errors
                 )
-
-            # Gen3: wrap in Settings 2.0 envelope (builtin:synthetic_test)
-            result = {
-                "schemaId": "builtin:synthetic_test",
-                "scope": "environment",
-                "value": inner,
-            }
 
             logger.info(
                 "Transformed synthetic monitor",

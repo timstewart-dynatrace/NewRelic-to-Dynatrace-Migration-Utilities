@@ -162,15 +162,17 @@ class TestDashboardRegistry:
             assert registry.dashboard_exists("Nonexistent") is None
 
 
-class TestManagementZoneRegistry:
-    def test_should_find_management_zone(self, registry):
+class TestSegmentRegistry:
+    """Gen3 replacement for Management Zones: builtin:segment."""
+
+    def test_should_find_segment(self, registry):
         with patch("urllib.request.urlopen", return_value=_mock_urlopen({
-            "items": [{"objectId": "mz-1", "value": {"name": "Production", "rules": []}}],
+            "items": [{"objectId": "seg-1", "value": {"name": "Production", "includes": {}}}],
             "nextPageKey": None
         })):
-            mz = registry.find_management_zone("Production")
-            assert mz is not None
-            assert mz["name"] == "Production"
+            seg = registry.find_segment("Production")
+            assert seg is not None
+            assert seg["name"] == "Production"
 
 
 class TestSyntheticLocationRegistry:

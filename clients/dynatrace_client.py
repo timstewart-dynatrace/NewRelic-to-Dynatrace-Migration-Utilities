@@ -1,618 +1,254 @@
 """
-Dynatrace API Client.
+Dynatrace API Client — Gen3 default.
 
-Provides methods to import configuration entities to Dynatrace
-using the Settings API v2 and Configuration API.
+Composes the three Gen3 API surfaces used by the migrator:
+
+  * Settings 2.0   (/api/v2/settings/objects)       → Gen3 schemas
+  * Document API   (/platform/document/v1/...)      → Grail dashboards
+  * Automation API (/platform/automation/v1/...)    → Workflows
+
+Config v1 methods (alerting profiles, metric events, management zones,
+problem notifications, classic dashboards/synthetics/SLOs) live in
+`clients/legacy/config_v1_client.py` and are only reachable through the
+`--legacy` CLI flag.
 """
 
-import json
+from __future__ import annotations
+
 import time
-from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
-import requests
 import structlog
-from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry
+
+from ._http import (
+    DynatraceResponse,
+    HttpTransport,
+    ImportResult,
+    OAuth2PlatformTokenProvider,
+)
+from .automation_client import AutomationClient
+from .document_client import DocumentClient
+from .settings_v2_client import SettingsV2Client
 
 logger = structlog.get_logger()
 
 
-@dataclass
-class DynatraceResponse:
-    """Response wrapper for Dynatrace API calls."""
-    data: Optional[Any]
-    status_code: int
-    error: Optional[str] = None
-
-    @property
-    def is_success(self) -> bool:
-        return 200 <= self.status_code < 300
-
-
-@dataclass
-class ImportResult:
-    """Result of an import operation."""
-    entity_type: str
-    entity_name: str
-    success: bool
-    dynatrace_id: Optional[str] = None
-    error_message: Optional[str] = None
+# Re-exports so callers can `from clients.dynatrace_client import DynatraceResponse`.
+__all__ = [
+    "DynatraceClient",
+    "DynatraceResponse",
+    "ImportResult",
+    "OAuth2PlatformTokenProvider",
+]
 
 
 class DynatraceClient:
-    """
-    Client for interacting with Dynatrace APIs.
-
-    Supports importing:
-    - Dashboards (via Dashboard API)
-    - Alerting Profiles & Metric Events (via Settings API v2)
-    - Synthetic Monitors (via Synthetic API)
-    - SLOs (via SLO API)
-    - Management Zones (via Settings API v2)
-    - Notification Integrations (via Settings API v2)
-    """
+    """Gen3 Dynatrace client — Settings 2.0 + Document + Automation."""
 
     def __init__(
         self,
-        api_token: str,
         environment_url: str,
-        rate_limit: float = 5.0
-    ):
-        self.api_token = api_token
+        api_token: Optional[str] = None,
+        oauth: Optional[OAuth2PlatformTokenProvider] = None,
+        rate_limit: float = 5.0,
+    ) -> None:
+        if not api_token and oauth is None:
+            raise ValueError(
+                "DynatraceClient requires either api_token or oauth credentials."
+            )
         self.environment_url = environment_url.rstrip("/")
-        self.rate_limit = rate_limit
-        self._last_request_time = 0.0
-
-        # API endpoints
-        self.api_v2 = f"{self.environment_url}/api/v2"
-        self.config_api = f"{self.environment_url}/api/config/v1"
-
-        # Configure session with retries
-        self.session = requests.Session()
-        retries = Retry(
-            total=3,
-            backoff_factor=1,
-            status_forcelist=[429, 500, 502, 503, 504]
-        )
-        adapter = HTTPAdapter(max_retries=retries)
-        self.session.mount("https://", adapter)
-        self.session.headers.update({
-            "Content-Type": "application/json",
-            "Authorization": f"Api-Token {self.api_token}"
-        })
-
-    def _rate_limit_wait(self):
-        """Implement rate limiting between requests."""
-        if self.rate_limit > 0:
-            elapsed = time.time() - self._last_request_time
-            min_interval = 1.0 / self.rate_limit
-            if elapsed < min_interval:
-                time.sleep(min_interval - elapsed)
-        self._last_request_time = time.time()
-
-    def _request(
-        self,
-        method: str,
-        url: str,
-        data: Optional[Dict] = None,
-        params: Optional[Dict] = None
-    ) -> DynatraceResponse:
-        """Make an API request to Dynatrace."""
-        self._rate_limit_wait()
-
-        try:
-            response = self.session.request(
-                method=method,
-                url=url,
-                json=data,
-                params=params,
-                timeout=60
-            )
-
-            response_data = None
-            if response.content:
-                try:
-                    response_data = response.json()
-                except json.JSONDecodeError:
-                    response_data = response.text
-
-            if response.status_code >= 400:
-                error_msg = str(response_data) if response_data else response.reason
-                return DynatraceResponse(
-                    data=response_data,
-                    status_code=response.status_code,
-                    error=error_msg
-                )
-
-            return DynatraceResponse(
-                data=response_data,
-                status_code=response.status_code
-            )
-
-        except requests.exceptions.RequestException as e:
-            logger.error("Dynatrace API error", error=str(e))
-            return DynatraceResponse(
-                data=None,
-                status_code=0,
-                error=str(e)
-            )
-
-    def get(self, url: str, params: Optional[Dict] = None) -> DynatraceResponse:
-        """HTTP GET request."""
-        return self._request("GET", url, params=params)
-
-    def post(self, url: str, data: Dict) -> DynatraceResponse:
-        """HTTP POST request."""
-        return self._request("POST", url, data=data)
-
-    def put(self, url: str, data: Dict) -> DynatraceResponse:
-        """HTTP PUT request."""
-        return self._request("PUT", url, data=data)
-
-    def delete(self, url: str) -> DynatraceResponse:
-        """HTTP DELETE request."""
-        return self._request("DELETE", url)
-
-    # =========================================================================
-    # Settings API v2 Methods
-    # =========================================================================
-
-    def get_settings_schemas(self) -> List[Dict[str, Any]]:
-        """Get all available settings schemas."""
-        url = f"{self.api_v2}/settings/schemas"
-        response = self.get(url)
-
-        if response.is_success:
-            return response.data.get("items", [])
-        return []
-
-    def get_settings_objects(
-        self,
-        schema_id: str,
-        scope: Optional[str] = None
-    ) -> List[Dict[str, Any]]:
-        """Get settings objects for a schema."""
-        url = f"{self.api_v2}/settings/objects"
-        params = {"schemaIds": schema_id}
-        if scope:
-            params["scopes"] = scope
-
-        all_objects = []
-        next_page_key = None
-
-        while True:
-            if next_page_key:
-                params["nextPageKey"] = next_page_key
-
-            response = self.get(url, params=params)
-
-            if not response.is_success:
-                break
-
-            items = response.data.get("items", [])
-            all_objects.extend(items)
-
-            next_page_key = response.data.get("nextPageKey")
-            if not next_page_key:
-                break
-
-        return all_objects
-
-    def create_settings_object(
-        self,
-        schema_id: str,
-        value: Dict[str, Any],
-        scope: str = "environment"
-    ) -> DynatraceResponse:
-        """Create a settings object."""
-        url = f"{self.api_v2}/settings/objects"
-        payload = [{
-            "schemaId": schema_id,
-            "scope": scope,
-            "value": value
-        }]
-
-        return self.post(url, payload)
-
-    def update_settings_object(
-        self,
-        object_id: str,
-        value: Dict[str, Any]
-    ) -> DynatraceResponse:
-        """Update a settings object."""
-        url = f"{self.api_v2}/settings/objects/{object_id}"
-        return self.put(url, {"value": value})
-
-    # =========================================================================
-    # Dashboard Methods
-    # =========================================================================
-
-    def create_dashboard(self, dashboard: Dict[str, Any]) -> ImportResult:
-        """Create a dashboard in Dynatrace.
-
-        Tries Documents API v1 first (Platform), falls back to Config API v1.
-        """
-        name = dashboard.get("dashboardMetadata", {}).get("name", "Unknown")
-
-        # Try Documents API first (newer, supports Grail dashboards)
-        result = self.create_dashboard_v2(dashboard)
-        if result.success:
-            return result
-
-        # Fallback to Config API v1
-        url = f"{self.config_api}/dashboards"
-        response = self.post(url, dashboard)
-
-        if response.is_success:
-            dashboard_id = response.data.get("id")
-            return ImportResult(
-                entity_type="dashboard",
-                entity_name=name,
-                success=True,
-                dynatrace_id=dashboard_id
-            )
-        else:
-            return ImportResult(
-                entity_type="dashboard",
-                entity_name=name,
-                success=False,
-                error_message=response.error
-            )
-
-    def create_dashboard_v2(self, dashboard: Dict[str, Any]) -> ImportResult:
-        """Create a dashboard via Documents API v1 (Platform).
-
-        Uses /platform/document/v1/documents for Grail-compatible dashboards.
-        Requires OAuth token (Bearer auth).
-        """
-        name = dashboard.get("dashboardMetadata", {}).get("name", "Unknown")
-        platform_url = self.environment_url.replace('.live.', '.apps.')
-        url = f"{platform_url}/platform/document/v1/documents"
-
-        doc_payload = {
-            "name": name,
-            "type": "dashboard",
-            "content": json.dumps(dashboard),
-            "isPrivate": not dashboard.get("dashboardMetadata", {}).get("shared", False),
-        }
-
-        response = self.post(url, doc_payload)
-
-        if response.is_success:
-            doc_id = response.data.get("id") if response.data else None
-            return ImportResult(
-                entity_type="dashboard",
-                entity_name=name,
-                success=True,
-                dynatrace_id=doc_id
-            )
-        else:
-            return ImportResult(
-                entity_type="dashboard",
-                entity_name=name,
-                success=False,
-                error_message=response.error
-            )
-
-    def update_dashboard_v2(self, doc_id: str, dashboard: Dict[str, Any]) -> ImportResult:
-        """Update a dashboard via Documents API v1."""
-        name = dashboard.get("dashboardMetadata", {}).get("name", "Unknown")
-        platform_url = self.environment_url.replace('.live.', '.apps.')
-        url = f"{platform_url}/platform/document/v1/documents/{doc_id}"
-
-        doc_payload = {
-            "name": name,
-            "content": json.dumps(dashboard),
-            "isPrivate": not dashboard.get("dashboardMetadata", {}).get("shared", False),
-        }
-
-        response = self.put(url, doc_payload)
-
-        if response.is_success:
-            return ImportResult(
-                entity_type="dashboard",
-                entity_name=name,
-                success=True,
-                dynatrace_id=doc_id
-            )
-        else:
-            return ImportResult(
-                entity_type="dashboard",
-                entity_name=name,
-                success=False,
-                error_message=response.error
-            )
-
-    def get_all_dashboards(self) -> List[Dict[str, Any]]:
-        """Get all dashboards for backup purposes."""
-        url = f"{self.config_api}/dashboards"
-        response = self.get(url)
-
-        if response.is_success:
-            dashboards = []
-            for item in response.data.get("dashboards", []):
-                # Get full dashboard definition
-                full_url = f"{self.config_api}/dashboards/{item['id']}"
-                full_response = self.get(full_url)
-                if full_response.is_success:
-                    dashboards.append(full_response.data)
-            return dashboards
-        return []
-
-    # =========================================================================
-    # Alerting / Metric Events Methods
-    # =========================================================================
-
-    def create_metric_event(self, metric_event: Dict[str, Any]) -> ImportResult:
-        """Create a metric event (alert) in Dynatrace."""
-        # Use Settings API v2 for metric events
-        schema_id = "builtin:anomaly-detection.metric-events"
-
-        response = self.create_settings_object(
-            schema_id=schema_id,
-            value=metric_event
+        self.transport = HttpTransport(
+            rate_limit=rate_limit, api_token=api_token, oauth=oauth
         )
 
-        if response.is_success:
-            created_items = response.data
-            if created_items and len(created_items) > 0:
-                return ImportResult(
-                    entity_type="metric_event",
-                    entity_name=metric_event.get("summary", "Unknown"),
-                    success=True,
-                    dynatrace_id=created_items[0].get("objectId")
-                )
+        self.settings = SettingsV2Client(self.environment_url, self.transport)
+        self.documents = DocumentClient(self.environment_url, self.transport)
+        self.automation = AutomationClient(self.environment_url, self.transport)
 
-        return ImportResult(
-            entity_type="metric_event",
-            entity_name=metric_event.get("summary", "Unknown"),
-            success=False,
-            error_message=response.error
-        )
+    # ------------------------------------------------------------------
+    # Transformer-facing create helpers (Gen3 targets)
+    # ------------------------------------------------------------------
 
-    def create_alerting_profile(self, profile: Dict[str, Any]) -> ImportResult:
-        """Create an alerting profile in Dynatrace."""
-        schema_id = "builtin:alerting.profile"
+    def create_anomaly_detector(self, envelope: Dict[str, Any]) -> ImportResult:
+        return self.settings.create_anomaly_detector(envelope)
 
-        response = self.create_settings_object(
-            schema_id=schema_id,
-            value=profile
-        )
+    def create_segment(self, envelope: Dict[str, Any]) -> ImportResult:
+        return self.settings.create_segment(envelope)
 
-        if response.is_success:
-            created_items = response.data
-            if created_items and len(created_items) > 0:
-                return ImportResult(
-                    entity_type="alerting_profile",
-                    entity_name=profile.get("name", "Unknown"),
-                    success=True,
-                    dynatrace_id=created_items[0].get("objectId")
-                )
+    def create_iam_policy(self, envelope: Dict[str, Any]) -> ImportResult:
+        return self.settings.create_iam_policy(envelope)
 
-        return ImportResult(
-            entity_type="alerting_profile",
-            entity_name=profile.get("name", "Unknown"),
-            success=False,
-            error_message=response.error
-        )
-
-    # =========================================================================
-    # Synthetic Monitor Methods
-    # =========================================================================
-
-    def create_http_monitor(self, monitor: Dict[str, Any]) -> ImportResult:
-        """Create an HTTP synthetic monitor."""
-        url = f"{self.environment_url}/api/v1/synthetic/monitors"
-        response = self.post(url, monitor)
-
-        if response.is_success:
-            return ImportResult(
-                entity_type="http_monitor",
-                entity_name=monitor.get("name", "Unknown"),
-                success=True,
-                dynatrace_id=response.data.get("entityId")
-            )
-        else:
-            return ImportResult(
-                entity_type="http_monitor",
-                entity_name=monitor.get("name", "Unknown"),
-                success=False,
-                error_message=response.error
-            )
-
-    def create_browser_monitor(self, monitor: Dict[str, Any]) -> ImportResult:
-        """Create a browser synthetic monitor."""
-        url = f"{self.environment_url}/api/v1/synthetic/monitors"
-        response = self.post(url, monitor)
-
-        if response.is_success:
-            return ImportResult(
-                entity_type="browser_monitor",
-                entity_name=monitor.get("name", "Unknown"),
-                success=True,
-                dynatrace_id=response.data.get("entityId")
-            )
-        else:
-            return ImportResult(
-                entity_type="browser_monitor",
-                entity_name=monitor.get("name", "Unknown"),
-                success=False,
-                error_message=response.error
-            )
-
-    def get_synthetic_locations(self) -> List[Dict[str, Any]]:
-        """Get available synthetic monitoring locations."""
-        url = f"{self.environment_url}/api/v1/synthetic/locations"
-        response = self.get(url)
-
-        if response.is_success:
-            return response.data.get("locations", [])
-        return []
-
-    # =========================================================================
-    # SLO Methods
-    # =========================================================================
-
-    def create_slo(self, slo: Dict[str, Any]) -> ImportResult:
-        """Create an SLO in Dynatrace."""
-        url = f"{self.api_v2}/slo"
-        response = self.post(url, slo)
-
-        if response.is_success:
-            return ImportResult(
-                entity_type="slo",
-                entity_name=slo.get("name", "Unknown"),
-                success=True,
-                dynatrace_id=response.data.get("id")
-            )
-        else:
-            return ImportResult(
-                entity_type="slo",
-                entity_name=slo.get("name", "Unknown"),
-                success=False,
-                error_message=response.error
-            )
-
-    def get_all_slos(self) -> List[Dict[str, Any]]:
-        """Get all SLOs for backup purposes."""
-        url = f"{self.api_v2}/slo"
-        all_slos = []
-        next_page_key = None
-
-        while True:
-            params = {}
-            if next_page_key:
-                params["nextPageKey"] = next_page_key
-
-            response = self.get(url, params=params)
-
-            if not response.is_success:
-                break
-
-            slos = response.data.get("slo", [])
-            all_slos.extend(slos)
-
-            next_page_key = response.data.get("nextPageKey")
-            if not next_page_key:
-                break
-
-        return all_slos
-
-    # =========================================================================
-    # Management Zone Methods
-    # =========================================================================
-
-    def create_management_zone(self, mz: Dict[str, Any]) -> ImportResult:
-        """Create a management zone in Dynatrace."""
-        schema_id = "builtin:management-zones"
-
-        response = self.create_settings_object(
-            schema_id=schema_id,
-            value=mz
-        )
-
-        if response.is_success:
-            created_items = response.data
-            if created_items and len(created_items) > 0:
-                return ImportResult(
-                    entity_type="management_zone",
-                    entity_name=mz.get("name", "Unknown"),
-                    success=True,
-                    dynatrace_id=created_items[0].get("objectId")
-                )
-
-        return ImportResult(
-            entity_type="management_zone",
-            entity_name=mz.get("name", "Unknown"),
-            success=False,
-            error_message=response.error
-        )
-
-    # =========================================================================
-    # Notification / Integration Methods
-    # =========================================================================
-
-    def create_notification_integration(
-        self,
-        integration_type: str,
-        config: Dict[str, Any]
+    def create_openpipeline_processor(
+        self, envelope: Dict[str, Any]
     ) -> ImportResult:
-        """Create a notification integration."""
-        # Map integration types to schema IDs
-        schema_map = {
-            "email": "builtin:problem.notifications.email",
-            "slack": "builtin:problem.notifications.slack",
-            "pagerduty": "builtin:problem.notifications.pager-duty",
-            "webhook": "builtin:problem.notifications.webhook",
-            "jira": "builtin:problem.notifications.jira",
-            "servicenow": "builtin:problem.notifications.service-now",
-            "opsgenie": "builtin:problem.notifications.ops-genie",
-            "victorops": "builtin:problem.notifications.victor-ops",
-        }
+        return self.settings.create_openpipeline_processor(envelope)
 
-        schema_id = schema_map.get(integration_type.lower())
-        if not schema_id:
+    def create_synthetic_test(self, envelope: Dict[str, Any]) -> ImportResult:
+        return self.settings.create_synthetic_test(envelope)
+
+    def create_slo(self, envelope: Dict[str, Any]) -> ImportResult:
+        return self.settings.create_slo(envelope)
+
+    def create_workflow(self, workflow: Dict[str, Any]) -> ImportResult:
+        return self.automation.create_workflow(workflow)
+
+    # ------------------------------------------------------------------
+    # Phase 20 — unified delete dispatch (rollback completeness)
+    # ------------------------------------------------------------------
+
+    # Map of entity_type strings (as recorded in RollbackManifest entries
+    # by the Phase 12 orchestrator) -> deletion behavior. New Gen3 entity
+    # types added in later phases must register here so rollback covers
+    # every type that the import path can create.
+    _DELETE_KIND = {
+        # Settings 2.0 objects (`builtin:*` schemas) — delete by objectId.
+        "anomaly_detector": "settings",
+        "segment": "settings",
+        "iam_policy": "settings",
+        "synthetic_test": "settings",
+        "slo": "settings",
+        "openpipeline_processor": "settings",
+        # Document API.
+        "dashboard": "document",
+        # Automation API.
+        "workflow": "automation",
+    }
+
+    def delete_entity(self, entity_type: str, entity_id: str) -> ImportResult:
+        """Delete a previously-imported Gen3 entity by type + id.
+
+        Used by the rollback engine. Unknown entity types return an
+        `ImportResult` with `success=False` so the rollback log can record
+        which manifest entries were skipped (and why).
+        """
+        kind = self._DELETE_KIND.get(entity_type)
+        if kind is None:
             return ImportResult(
-                entity_type="notification",
-                entity_name=config.get("name", "Unknown"),
+                entity_type=entity_type,
+                entity_name=entity_id,
                 success=False,
-                error_message=f"Unknown integration type: {integration_type}"
+                error_message=(
+                    f"No Gen3 delete handler for entity type '{entity_type}'. "
+                    "Was this entity created by a legacy (--legacy) run? Use "
+                    "`--legacy` on rollback to dispatch via LegacyDynatraceV1Client."
+                ),
+            )
+        try:
+            if kind == "settings":
+                response = self.settings.delete_object(entity_id)
+            elif kind == "document":
+                response = self.documents.delete_document(entity_id)
+            elif kind == "automation":
+                response = self.automation.delete_workflow(entity_id)
+            else:  # unreachable
+                response = DynatraceResponse(data=None, status_code=0,
+                                             error=f"Unknown delete kind: {kind}")
+
+            return ImportResult(
+                entity_type=entity_type,
+                entity_name=entity_id,
+                success=response.is_success,
+                dynatrace_id=entity_id,
+                error_message=None if response.is_success else response.error,
+            )
+        except Exception as exc:  # noqa: BLE001
+            return ImportResult(
+                entity_type=entity_type,
+                entity_name=entity_id,
+                success=False,
+                error_message=f"Delete raised: {exc}",
             )
 
-        response = self.create_settings_object(
-            schema_id=schema_id,
-            value=config
-        )
+    def create_dashboard(self, dashboard_content: Dict[str, Any]) -> ImportResult:
+        """Create a Gen3 Grail dashboard via Document API."""
+        return self.documents.create_dashboard(dashboard_content)
 
-        if response.is_success:
-            created_items = response.data
-            if created_items and len(created_items) > 0:
-                return ImportResult(
-                    entity_type="notification",
-                    entity_name=config.get("name", "Unknown"),
-                    success=True,
-                    dynatrace_id=created_items[0].get("objectId")
-                )
-
-        return ImportResult(
-            entity_type="notification",
-            entity_name=config.get("name", "Unknown"),
-            success=False,
-            error_message=response.error
-        )
-
-    # =========================================================================
-    # Utility Methods
-    # =========================================================================
+    # ------------------------------------------------------------------
+    # Connectivity + backup
+    # ------------------------------------------------------------------
 
     def validate_connection(self) -> bool:
-        """Validate API token and connectivity."""
-        url = f"{self.api_v2}/settings/schemas"
-        response = self.get(url, params={"pageSize": 1})
+        """Lightweight health check — hits Settings 2.0 schemas endpoint."""
+        response = self.transport.get(
+            f"{self.environment_url}/api/v2/settings/schemas",
+            params={"pageSize": 1},
+        )
         return response.is_success
 
-    def backup_all(self) -> Dict[str, Any]:
-        """Backup all supported configurations from Dynatrace."""
-        logger.info("Starting Dynatrace backup")
+    def preflight_gen3(self) -> Dict[str, bool]:
+        """Probe whether the target tenant exposes Gen3 Platform APIs.
 
-        backup_data = {
+        The `--legacy` preflight check in Phase 14 consumes this.
+        """
+        report: Dict[str, bool] = {}
+        report["settings_v2"] = self.validate_connection()
+        try:
+            report["document_api"] = self.documents.list_documents(page_size=1) is not None
+        except Exception:  # noqa: BLE001
+            report["document_api"] = False
+        try:
+            _ = self.automation.list_workflows(page_size=1)
+            report["automation_api"] = True
+        except Exception:  # noqa: BLE001
+            report["automation_api"] = False
+        return report
+
+    def backup_all(self) -> Dict[str, Any]:
+        """Backup Gen3 configuration only.
+
+        Legacy (Config v1) entities are not included — use
+        `clients.legacy.config_v1_client.LegacyDynatraceV1Client.backup_all`
+        when running with `--legacy`.
+        """
+        logger.info("Starting Dynatrace Gen3 backup")
+        backup = {
             "metadata": {
                 "environment_url": self.environment_url,
-                "backup_timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-                "tool_version": "1.0.0"
+                "backup_timestamp": time.strftime(
+                    "%Y-%m-%dT%H:%M:%SZ", time.gmtime()
+                ),
+                "tool_version": "2.0.0",
+                "tier": "gen3",
             },
-            "dashboards": self.get_all_dashboards(),
-            "slos": self.get_all_slos(),
-            "alerting_profiles": self.get_settings_objects("builtin:alerting.profile"),
-            "metric_events": self.get_settings_objects("builtin:anomaly-detection.metric-events"),
-            "management_zones": self.get_settings_objects("builtin:management-zones"),
+            "dashboards": self.documents.list_documents(
+                filter_expr="type=='dashboard'"
+            ),
+            "notebooks": self.documents.list_documents(
+                filter_expr="type=='notebook'"
+            ),
+            "workflows": self.automation.list_workflows(),
+            "anomaly_detectors": self.settings.list_objects(
+                "builtin:davis.anomaly-detectors"
+            ),
+            "segments": self.settings.list_objects("builtin:segment"),
+            "slos": self.settings.list_objects("builtin:monitoring.slo"),
+            "synthetic_tests": self.settings.list_objects(
+                "builtin:synthetic_test"
+            ),
+            "openpipeline_logs": self.settings.list_objects(
+                "builtin:openpipeline.logs.pipelines"
+            ),
         }
-
         logger.info(
-            "Backup complete",
-            dashboards=len(backup_data["dashboards"]),
-            slos=len(backup_data["slos"])
+            "Gen3 backup complete",
+            dashboards=len(backup["dashboards"]),
+            workflows=len(backup["workflows"]),
+            anomaly_detectors=len(backup["anomaly_detectors"]),
         )
+        return backup
 
-        return backup_data
+    # ------------------------------------------------------------------
+    # Generic HTTP proxies for callers that still want raw access
+    # ------------------------------------------------------------------
+
+    def get(self, url: str, params: Optional[Dict[str, Any]] = None) -> DynatraceResponse:
+        return self.transport.get(url, params=params)
+
+    def post(self, url: str, data: Dict[str, Any]) -> DynatraceResponse:
+        return self.transport.post(url, data)
+
+    def put(self, url: str, data: Dict[str, Any]) -> DynatraceResponse:
+        return self.transport.put(url, data)
+
+    def delete(self, url: str) -> DynatraceResponse:
+        return self.transport.delete(url)

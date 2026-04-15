@@ -7,7 +7,7 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
-from transformers.drop_rule_transformer import (
+from transformers.legacy.drop_rule_transformer_v1 import (
     DropRuleTransformer,
     DropRuleTransformResult,
 )

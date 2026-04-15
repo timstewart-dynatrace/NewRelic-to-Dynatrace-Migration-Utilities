@@ -1,33 +1,28 @@
 """
-SLO Transformer — Gen3 target.
-
-Emits Settings 2.0 payloads targeting schema `builtin:monitoring.slo`. The
-SLO body is wrapped in the `{schemaId, scope, value}` Settings 2.0
-envelope expected by `settingsObjectsClient.postSettingsObjects` and by
-the `dynatrace_slo_v2` Terraform resource.
-
-Legacy (Config v1 `/slo`) behavior is preserved in
-`transformers/legacy/slo_transformer_v1.py`.
+SLO Transformer - Converts New Relic SLOs to Dynatrace format.
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
 import structlog
 
-from .mapping_rules import SLO_TIME_UNIT_MAP
+from ..mapping_rules import SLO_TIME_UNIT_MAP
 
 logger = structlog.get_logger()
 
 
 @dataclass
 class SLOTransformResult:
-    """Result of SLO transformation (Gen3 builtin:monitoring.slo)."""
-
+    """Result of SLO transformation."""
     success: bool
-    slo: Optional[Dict[str, Any]] = None  # Settings 2.0 envelope
-    warnings: List[str] = field(default_factory=list)
-    errors: List[str] = field(default_factory=list)
+    slo: Optional[Dict[str, Any]] = None
+    warnings: List[str] = None
+    errors: List[str] = None
+
+    def __post_init__(self):
+        self.warnings = self.warnings or []
+        self.errors = self.errors or []
 
 
 class SLOTransformer:
@@ -126,7 +121,7 @@ class SLOTransformer:
         # Build metric expression from events
         metric_expression = self._build_metric_expression(events, warnings)
 
-        inner = {
+        dt_slo = {
             "name": f"[Migrated] {name}",
             "description": description or "Migrated from New Relic",
             "metricName": self._sanitize_metric_name(name),
@@ -136,14 +131,10 @@ class SLOTransformer:
             "target": target,
             "warning": target - 1.0,  # Warning at 1% below target
             "timeframe": timeframe,
-            "enabled": True,
+            "enabled": True
         }
 
-        return {
-            "schemaId": "builtin:monitoring.slo",
-            "scope": "environment",
-            "value": inner,
-        }
+        return dt_slo
 
     def _build_timeframe(self, count: int, unit: str) -> str:
         """Build Dynatrace timeframe string."""

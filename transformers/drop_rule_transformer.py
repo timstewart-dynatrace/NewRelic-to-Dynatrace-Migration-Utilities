@@ -1,8 +1,15 @@
 """
-Drop Rule Transformer - Converts New Relic drop rules to Dynatrace ingest rules.
+Drop Rule Transformer — Gen3 target.
+
+Converts New Relic drop rules into OpenPipeline drop processors (schema
+`builtin:openpipeline.logs.pipelines`). Attribute-drop rules are mapped
+to OpenPipeline `removeFields` processors.
+
+Legacy (Config v1 ingest rule) behavior is preserved in
+`transformers/legacy/drop_rule_transformer_v1.py`.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Dict, List
 
 import structlog
@@ -12,121 +19,104 @@ logger = structlog.get_logger()
 
 @dataclass
 class DropRuleTransformResult:
-    """Result of drop rule transformation."""
-    success: bool
-    ingest_rules: List[Dict[str, Any]] = None
-    warnings: List[str] = None
-    errors: List[str] = None
+    """Result of NR drop rule -> OpenPipeline drop processor (Gen3)."""
 
-    def __post_init__(self):
-        self.ingest_rules = self.ingest_rules or []
-        self.warnings = self.warnings or []
-        self.errors = self.errors or []
+    success: bool
+    processors: List[Dict[str, Any]] = field(default_factory=list)
+    warnings: List[str] = field(default_factory=list)
+    errors: List[str] = field(default_factory=list)
 
 
 class DropRuleTransformer:
-    """
-    Transforms New Relic drop rules to Dynatrace ingest/drop rules.
+    """NR drop rule -> OpenPipeline `drop` / `removeFields` processor (Gen3)."""
 
-    New Relic drop rules:
-    - Drop data at ingest to reduce costs
-    - Based on NRQL WHERE conditions
-    - Can target specific event types
-
-    Dynatrace equivalents:
-    - Log/metric ingest rules
-    - Data filtering at ingest pipeline
-    """
-
-    def __init__(self):
-        pass
+    SCHEMA = "builtin:openpipeline.logs.pipelines"
 
     def transform(self, nr_rule: Dict[str, Any]) -> DropRuleTransformResult:
-        """Transform a New Relic drop rule to Dynatrace ingest rule."""
         warnings: List[str] = []
         errors: List[str] = []
-
         try:
-            rule_name = nr_rule.get("name", "Unnamed Drop Rule")
-            nrql_condition = nr_rule.get("nrqlCondition", "")
+            name = nr_rule.get("name", "Unnamed Drop Rule")
+            nrql_condition = nr_rule.get("nrqlCondition", "") or ""
             action = nr_rule.get("action", "drop_data")
-            enabled = nr_rule.get("enabled", True)
-
-            # Build Dynatrace ingest rule
-            ingest_rule = {
-                "name": f"[Migrated] {rule_name}",
-                "description": f"Migrated from NR drop rule: {rule_name}",
-                "type": "DROP",
-                "enabled": enabled,
-                "condition": self._convert_condition(nrql_condition, warnings),
-            }
+            enabled = bool(nr_rule.get("enabled", True))
+            matcher = self._convert_condition(nrql_condition, warnings)
 
             if action == "drop_attributes":
-                attributes = nr_rule.get("attributes", [])
-                ingest_rule["type"] = "MASK"
-                ingest_rule["attributes"] = attributes
+                attributes = nr_rule.get("attributes", []) or []
+                proc = {
+                    "schemaId": self.SCHEMA,
+                    "scope": "environment",
+                    "value": {
+                        "name": f"[Migrated] {name}",
+                        "description": f"Migrated from NR attribute-drop rule: {name}",
+                        "enabled": enabled,
+                        "processor": {
+                            "type": "removeFields",
+                            "id": self._slug(name),
+                            "matcher": matcher,
+                            "fields": list(attributes),
+                        },
+                    },
+                }
                 warnings.append(
-                    f"Drop rule '{rule_name}' uses attribute dropping. "
-                    "Mapped to MASK rule; verify attribute names in Dynatrace."
+                    f"Drop rule '{name}' strips attributes — verify field names "
+                    "match DT attribute keys."
                 )
+            else:
+                proc = {
+                    "schemaId": self.SCHEMA,
+                    "scope": "environment",
+                    "value": {
+                        "name": f"[Migrated] {name}",
+                        "description": f"Migrated from NR drop rule: {name}",
+                        "enabled": enabled,
+                        "processor": {
+                            "type": "drop",
+                            "id": self._slug(name),
+                            "matcher": matcher,
+                        },
+                    },
+                }
 
             logger.info(
-                "Transformed drop rule to ingest rule",
-                name=rule_name,
+                "Transformed drop rule to OpenPipeline processor",
+                name=name,
                 action=action,
             )
-
             return DropRuleTransformResult(
-                success=True,
-                ingest_rules=[ingest_rule],
-                warnings=warnings,
+                success=True, processors=[proc], warnings=warnings
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.error("Drop rule transformation failed", error=str(exc))
+            return DropRuleTransformResult(
+                success=False, errors=[f"Transformation error: {exc}"]
             )
 
-        except Exception as e:
-            logger.error("Drop rule transformation failed", error=str(e))
-            return DropRuleTransformResult(
-                success=False,
-                errors=[f"Transformation error: {str(e)}"],
-            )
-
-    def _convert_condition(
-        self, nrql_condition: str, warnings: List[str]
-    ) -> str:
-        """
-        Convert an NRQL WHERE condition to a Dynatrace filter expression.
-
-        Simple mapping for common patterns. Complex conditions require
-        manual conversion.
-        """
+    @staticmethod
+    def _convert_condition(nrql_condition: str, warnings: List[str]) -> str:
         if not nrql_condition:
-            return "matchesValue(content, \"*\")"
-
-        # Basic conversion of common patterns
-        condition = nrql_condition
-        condition = condition.replace(" = ", " == ")
-        condition = condition.replace(" AND ", " and ")
-        condition = condition.replace(" OR ", " or ")
-
-        warnings.append(
-            f"NRQL condition '{nrql_condition}' was auto-converted. "
-            "Verify the resulting filter expression."
+            return "true"
+        converted = (
+            nrql_condition.replace(" = ", " == ")
+            .replace(" AND ", " and ")
+            .replace(" OR ", " or ")
         )
+        warnings.append(
+            f"NRQL condition '{nrql_condition}' was auto-converted; verify the DQL matcher."
+        )
+        return converted
 
-        return condition
+    @staticmethod
+    def _slug(text: str) -> str:
+        return "".join(c if c.isalnum() or c == "-" else "-" for c in text.lower())[:180]
 
     def transform_all(
         self, rules: List[Dict[str, Any]]
     ) -> List[DropRuleTransformResult]:
-        """Transform multiple drop rules."""
-        results = []
-
-        for rule in rules:
-            result = self.transform(rule)
-            results.append(result)
-
+        results = [self.transform(r) for r in rules]
         successful = sum(1 for r in results if r.success)
         logger.info(
-            f"Transformed {successful}/{len(results)} drop rules"
+            f"Transformed {successful}/{len(results)} drop rules to OpenPipeline processors"
         )
-
         return results

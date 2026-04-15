@@ -1,253 +1,257 @@
-"""Tests for DynatraceClient — all public methods with mocked HTTP."""
+"""Tests for the Gen3 Dynatrace client façade.
 
-import os
-import sys
+Covers:
+- DynatraceClient composition (Settings 2.0 + Document + Automation sub-clients)
+- Settings 2.0 CRUD, pagination, Gen3 create helpers
+- Document API pagination (pageKey) and dashboard create
+- Automation API workflow CRUD
+- OAuth2 platform-token exchange and auth header selection
+"""
+
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
-
-from clients.dynatrace_client import DynatraceClient, DynatraceResponse, ImportResult
-
-
-@pytest.fixture
-def client():
-    return DynatraceClient(
-        api_token="dt0c01.TEST",
-        environment_url="https://abc123.live.dynatrace.com",
-        rate_limit=0
-    )
+from clients._http import (
+    DynatraceResponse,
+    HttpTransport,
+    ImportResult,
+    OAuth2PlatformTokenProvider,
+)
+from clients.automation_client import AutomationClient
+from clients.document_client import DocumentClient
+from clients.dynatrace_client import DynatraceClient
+from clients.settings_v2_client import SettingsV2Client
 
 
-def _mock_response(data, status_code=200):
-    """Create a mock requests.Response."""
-    mock = MagicMock()
-    mock.status_code = status_code
-    mock.content = b'{"data": true}' if data is not None else b''
-    mock.json.return_value = data
-    mock.reason = "OK" if status_code < 400 else "Error"
-    return mock
+ENV = "https://abc12345.live.dynatrace.com"
 
 
-class TestDynatraceResponse:
-    def test_should_be_success_for_2xx(self):
-        assert DynatraceResponse(data={}, status_code=200).is_success is True
-        assert DynatraceResponse(data={}, status_code=201).is_success is True
-
-    def test_should_not_be_success_for_4xx(self):
-        assert DynatraceResponse(data=None, status_code=400).is_success is False
-        assert DynatraceResponse(data=None, status_code=401).is_success is False
+# ---------------------------------------------------------------------------
+# Client composition
+# ---------------------------------------------------------------------------
 
 
-class TestImportResult:
-    def test_should_store_fields(self):
-        r = ImportResult("dashboard", "My Dash", True, "dash-123")
-        assert r.entity_type == "dashboard"
-        assert r.success is True
-        assert r.dynatrace_id == "dash-123"
+class TestDynatraceClientComposition:
+    def test_should_require_auth(self):
+        with pytest.raises(ValueError):
+            DynatraceClient(environment_url=ENV)
+
+    def test_should_compose_three_sub_clients(self):
+        c = DynatraceClient(environment_url=ENV, api_token="t")
+        assert isinstance(c.settings, SettingsV2Client)
+        assert isinstance(c.documents, DocumentClient)
+        assert isinstance(c.automation, AutomationClient)
+
+    def test_should_route_apps_subdomain_for_platform_apis(self):
+        c = DynatraceClient(environment_url=ENV, api_token="t")
+        assert c.documents.base.startswith("https://abc12345.apps.")
+        assert c.automation.base.startswith("https://abc12345.apps.")
+        assert c.settings.base.startswith("https://abc12345.live.")
 
 
-class TestDynatraceClientInit:
-    def test_should_set_api_endpoints(self):
-        c = DynatraceClient("token", "https://abc.live.dynatrace.com", rate_limit=0)
-        assert c.api_v2 == "https://abc.live.dynatrace.com/api/v2"
-        assert c.config_api == "https://abc.live.dynatrace.com/api/config/v1"
-
-    def test_should_strip_trailing_slash(self):
-        c = DynatraceClient("token", "https://abc.live.dynatrace.com/", rate_limit=0)
-        assert c.environment_url == "https://abc.live.dynatrace.com"
-
-    def test_should_set_auth_header(self):
-        c = DynatraceClient("dt0c01.TEST", "https://abc.live.dynatrace.com", rate_limit=0)
-        assert "Api-Token dt0c01.TEST" in c.session.headers["Authorization"]
+# ---------------------------------------------------------------------------
+# HttpTransport + auth header resolution
+# ---------------------------------------------------------------------------
 
 
-class TestHTTPMethods:
-    def test_get_should_call_request(self, client):
-        with patch.object(client.session, 'request', return_value=_mock_response({"ok": True})):
-            resp = client.get("https://abc.live.dynatrace.com/api/v2/test")
-            assert resp.is_success
-            assert resp.data["ok"] is True
+class TestHttpTransportAuth:
+    def test_should_use_api_token_by_default(self):
+        t = HttpTransport(api_token="abc")
+        assert t._auth_header(prefer_oauth=False) == "Api-Token abc"
 
-    def test_post_should_call_request(self, client):
-        with patch.object(client.session, 'request', return_value=_mock_response({"id": "123"}, 201)):
-            resp = client.post("https://url/api", {"name": "test"})
-            assert resp.is_success
+    def test_should_prefer_oauth_when_requested(self):
+        oauth = MagicMock(spec=OAuth2PlatformTokenProvider)
+        oauth.bearer_header.return_value = "Bearer xyz"
+        t = HttpTransport(api_token="abc", oauth=oauth)
+        assert t._auth_header(prefer_oauth=True) == "Bearer xyz"
+        oauth.bearer_header.assert_called_once()
 
-    def test_should_handle_http_error(self, client):
-        with patch.object(client.session, 'request', return_value=_mock_response({"error": "bad"}, 400)):
-            resp = client.get("https://url/api")
-            assert resp.is_success is False
-            assert resp.error is not None
+    def test_should_fall_back_to_oauth_when_no_api_token(self):
+        oauth = MagicMock(spec=OAuth2PlatformTokenProvider)
+        oauth.bearer_header.return_value = "Bearer xyz"
+        t = HttpTransport(api_token=None, oauth=oauth)
+        assert t._auth_header(prefer_oauth=False) == "Bearer xyz"
 
-    def test_should_handle_connection_error(self, client):
-        import requests as req
-        with patch.object(client.session, 'request', side_effect=req.exceptions.ConnectionError("timeout")):
-            resp = client.get("https://url/api")
-            assert resp.is_success is False
-            assert resp.status_code == 0
+    def test_should_raise_when_no_credentials(self):
+        t = HttpTransport()
+        with pytest.raises(RuntimeError):
+            t._auth_header(prefer_oauth=False)
 
 
-class TestSettingsAPI:
-    def test_should_get_schemas(self, client):
-        with patch.object(client.session, 'request', return_value=_mock_response({"items": [{"id": "schema1"}]})):
-            schemas = client.get_settings_schemas()
-            assert len(schemas) == 1
+class TestOAuth2TokenProvider:
+    def test_should_exchange_client_credentials(self):
+        with patch("clients._http.requests.post") as mock_post:
+            mock_post.return_value.json.return_value = {
+                "access_token": "tok-1",
+                "expires_in": 300,
+            }
+            mock_post.return_value.raise_for_status.return_value = None
+            p = OAuth2PlatformTokenProvider(
+                client_id="cid", client_secret="sec"
+            )
+            assert p.bearer_header() == "Bearer tok-1"
+            assert mock_post.call_args.kwargs["data"]["grant_type"] == "client_credentials"
 
-    def test_should_get_settings_objects(self, client):
-        with patch.object(client.session, 'request', return_value=_mock_response({"items": [{"objectId": "o1"}], "nextPageKey": None})):
-            objects = client.get_settings_objects("builtin:alerting.profile")
-            assert len(objects) == 1
-
-    def test_should_create_settings_object(self, client):
-        with patch.object(client.session, 'request', return_value=_mock_response([{"objectId": "new-1"}], 201)):
-            resp = client.create_settings_object("builtin:test", {"name": "test"})
-            assert resp.is_success
-
-    def test_should_update_settings_object(self, client):
-        with patch.object(client.session, 'request', return_value=_mock_response({"objectId": "o1"}, 200)):
-            resp = client.update_settings_object("o1", {"name": "updated"})
-            assert resp.is_success
-
-
-class TestCreateDashboard:
-    def test_should_return_success_result(self, client):
-        dash = {"dashboardMetadata": {"name": "My Dash"}, "tiles": []}
-        with patch.object(client.session, 'request', return_value=_mock_response({"id": "dash-abc"}, 201)):
-            result = client.create_dashboard(dash)
-            assert result.success is True
-            assert result.entity_type == "dashboard"
-            assert result.dynatrace_id == "dash-abc"
-
-    def test_should_return_failure_on_error(self, client):
-        dash = {"dashboardMetadata": {"name": "Bad"}, "tiles": []}
-        with patch.object(client.session, 'request', return_value=_mock_response({"error": "invalid"}, 400)):
-            result = client.create_dashboard(dash)
-            assert result.success is False
-            assert result.error_message is not None
+    def test_should_reuse_token_until_expiry(self):
+        with patch("clients._http.requests.post") as mock_post:
+            mock_post.return_value.json.return_value = {
+                "access_token": "tok-1",
+                "expires_in": 3600,
+            }
+            mock_post.return_value.raise_for_status.return_value = None
+            p = OAuth2PlatformTokenProvider(client_id="cid", client_secret="sec")
+            p.bearer_header()
+            p.bearer_header()
+            assert mock_post.call_count == 1
 
 
-class TestGetAllDashboards:
-    def test_should_return_dashboards(self, client):
-        list_resp = _mock_response({"dashboards": [{"id": "d1"}, {"id": "d2"}]})
-        detail_resp = _mock_response({"id": "d1", "dashboardMetadata": {"name": "Test"}})
-        with patch.object(client.session, 'request') as mock:
-            mock.side_effect = [list_resp, detail_resp, detail_resp]
-            dashboards = client.get_all_dashboards()
-            assert len(dashboards) == 2
+# ---------------------------------------------------------------------------
+# Settings 2.0
+# ---------------------------------------------------------------------------
 
 
-class TestCreateMetricEvent:
-    def test_should_return_success(self, client):
-        with patch.object(client.session, 'request', return_value=_mock_response([{"objectId": "me-1"}], 201)):
-            result = client.create_metric_event({"summary": "High Latency"})
-            assert result.success is True
-            assert result.entity_type == "metric_event"
-
-    def test_should_return_failure(self, client):
-        with patch.object(client.session, 'request', return_value=_mock_response({"error": "bad"}, 400)):
-            result = client.create_metric_event({"summary": "Bad"})
-            assert result.success is False
+def _ok(data):
+    return DynatraceResponse(data=data, status_code=200)
 
 
-class TestCreateAlertingProfile:
-    def test_should_return_success(self, client):
-        with patch.object(client.session, 'request', return_value=_mock_response([{"objectId": "ap-1"}], 201)):
-            result = client.create_alerting_profile({"name": "Critical"})
-            assert result.success is True
-            assert result.entity_type == "alerting_profile"
+def _err(error, status=400):
+    return DynatraceResponse(data=None, status_code=status, error=error)
 
 
-class TestSyntheticMonitors:
-    def test_should_create_http_monitor(self, client):
-        with patch.object(client.session, 'request', return_value=_mock_response({"entityId": "HTTP-1"}, 200)):
-            result = client.create_http_monitor({"name": "Health"})
-            assert result.success is True
-            assert result.entity_type == "http_monitor"
+class TestSettingsV2Client:
+    def test_should_paginate_list_objects(self):
+        transport = MagicMock(spec=HttpTransport)
+        transport.get.side_effect = [
+            _ok({"items": [{"objectId": "a"}], "nextPageKey": "k"}),
+            _ok({"items": [{"objectId": "b"}]}),
+        ]
+        client = SettingsV2Client(ENV, transport)
+        items = client.list_objects("builtin:segment")
+        assert [i["objectId"] for i in items] == ["a", "b"]
+        assert transport.get.call_count == 2
 
-    def test_should_create_browser_monitor(self, client):
-        with patch.object(client.session, 'request', return_value=_mock_response({"entityId": "BROWSER-1"}, 200)):
-            result = client.create_browser_monitor({"name": "Login Flow"})
-            assert result.success is True
-            assert result.entity_type == "browser_monitor"
+    def test_should_post_envelope_as_list(self):
+        transport = MagicMock(spec=HttpTransport)
+        transport.post.return_value = _ok([{"objectId": "seg-1"}])
+        client = SettingsV2Client(ENV, transport)
+        env = {
+            "schemaId": "builtin:segment",
+            "scope": "environment",
+            "value": {"name": "x"},
+        }
+        response = client.create_envelope(env)
+        assert response.is_success
+        posted = transport.post.call_args.args[1]
+        assert posted == [env]
 
-    def test_should_get_locations(self, client):
-        with patch.object(client.session, 'request', return_value=_mock_response({"locations": [{"id": "loc1"}]})):
-            locations = client.get_synthetic_locations()
-            assert len(locations) == 1
+    def test_create_anomaly_detector_returns_import_result(self):
+        transport = MagicMock(spec=HttpTransport)
+        transport.post.return_value = _ok([{"objectId": "det-1"}])
+        client = SettingsV2Client(ENV, transport)
+        env = {
+            "schemaId": "builtin:davis.anomaly-detectors",
+            "scope": "environment",
+            "value": {"name": "cpu"},
+        }
+        result = client.create_anomaly_detector(env)
+        assert isinstance(result, ImportResult)
+        assert result.success
+        assert result.dynatrace_id == "det-1"
+        assert result.entity_type == "anomaly_detector"
 
-
-class TestSLO:
-    def test_should_create_slo(self, client):
-        with patch.object(client.session, 'request', return_value=_mock_response({"id": "slo-1"}, 201)):
-            result = client.create_slo({"name": "Availability"})
-            assert result.success is True
-
-    def test_should_get_all_slos(self, client):
-        with patch.object(client.session, 'request', return_value=_mock_response({"slo": [{"id": "s1"}], "nextPageKey": None})):
-            slos = client.get_all_slos()
-            assert len(slos) == 1
-
-
-class TestManagementZone:
-    def test_should_create_management_zone(self, client):
-        with patch.object(client.session, 'request', return_value=_mock_response([{"objectId": "mz-1"}], 201)):
-            result = client.create_management_zone({"name": "Production"})
-            assert result.success is True
-            assert result.entity_type == "management_zone"
-
-
-class TestNotificationIntegration:
-    def test_should_create_email_notification(self, client):
-        with patch.object(client.session, 'request', return_value=_mock_response([{"objectId": "n-1"}], 201)):
-            result = client.create_notification_integration("email", {"name": "Team Email"})
-            assert result.success is True
-
-    def test_should_fail_for_unknown_type(self, client):
-        result = client.create_notification_integration("carrier_pigeon", {"name": "Bird"})
-        assert result.success is False
-        assert "Unknown integration type" in result.error_message
-
-
-class TestCreateDashboardV2:
-    def test_should_create_via_documents_api(self, client):
-        dash = {"dashboardMetadata": {"name": "My Dash", "shared": True}, "tiles": []}
-        with patch.object(client.session, 'request', return_value=_mock_response({"id": "doc-123"}, 201)):
-            result = client.create_dashboard_v2(dash)
-            assert result.success is True
-            assert result.dynatrace_id == "doc-123"
-
-    def test_should_return_failure_on_error(self, client):
-        dash = {"dashboardMetadata": {"name": "Bad"}, "tiles": []}
-        with patch.object(client.session, 'request', return_value=_mock_response({"error": "auth"}, 403)):
-            result = client.create_dashboard_v2(dash)
-            assert result.success is False
-
-    def test_should_update_dashboard_v2(self, client):
-        dash = {"dashboardMetadata": {"name": "Updated"}, "tiles": []}
-        with patch.object(client.session, 'request', return_value=_mock_response({"id": "doc-123"}, 200)):
-            result = client.update_dashboard_v2("doc-123", dash)
-            assert result.success is True
+    def test_create_returns_failure_on_error(self):
+        transport = MagicMock(spec=HttpTransport)
+        transport.post.return_value = _err("bad schema")
+        client = SettingsV2Client(ENV, transport)
+        env = {
+            "schemaId": "builtin:segment",
+            "scope": "environment",
+            "value": {"name": "x"},
+        }
+        result = client.create_segment(env)
+        assert not result.success
+        assert result.error_message == "bad schema"
 
 
-class TestValidateConnection:
-    def test_should_return_true_on_success(self, client):
-        with patch.object(client.session, 'request', return_value=_mock_response({"items": []})):
-            assert client.validate_connection() is True
+# ---------------------------------------------------------------------------
+# Document API
+# ---------------------------------------------------------------------------
 
-    def test_should_return_false_on_failure(self, client):
-        with patch.object(client.session, 'request', return_value=_mock_response(None, 401)):
-            assert client.validate_connection() is False
+
+class TestDocumentClient:
+    def test_should_paginate_with_pagekey_not_nextpagekey(self):
+        transport = MagicMock(spec=HttpTransport)
+        transport.get.side_effect = [
+            _ok({"documents": [{"id": "d1"}], "nextPageKey": "pk-2"}),
+            _ok({"documents": [{"id": "d2"}]}),
+        ]
+        client = DocumentClient(ENV, transport)
+        docs = client.list_documents()
+        assert [d["id"] for d in docs] == ["d1", "d2"]
+        second_params = transport.get.call_args_list[1].kwargs["params"]
+        assert second_params["pageKey"] == "pk-2"
+        assert "nextPageKey" not in second_params
+
+    def test_create_dashboard_posts_document_payload(self):
+        transport = MagicMock(spec=HttpTransport)
+        transport.post.return_value = _ok({"id": "doc-1"})
+        client = DocumentClient(ENV, transport)
+        result = client.create_dashboard({"name": "svc", "tiles": {}})
+        assert result.success
+        assert result.dynatrace_id == "doc-1"
+        posted = transport.post.call_args.args[1]
+        assert posted["type"] == "dashboard"
+        assert "content" in posted
+
+    def test_should_target_apps_subdomain(self):
+        transport = MagicMock(spec=HttpTransport)
+        client = DocumentClient(ENV, transport)
+        assert "apps.dynatrace.com" in client.base
+
+
+# ---------------------------------------------------------------------------
+# Automation API
+# ---------------------------------------------------------------------------
+
+
+class TestAutomationClient:
+    def test_create_workflow_success(self):
+        transport = MagicMock(spec=HttpTransport)
+        transport.post.return_value = _ok({"id": "wf-1"})
+        client = AutomationClient(ENV, transport)
+        result = client.create_workflow({"title": "alert-routing"})
+        assert result.success
+        assert result.entity_type == "workflow"
+        assert result.dynatrace_id == "wf-1"
+        assert transport.post.call_args.kwargs["prefer_oauth"] is True
+
+    def test_list_workflows_paginates(self):
+        transport = MagicMock(spec=HttpTransport)
+        transport.get.side_effect = [
+            _ok({"workflows": [{"id": "a"}], "nextPageKey": "nx"}),
+            _ok({"workflows": [{"id": "b"}]}),
+        ]
+        client = AutomationClient(ENV, transport)
+        workflows = client.list_workflows()
+        assert [w["id"] for w in workflows] == ["a", "b"]
+
+
+# ---------------------------------------------------------------------------
+# Backup surface
+# ---------------------------------------------------------------------------
 
 
 class TestBackupAll:
-    def test_should_backup_all_entity_types(self, client):
-        empty = _mock_response({"dashboards": [], "items": [], "slo": [], "nextPageKey": None})
-        with patch.object(client.session, 'request', return_value=empty):
-            result = client.backup_all()
-            assert "metadata" in result
-            assert "dashboards" in result
-            assert "slos" in result
-            assert "alerting_profiles" in result
-            assert "management_zones" in result
+    def test_should_only_include_gen3_tiers(self):
+        c = DynatraceClient(environment_url=ENV, api_token="t")
+        with patch.object(c.documents, "list_documents", return_value=[]), \
+             patch.object(c.automation, "list_workflows", return_value=[]), \
+             patch.object(c.settings, "list_objects", return_value=[]):
+            backup = c.backup_all()
+        assert backup["metadata"]["tier"] == "gen3"
+        assert "alerting_profiles" not in backup
+        assert "metric_events" not in backup
+        assert "management_zones" not in backup
+        for key in ("dashboards", "workflows", "anomaly_detectors", "segments"):
+            assert key in backup

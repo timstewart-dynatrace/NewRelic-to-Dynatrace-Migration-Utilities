@@ -53,8 +53,18 @@ class DynatraceConfig(BaseSettings):
 
     @property
     def config_api_base(self) -> str:
-        """Get the Configuration API base URL."""
+        """Get the Config v1 base URL.
+
+        Reachable only when the user runs with `--legacy` (Phase 14). Default
+        Gen3 code paths use Settings 2.0, Document API, and Automation API
+        instead.
+        """
         return f"{self.environment_url}/api/config/v1"
+
+    @property
+    def platform_url(self) -> str:
+        """Apps-subdomain URL for Gen3 Platform APIs (Document, Automation)."""
+        return self.environment_url.replace(".live.", ".apps.")
 
     @property
     def settings_api(self) -> str:
@@ -95,6 +105,13 @@ class MigrationConfig(BaseSettings):
 
     # Logging level
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
+
+    # Gen2 / classic tenant compatibility mode. When True, the migrator uses
+    # the legacy transformers + client + exporters (Alerting Profiles,
+    # Management Zones, Auto-Tag Rules, Config v1 dashboards/synthetics).
+    # Prefer Gen3 defaults; this flag is a stop-gap for tenants without
+    # Workflows / Segments / OpenPipeline / Document API provisioned.
+    legacy_mode: bool = Field(default=False, alias="MIGRATION_LEGACY_MODE")
 
     class Config:
         env_file = ".env"

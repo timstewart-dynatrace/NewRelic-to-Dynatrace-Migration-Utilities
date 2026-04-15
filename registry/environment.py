@@ -7,18 +7,20 @@ Provides:
   - Metric Registry:    Validate dt.* metric keys exist, fuzzy-find corrections
   - Entity Registry:    Resolve service/host/process names and IDs
   - Dashboard Registry: Check for existing dashboards before creating duplicates
-  - Management Zone Registry: Map NR account/policy scope to DT zones
+  - Segment Registry:   Map NR account/policy scope to DT segments (Gen3
+                        replacement for Management Zones)
   - Synthetic Location Registry: Map NR locations to DT public/private locations
 
 All registries are lazy-loaded -- only fetched when first accessed.
 Shared across SLOAuditor, NRQLtoDQLConverter, DashboardMigrator, etc.
 
-APIs used:
-  Metrics v2:      GET /api/v2/metrics               (.live.)
-  Entities v2:     GET /api/v2/entities               (.live.)
-  Documents v1:    GET /platform/document/v1/documents (.apps.)
-  Settings v2:     GET /api/v2/settings/objects        (.live.)
-  Synthetic v2:    GET /api/v2/synthetic/locations      (.live.)
+APIs used (Gen3 default):
+  Metrics v2:      GET /api/v2/metrics                        (.live.)
+  Entities v2:     GET /api/v2/entities                       (.live.)
+  Documents v1:    GET /platform/document/v1/documents         (.apps.)
+  Settings v2:     GET /api/v2/settings/objects                (.live.)
+                    - builtin:segment (Gen3 replacement for Management Zones)
+  Synthetic v2:    GET /api/v2/synthetic/locations             (.live.)
 """
 
 import json
@@ -42,7 +44,8 @@ class DTEnvironmentRegistry:
       - Metric Registry:    Validate dt.* metric keys exist, fuzzy-find corrections
       - Entity Registry:    Resolve service/host/process names and IDs
       - Dashboard Registry: Check for existing dashboards before creating duplicates
-      - Management Zone Registry: Map NR account/policy scope to DT zones
+      - Segment Registry:   Map NR account/policy scope to DT segments
+                            (Gen3 replacement for Management Zones)
       - Synthetic Location Registry: Map NR locations to DT public/private locations
 
     All registries are lazy-loaded -- only fetched when first accessed.
@@ -732,56 +735,55 @@ class DTEnvironmentRegistry:
         self._load_dashboards()
         return list(self._dashboards.values())
 
-    # --- Management Zone Registry --------------------------------------------
+    # --- Segment Registry (Gen3 replacement for Management Zones) -----------
 
-    def _load_management_zones(self) -> None:
-        """Fetch management zones."""
+    def _load_segments(self) -> None:
+        """Fetch Gen3 segments (`builtin:segment`)."""
         if self._mgmt_zones is not None:
             return
 
         self._mgmt_zones = {}
         self._mgmt_zone_name_index = {}
 
-        # Settings v2 API for management zones
-        url = f"{self.live_url}/api/v2/settings/objects?schemaIds=builtin:management-zones&pageSize=500"
+        # Settings v2 API — Gen3 segment schema
+        url = f"{self.live_url}/api/v2/settings/objects?schemaIds=builtin:segment&pageSize=500"
         items = self._paginate(url, 'items')
 
         for item in items:
             obj_id = item.get('objectId', '')
             value = item.get('value', {})
             name = value.get('name', '')
-            rules = value.get('rules', [])
+            includes = value.get('includes', {})
 
             self._mgmt_zones[obj_id] = {
-                'id': obj_id, 'name': name, 'rules': rules
+                'id': obj_id, 'name': name, 'includes': includes
             }
             self._mgmt_zone_name_index[name.lower()] = obj_id
 
-    def find_management_zone(self, name: str) -> Optional[Dict]:
-        """Find management zone by name (exact or fuzzy)."""
-        self._load_management_zones()
+    def find_segment(self, name: str) -> Optional[Dict]:
+        """Find a Gen3 segment by name (exact or fuzzy)."""
+        self._load_segments()
         lower = name.lower()
 
         if lower in self._mgmt_zone_name_index:
             return self._mgmt_zones[self._mgmt_zone_name_index[lower]]
 
-        # Fuzzy
         best: Optional[Dict] = None
         best_score = 0.0
-        for mz_name, mz_id in self._mgmt_zone_name_index.items():
-            if lower in mz_name or mz_name in lower:
+        for seg_name, seg_id in self._mgmt_zone_name_index.items():
+            if lower in seg_name or seg_name in lower:
                 score = 0.8
             else:
-                score = self._token_similarity(self._tokenize(lower), self._tokenize(mz_name))
+                score = self._token_similarity(self._tokenize(lower), self._tokenize(seg_name))
             if score > best_score:
                 best_score = score
-                best = self._mgmt_zones[mz_id]
+                best = self._mgmt_zones[seg_id]
 
         return best if best_score >= 0.5 else None
 
-    def list_management_zones(self) -> List[Dict]:
-        """List all management zones."""
-        self._load_management_zones()
+    def list_segments(self) -> List[Dict]:
+        """List all Gen3 segments."""
+        self._load_segments()
         return list(self._mgmt_zones.values())
 
     # --- Synthetic Location Registry -----------------------------------------
@@ -928,7 +930,7 @@ class DTEnvironmentRegistry:
         if self._dashboards is not None:
             s['dashboards'] = len(self._dashboards)
         if self._mgmt_zones is not None:
-            s['management_zones'] = len(self._mgmt_zones)
+            s['segments'] = len(self._mgmt_zones)
         if self._synth_locations is not None:
             s['synthetic_locations'] = len(self._synth_locations)
         if self._load_errors:
@@ -958,8 +960,8 @@ class DTEnvironmentRegistry:
             logger.info("  Entities: %d (%s)", s['entities'], types_str)
         if 'dashboards' in s:
             logger.info("  Dashboards: %d", s['dashboards'])
-        if 'management_zones' in s:
-            logger.info("  Management Zones: %d", s['management_zones'])
+        if 'segments' in s:
+            logger.info("  Segments: %d", s['segments'])
         if 'synthetic_locations' in s:
             logger.info("  Synthetic Locations: %d", s['synthetic_locations'])
         if 'load_errors' in s:

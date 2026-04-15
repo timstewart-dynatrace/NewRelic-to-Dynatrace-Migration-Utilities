@@ -1,8 +1,21 @@
 """
-Tag Transformer - Converts New Relic entity tags to Dynatrace auto-tag rules.
+Tag Transformer — Gen3 target.
+
+Converts New Relic entity tags into OpenPipeline enrichment processors. In
+Gen3, tagging is no longer a separate "auto-tag rule" system; instead, tags
+are attributes added to records at ingest time by OpenPipeline processors,
+and segments (see WorkloadTransformer) query them downstream.
+
+Emitted payloads target schema `builtin:openpipeline.logs.pipelines` with
+an `addFields` processor matching on `entity.name` and writing the
+`tags.<key>` attribute. The same processor shape is reused for events,
+bizevents, and metrics pipelines by the orchestrator.
+
+Legacy (Auto-Tag Rule) behavior is preserved in
+`transformers/legacy/tag_transformer_v1.py` and reached via `--legacy`.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Dict, List
 
 import structlog
@@ -12,141 +25,109 @@ logger = structlog.get_logger()
 
 @dataclass
 class TagTransformResult:
-    """Result of tag transformation."""
-    success: bool
-    auto_tag_rules: List[Dict[str, Any]] = None
-    warnings: List[str] = None
-    errors: List[str] = None
+    """Result of tag -> OpenPipeline enrichment translation (Gen3)."""
 
-    def __post_init__(self):
-        self.auto_tag_rules = self.auto_tag_rules or []
-        self.warnings = self.warnings or []
-        self.errors = self.errors or []
+    success: bool
+    enrichment_processors: List[Dict[str, Any]] = field(default_factory=list)
+    warnings: List[str] = field(default_factory=list)
+    errors: List[str] = field(default_factory=list)
 
 
 class TagTransformer:
-    """
-    Transforms New Relic entity tags to Dynatrace auto-tag rules.
+    """NR entity tags -> OpenPipeline `addFields` enrichment processors (Gen3)."""
 
-    New Relic tags:
-    - Key-value pairs attached to entities
-    - Used for filtering, grouping, alerting
-
-    Dynatrace auto-tags:
-    - Automatically applied based on rules
-    - Support entity selectors and conditions
-    """
-
-    # Entity type mapping for tag rule scopes
-    ENTITY_TYPE_MAP = {
-        "APPLICATION": "SERVICE",
-        "APM_APPLICATION": "SERVICE",
-        "HOST": "HOST",
-        "BROWSER_APPLICATION": "APPLICATION",
-        "MOBILE_APPLICATION": "MOBILE_APPLICATION",
-        "SYNTHETIC_MONITOR": "SYNTHETIC_TEST",
+    ENTITY_TYPE_TO_PIPELINE = {
+        "APPLICATION": "logs",
+        "APM_APPLICATION": "logs",
+        "HOST": "logs",
+        "BROWSER_APPLICATION": "bizevents",
+        "MOBILE_APPLICATION": "bizevents",
+        "SYNTHETIC_MONITOR": "events",
     }
 
-    def __init__(self):
-        pass
-
     def transform(self, nr_entity: Dict[str, Any]) -> TagTransformResult:
-        """Transform tags from a New Relic entity to Dynatrace auto-tag rules."""
         warnings: List[str] = []
         errors: List[str] = []
 
         try:
             entity_name = nr_entity.get("name", "Unknown Entity")
             entity_type = nr_entity.get("type", "APPLICATION")
-            tags = nr_entity.get("tags", [])
+            tags = nr_entity.get("tags", []) or []
 
-            auto_tag_rules = []
+            pipeline = self.ENTITY_TYPE_TO_PIPELINE.get(entity_type, "logs")
+            processors: List[Dict[str, Any]] = []
 
             for tag in tags:
-                tag_key = tag.get("key", "")
-                tag_values = tag.get("values", [])
-
-                if not tag_key:
+                key = tag.get("key", "")
+                values = tag.get("values", []) or []
+                if not key:
                     warnings.append(
                         f"Empty tag key found on entity '{entity_name}', skipping."
                     )
                     continue
-
-                for tag_value in tag_values:
-                    rule = self._create_auto_tag_rule(
-                        tag_key=tag_key,
-                        tag_value=tag_value,
-                        entity_type=entity_type,
-                        entity_name=entity_name,
+                for value in values:
+                    processors.append(
+                        self._enrichment_processor(
+                            pipeline=pipeline,
+                            entity_name=entity_name,
+                            tag_key=key,
+                            tag_value=value,
+                        )
                     )
-                    auto_tag_rules.append(rule)
 
             logger.info(
-                "Transformed entity tags to auto-tag rules",
+                "Transformed entity tags to OpenPipeline enrichment",
                 entity=entity_name,
-                rules_count=len(auto_tag_rules),
+                pipeline=pipeline,
+                processors=len(processors),
             )
-
             return TagTransformResult(
                 success=True,
-                auto_tag_rules=auto_tag_rules,
+                enrichment_processors=processors,
                 warnings=warnings,
             )
-
-        except Exception as e:
-            logger.error("Tag transformation failed", error=str(e))
+        except Exception as exc:  # noqa: BLE001
+            logger.error("Tag transformation failed", error=str(exc))
             return TagTransformResult(
-                success=False,
-                errors=[f"Transformation error: {str(e)}"],
+                success=False, errors=[f"Transformation error: {exc}"]
             )
 
-    def _create_auto_tag_rule(
-        self,
-        tag_key: str,
-        tag_value: str,
-        entity_type: str,
-        entity_name: str,
+    @staticmethod
+    def _enrichment_processor(
+        pipeline: str, entity_name: str, tag_key: str, tag_value: str
     ) -> Dict[str, Any]:
-        """Create a Dynatrace auto-tag rule from a NR tag."""
-        dt_type = self.ENTITY_TYPE_MAP.get(entity_type, "SERVICE")
-
+        schema = f"builtin:openpipeline.{pipeline}.pipelines"
+        processor_id = f"enrich-{tag_key}-{tag_value}-{entity_name}".lower()
+        processor_id = "".join(
+            c if c.isalnum() or c == "-" else "-" for c in processor_id
+        )[:180]
         return {
-            "name": f"[Migrated] {tag_key}",
-            "description": f"Migrated from NR tag: {tag_key}={tag_value}",
-            "rules": [
-                {
-                    "type": dt_type,
-                    "enabled": True,
-                    "valueFormat": tag_value,
-                    "conditions": [
+            "schemaId": schema,
+            "scope": "environment",
+            "value": {
+                "name": f"[Migrated] {tag_key}={tag_value} for {entity_name}",
+                "description": f"Migrated from NR tag: {tag_key}={tag_value}",
+                "enabled": True,
+                "processor": {
+                    "type": "addFields",
+                    "id": processor_id,
+                    "matcher": f'contains(entity.name, "{entity_name}")',
+                    "fields": [
                         {
-                            "key": {
-                                "attribute": "ENTITY_NAME",
-                            },
-                            "comparisonInfo": {
-                                "type": "STRING",
-                                "operator": "CONTAINS",
-                                "value": entity_name,
-                            },
+                            "name": f"tags.{tag_key}",
+                            "value": tag_value,
                         }
                     ],
-                }
-            ],
+                },
+            },
         }
 
     def transform_all(
         self, entities: List[Dict[str, Any]]
     ) -> List[TagTransformResult]:
-        """Transform tags from multiple entities."""
-        results = []
-
-        for entity in entities:
-            result = self.transform(entity)
-            results.append(result)
-
+        results = [self.transform(e) for e in entities]
         successful = sum(1 for r in results if r.success)
         logger.info(
-            f"Transformed tags for {successful}/{len(results)} entities"
+            f"Transformed tags for {successful}/{len(results)} entities to Gen3 enrichment"
         )
-
         return results

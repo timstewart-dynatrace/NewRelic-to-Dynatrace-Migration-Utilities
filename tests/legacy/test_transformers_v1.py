@@ -8,19 +8,20 @@
 
 import pytest
 
-from transformers.alert_transformer import (
+from transformers.legacy.alert_transformer_v1 import (
     AlertTransformer,
     AlertTransformResult,
     NotificationTransformer,
+    NotificationTransformResult,
 )
-from transformers.dashboard_transformer import DashboardTransformer, DashboardTransformResult
-from transformers.slo_transformer import SLOTransformer, SLOTransformResult
-from transformers.synthetic_transformer import (
+from transformers.legacy.dashboard_transformer_v1 import DashboardTransformer, DashboardTransformResult
+from transformers.legacy.slo_transformer_v1 import SLOTransformer, SLOTransformResult
+from transformers.legacy.synthetic_transformer_v1 import (
     SyntheticScriptConverter,
     SyntheticTransformer,
     SyntheticTransformResult,
 )
-from transformers.workload_transformer import WorkloadTransformer, WorkloadTransformResult
+from transformers.legacy.workload_transformer_v1 import WorkloadTransformer, WorkloadTransformResult
 
 # ═════════════════════════════════════════════════════════════════════════════
 # DashboardTransformer

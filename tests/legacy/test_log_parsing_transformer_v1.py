@@ -7,7 +7,7 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
-from transformers.log_parsing_transformer import (
+from transformers.legacy.log_parsing_transformer_v1 import (
     LogParsingTransformer,
     LogParsingTransformResult,
 )
