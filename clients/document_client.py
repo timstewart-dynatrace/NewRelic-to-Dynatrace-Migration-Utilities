@@ -108,3 +108,19 @@ class DocumentClient:
         return self.http.delete(
             f"{self.base}/{doc_id}", params=params, prefer_oauth=True
         )
+
+    # Phase 25 — Document-level tag/attribute management.
+
+    def put_tags(
+        self, doc_id: str, tags: List[str]
+    ) -> DynatraceResponse:
+        """Apply tags to a Document (dashboard or notebook).
+
+        Uses the Document API's tag sub-resource. Tags replace the
+        existing set (PUT semantics).
+        """
+        return self.http.put(
+            f"{self.base}/{doc_id}/tags",
+            {"tags": tags},
+            prefer_oauth=True,
+        )

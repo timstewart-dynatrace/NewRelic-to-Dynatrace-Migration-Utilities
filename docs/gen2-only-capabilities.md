@@ -1,6 +1,6 @@
 # Gen2-only Capabilities — What `--legacy` Does That Gen3 Default Can't
 
-> **Audited:** 2026-04-15 (post-Phase-23)
+> **Audited:** 2026-04-16 (post-Phase-25 — 6 of 8 items now have Gen3 workarounds)
 > **Audience:** Operators choosing between Gen3 default and `--legacy`.
 > **Companion:** `docs/migration-coverage.md`, `docs/out-of-scope.md`.
 

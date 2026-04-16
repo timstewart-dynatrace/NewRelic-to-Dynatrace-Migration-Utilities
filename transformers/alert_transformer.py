@@ -65,19 +65,25 @@ class AlertTransformer:
                 anomaly_detectors.append(det)
                 detector_ids.append(det["detectorId"])
 
-            workflow = self._build_workflow(
+            # Phase 25: detect severity-ladder delays → fan out Workflows.
+            severity_rules = nr_policy.get("severityRules", []) or []
+            workflows = self._build_workflows(
                 policy_name=policy_name,
                 policy_id=policy_id,
                 detector_ids=detector_ids,
                 notifications=nr_policy.get("notificationChannels", []) or [],
+                severity_rules=severity_rules,
                 warnings=warnings,
             )
+            # Backward compat: `.workflow` is the first (or only) Workflow;
+            # `.all_workflows` carries the full list when fanout occurred.
+            workflow = workflows[0]
 
             logger.info(
                 "Transformed alert policy to Gen3",
                 policy=policy_name,
                 detectors=len(anomaly_detectors),
-                workflow_tasks=len(workflow["tasks"]),
+                workflows=len(workflows),
             )
 
             return AlertTransformResult(
@@ -210,19 +216,93 @@ class AlertTransformer:
     # Automation Workflow (platform/automation/v1/workflows)
     # ------------------------------------------------------------------
 
-    def _build_workflow(
+    # Phase 25 — per-severity delay-ladder detection. NR policies
+    # sometimes carry explicit severityRules with different delays:
+    #   [{"severity":"AVAILABILITY","delayMinutes":0},
+    #    {"severity":"ERROR","delayMinutes":5}, ...]
+    # When the delays are non-uniform, fan out one Workflow per severity
+    # so each can carry its own delay (via a pre-step sleep node). When
+    # all delays are the same (the common case), emit a single Workflow.
+    _SEVERITY_LEVELS = [
+        "AVAILABILITY", "ERROR", "PERFORMANCE",
+        "RESOURCE_CONTENTION", "CUSTOM_ALERT",
+    ]
+
+    def _build_workflows(
         self,
         policy_name: str,
         policy_id: str,
         detector_ids: List[str],
         notifications: List[Dict[str, Any]],
+        severity_rules: List[Dict[str, Any]],
         warnings: List[str],
+    ) -> List[Dict[str, Any]]:
+        """Build one or more Workflows for a policy.
+
+        Phase 25: when severity_rules carry non-uniform delays, emit
+        one Workflow per severity level. Otherwise, emit a single Workflow.
+        """
+        delays = {
+            str(r.get("severity", r.get("severityLevel", ""))).upper():
+            int(r.get("delayMinutes", r.get("delayInMinutes", 0)))
+            for r in severity_rules
+        }
+        unique_delays = set(delays.values())
+        if len(unique_delays) <= 1 or not severity_rules:
+            return [self._build_single_workflow(
+                policy_name, policy_id, detector_ids, notifications,
+                None, warnings,
+            )]
+
+        workflows: List[Dict[str, Any]] = []
+        for severity, delay in delays.items():
+            wf = self._build_single_workflow(
+                policy_name=f"{policy_name} [{severity}]",
+                policy_id=policy_id,
+                detector_ids=detector_ids,
+                notifications=notifications,
+                severity_filter=severity,
+                warnings=warnings,
+                delay_minutes=delay,
+            )
+            wf["migratedFrom"] = {
+                "type": "newrelic.severity_ladder",
+                "severity": severity,
+                "delayMinutes": delay,
+            }
+            workflows.append(wf)
+        warnings.append(
+            f"Policy '{policy_name}' has non-uniform severity delays "
+            f"({delays}). Emitting {len(workflows)} Workflows "
+            "(one per severity) — Phase 25 severity-ladder fanout."
+        )
+        return workflows
+
+    def _build_single_workflow(
+        self,
+        policy_name: str,
+        policy_id: str,
+        detector_ids: List[str],
+        notifications: List[Dict[str, Any]],
+        severity_filter: Optional[str],
+        warnings: List[str],
+        delay_minutes: int = 0,
     ) -> Dict[str, Any]:
         tasks = self._build_notification_tasks(notifications, warnings)
 
+        if delay_minutes > 0:
+            tasks.insert(0, {
+                "name": f"delay_{delay_minutes}m",
+                "action": "dynatrace.automations:run-javascript",
+                "active": True,
+                "description": f"Pre-notification delay of {delay_minutes} minutes (migrated from NR severity ladder).",
+                "input": {
+                    "script": f"export default async () => {{ await new Promise(r => setTimeout(r, {delay_minutes * 60_000})); return {{ ok: true }}; }};",
+                },
+                "position": {"x": 0, "y": 0},
+            })
+
         if not tasks:
-            # Always emit at least one no-op task so the workflow is deployable;
-            # operators can attach real actions afterward.
             tasks.append(
                 {
                     "name": "placeholder_action",
@@ -234,29 +314,31 @@ class AlertTransformer:
                 }
             )
 
-        workflow: Dict[str, Any] = {
+        trigger_config: Dict[str, Any] = {
+            "eventType": "CUSTOM_ALERT",
+            "detectorIds": detector_ids,
+            "anyEventMatches": True,
+        }
+        if severity_filter:
+            trigger_config["eventProperties"] = {
+                "event.severity": severity_filter,
+            }
+
+        return {
             "title": f"[Migrated] {policy_name}",
             "description": (
-                f"Migrated from New Relic alert policy '{policy_name}' (id={policy_id}). "
-                "Triggered by Davis events from anomaly detectors derived from this policy."
+                f"Migrated from New Relic alert policy '{policy_name}' (id={policy_id})."
             ),
             "private": False,
             "isPrivate": False,
             "trigger": {
                 "event": {
                     "active": True,
-                    "config": {
-                        "davis_event": {
-                            "eventType": "CUSTOM_ALERT",
-                            "detectorIds": detector_ids,
-                            "anyEventMatches": True,
-                        }
-                    },
+                    "config": {"davis_event": trigger_config},
                 }
             },
             "tasks": tasks,
         }
-        return workflow
 
     def _build_notification_tasks(
         self, channels: List[Dict[str, Any]], warnings: List[str]

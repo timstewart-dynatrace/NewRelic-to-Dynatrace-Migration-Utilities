@@ -95,20 +95,45 @@ class WorkloadTransformer:
         """Build a Segment filter tree (Group -> Statement children)."""
         children: List[Dict[str, Any]] = []
 
-        # Bucket of entity names grouped by mapped DT type, rendered as OR statements.
-        by_type: Dict[str, List[str]] = {}
+        # Phase 25: prefer entity-ID-based statements when GUIDs are available;
+        # fall back to exact entity.name == (not contains) when the NR collection
+        # carries names. This closes Gen2-only capability #4.
+        by_type_ids: Dict[str, List[str]] = {}  # dt_type -> [guid1, ...]
+        by_type_names: Dict[str, List[str]] = {}  # dt_type -> [name1, ...]
         for entity in collection:
             etype = entity.get("type", "UNKNOWN")
             ename = entity.get("name", "")
+            eguid = entity.get("guid", "")
             dt_type = self.ENTITY_TYPE_MAP.get(etype)
             if dt_type is None:
                 warnings.append(
                     f"Entity type '{etype}' for '{ename}' has no Gen3 segment mapping."
                 )
                 continue
-            by_type.setdefault(dt_type, []).append(ename)
+            if eguid:
+                by_type_ids.setdefault(dt_type, []).append(eguid)
+            else:
+                by_type_names.setdefault(dt_type, []).append(ename)
 
-        for dt_type, names in by_type.items():
+        for dt_type, guids in by_type_ids.items():
+            children.append(
+                {
+                    "type": "Group",
+                    "logicalOperator": "OR",
+                    "children": [
+                        self._statement("dt.entity.type", "=", dt_type),
+                        {
+                            "type": "Group",
+                            "logicalOperator": "OR",
+                            "children": [
+                                self._statement("dt.entity.id", "=", g) for g in guids
+                            ],
+                        },
+                    ],
+                }
+            )
+
+        for dt_type, names in by_type_names.items():
             children.append(
                 {
                     "type": "Group",

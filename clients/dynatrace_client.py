@@ -159,9 +159,57 @@ class DynatraceClient:
                 error_message=f"Delete raised: {exc}",
             )
 
-    def create_dashboard(self, dashboard_content: Dict[str, Any]) -> ImportResult:
-        """Create a Gen3 Grail dashboard via Document API."""
-        return self.documents.create_dashboard(dashboard_content)
+    def create_dashboard(
+        self,
+        dashboard_content: Dict[str, Any],
+        tags: Optional[List[str]] = None,
+        fallback_to_config_v1: bool = False,
+    ) -> ImportResult:
+        """Create a Gen3 Grail dashboard via Document API.
+
+        Phase 25 additions:
+        - `tags`: if non-empty, PUT to Document tags sub-resource after creation.
+        - `fallback_to_config_v1`: if True and Document API fails, dispatch
+          through LegacyDynatraceV1Client.create_dashboard (belt-and-suspenders
+          for mixed-mode tenants).
+        """
+        result = self.documents.create_dashboard(dashboard_content)
+        if result.success and tags:
+            self.documents.put_tags(result.dynatrace_id, tags)
+        if not result.success and fallback_to_config_v1:
+            from clients.legacy import LegacyDynatraceV1Client
+            legacy = LegacyDynatraceV1Client(
+                api_token=self.transport._api_token or "",
+                environment_url=self.environment_url,
+            )
+            return legacy.create_dashboard(dashboard_content)
+        return result
+
+    def list_synthetic_locations(
+        self, scope: str = "ALL"
+    ) -> List[Dict[str, Any]]:
+        """List synthetic monitoring locations (PUBLIC, PRIVATE, or ALL).
+
+        Phase 25 — closes Gen2-only capability #7 by querying the
+        `/api/v2/synthetic/locations` endpoint (a classic API that
+        exists on Gen3 tenants too).
+        """
+        results: List[Dict[str, Any]] = []
+        if scope in ("ALL", "PUBLIC"):
+            resp = self.transport.get(
+                f"{self.environment_url}/api/v2/synthetic/locations",
+                params={"type": "PUBLIC"},
+            )
+            if resp.is_success and isinstance(resp.data, dict):
+                results.extend(resp.data.get("locations", []) or [])
+        if scope in ("ALL", "PRIVATE"):
+            resp = self.transport.get(
+                f"{self.environment_url}/api/v2/synthetic/locations",
+                params={"type": "PRIVATE"},
+            )
+            if resp.is_success and isinstance(resp.data, dict):
+                results.extend(resp.data.get("locations", []) or [])
+        return results
 
     # ------------------------------------------------------------------
     # Connectivity + backup

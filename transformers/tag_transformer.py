@@ -96,11 +96,59 @@ class TagTransformer:
     def _enrichment_processor(
         pipeline: str, entity_name: str, tag_key: str, tag_value: str
     ) -> Dict[str, Any]:
+        import re as _re
         schema = f"builtin:openpipeline.{pipeline}.pipelines"
         processor_id = f"enrich-{tag_key}-{tag_value}-{entity_name}".lower()
         processor_id = "".join(
             c if c.isalnum() or c == "-" else "-" for c in processor_id
         )[:180]
+
+        # Phase 25 — detect {TAG:name} template references in valueFormat.
+        # When present, emit `computeFields` with a DQL expression
+        # (dynamic tag substitution at ingest time) instead of `addFields`
+        # with a static literal.
+        tag_refs = _re.findall(r"\{TAG:(\w+)\}", tag_value)
+        if tag_refs:
+            # Build a DQL expression: concat literal fragments + tag references.
+            # e.g. "{TAG:env}-{TAG:region}" -> concat(tags.env, "-", tags.region)
+            parts = _re.split(r"\{TAG:\w+\}", tag_value)
+            expr_parts: list = []
+            for i, literal in enumerate(parts):
+                if literal:
+                    expr_parts.append(f'"{literal}"')
+                if i < len(tag_refs):
+                    expr_parts.append(f"tags.{tag_refs[i]}")
+            expression = (
+                expr_parts[0]
+                if len(expr_parts) == 1
+                else f"concat({', '.join(expr_parts)})"
+            )
+            return {
+                "schemaId": schema,
+                "scope": "environment",
+                "value": {
+                    "name": f"[Migrated] {tag_key}={tag_value} for {entity_name}",
+                    "description": (
+                        f"Migrated from NR tag with template reference: "
+                        f"{tag_key}={tag_value}. Uses computeFields for "
+                        "dynamic substitution (Phase 25)."
+                    ),
+                    "enabled": True,
+                    "processor": {
+                        "type": "computeFields",
+                        "id": processor_id,
+                        "matcher": f'contains(entity.name, "{entity_name}")',
+                        "fields": [
+                            {
+                                "name": f"tags.{tag_key}",
+                                "expression": expression,
+                            }
+                        ],
+                    },
+                },
+            }
+
+        # Default: literal addFields (no template reference).
         return {
             "schemaId": schema,
             "scope": "environment",
