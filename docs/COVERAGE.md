@@ -2,7 +2,7 @@
 
 > **Purpose:** Operational status dashboard — every New Relic surface, mapped to its Gen3 Dynatrace equivalent and the Python module responsible. Tracks what is convertible today, what is partial, what is a gap, and what is not convertible.
 >
-> **Rule:** Gen3 default output. Gen2 shapes are available as opt-in via `--legacy` (CLI) / `MIGRATION_LEGACY_MODE=true` (env) and always emit a warning. Gen2 code lives under `transformers/legacy/`, `clients/legacy/`, `exporters/legacy/`. See `.claude/phases/` for the phase-by-phase delivery history (phases 11–24 + 19b executed; phase 15 release on hold; phase 25 pending).
+> **Rule:** Gen3 default output. Gen2 shapes are available as opt-in via `--legacy` (CLI) / `MIGRATION_LEGACY_MODE=true` (env) and always emit a warning. Gen2 code lives under `transformers/legacy/`, `clients/legacy/`, `exporters/legacy/`. See `.claude/phases/` for the phase-by-phase delivery history (all phases complete; v2.0.0 released 2026-04-16).
 >
 > **Companion docs:**
 > - `migration-coverage.md` — broader migratability discussion + absolute-limits section
