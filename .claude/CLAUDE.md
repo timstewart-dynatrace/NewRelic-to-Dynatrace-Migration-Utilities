@@ -143,6 +143,9 @@ All transformers follow a consistent pattern:
 @/Users/Shared/GitHub/PROJECTS/VisualCode-AI-Template/SKILLS/dynatrace-monaco/SKILL.md
 @/Users/Shared/GitHub/PROJECTS/VisualCode-AI-Template/SKILLS/dynatrace-terraform/SKILL.md
 
+### Always active — documentation + graphics
+@/Users/Shared/GitHub/PROJECTS/VisualCode-AI-Template/SKILLS/svg-graphics/SKILL.md
+
 ### Always active — Gen3 transformer targets (Phase 11–24)
 @/Users/Shared/GitHub/PROJECTS/VisualCode-AI-Template/SKILLS/dynatrace-workflow/SKILL.md
 @/Users/Shared/GitHub/PROJECTS/VisualCode-AI-Template/SKILLS/dynatrace-alert-routing/SKILL.md
