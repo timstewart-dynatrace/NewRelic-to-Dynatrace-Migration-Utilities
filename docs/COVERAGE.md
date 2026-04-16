@@ -208,7 +208,7 @@
 | Incident preferences (PER_POLICY / CONDITION / TARGET) | Workflow trigger filters + grouping | transformers/alert | 🟡 partial — grouping semantics require manual Workflow step |
 | Mute rules (NRQL-based) | Workflow filter / detector embedded filter | transformers/maintenance-window | ✅ LOW-confidence DQL-comment translation |
 | Maintenance windows (scheduled, recurring) | `builtin:deployment.maintenance` | transformers/maintenance-window | ✅ one-off + weekly/monthly recurrence |
-| Per-severity delay ladder | multiple Workflows (one per severity) | — | 🟡 Gen2-only today (see `gen2-only-capabilities.md` #1); closure planned in Phase 25 |
+| Per-severity delay ladder | multiple Workflows (one per severity) | — | 🟡 Gen2-only today (see `gen2-only-capabilities.md` #1); closed in Phase 25 |
 
 ## 8. AIOps / Applied Intelligence
 
@@ -245,7 +245,7 @@
 | Dashboard permissions | Document sharing (public read / read-write / private) | transformers/dashboard (Phase 19) | ✅ |
 | Saved filter sets | Document `savedViews` with `variableValues` | transformers/dashboard (Phase 19) | ✅ |
 | Saved query / Data Apps (notebooks) | DT Notebooks (Document API `type=='notebook'`) | transformers/saved-filter-notebook | ✅ markdown + DQL cells |
-| Config v1 dashboard `.preset` / `.tags` metadata | Document API attributes | — | 🟡 Gen2-only today (see `gen2-only-capabilities.md` #5); closure planned in Phase 25 |
+| Config v1 dashboard `.preset` / `.tags` metadata | Document API attributes | — | 🟡 Gen2-only today (see `gen2-only-capabilities.md` #5); closed in Phase 25 |
 
 ## 11. Users, Teams, Access
 
@@ -294,8 +294,8 @@
 | Entity health status | Problem severity / Davis | — | ⚫ platform feature |
 | Entity relationships | Smartscape | — | ⚫ auto-discovered |
 | Custom entities | DT custom device entities | transformers/custom-entity | ✅ `/api/v2/entities/custom` payload + enrichment matcher |
-| Template-value auto-tagging (`{TAG:name}`) | OpenPipeline `computeFields` | — | 🟡 Gen2-only today (see `gen2-only-capabilities.md` #3); closure planned in Phase 25 |
-| Entity-ID-targeted MZ rules | Segment `dt.entity.id == "..."` statement | — | 🟡 Gen2-only today (see `gen2-only-capabilities.md` #4); closure planned in Phase 25 |
+| Template-value auto-tagging (`{TAG:name}`) | OpenPipeline `computeFields` | — | 🟡 Gen2-only today (see `gen2-only-capabilities.md` #3); closed in Phase 25 |
+| Entity-ID-targeted MZ rules | Segment `dt.entity.id == "..."` statement | — | 🟡 Gen2-only today (see `gen2-only-capabilities.md` #4); closed in Phase 25 |
 
 ## 15. Data Management
 
@@ -402,7 +402,7 @@ CI `nrql-engine-parity` job.
 | Phase | Status |
 |---|---|
 | 11–14 | ✅ Done — Gen3 refactor + `--legacy` flag + clients + exporters |
-| 15 | ⏸ On hold — release work (version bump / tag / PyPI) suspended pending user approval |
+| 15 | ✅ Done — v2.0.0 released (version bump + tag + merge to main, 2026-04-16) |
 | 16 | ✅ Done — P0 coverage (agents, RUM, Mobile, Lambda, custom instrumentation) |
 | 17 | ✅ Done — P1 alerts + identity + data + log obfuscation + NRDB archive |
 | 18 | ✅ Done — cloud / K8s / AIOps / vulnerability / NPM / AI / Prometheus |
@@ -414,4 +414,5 @@ CI `nrql-engine-parity` job.
 | 23 | ✅ Done — Key Transaction + OTel Metrics + StatsD + CWMS + plugin hook + per-concern mappings + numeric score |
 | 24 | ✅ Done — 8 second-wave transformers (DB monitoring, on-host integrations, security signals, custom entities, log archive, metric normalization, specialized synthetic, saved-filter notebooks) |
 | 3rd-pass | ✅ Done — OTelCollectorTransformer + Legacy ErrorInbox + Legacy RequestNaming + CustomEventTransformer alias |
-| 25 | ⏳ Pending — Gen3 workarounds for 6 of 8 Gen2-only capabilities |
+| 25 | ✅ Done — Gen3 workarounds for 6 of 8 Gen2-only capabilities (severity fanout, computeFields tags, entity-ID segments, Document tags, location lister, dashboard fallback) |
+| 26 | ✅ Done — Validation layer (Hypothesis property-based T6 + schema harness T1 + IaC harness T3) |
