@@ -1,0 +1,229 @@
+"""Shared HTTP primitives for Dynatrace Gen3 clients.
+
+Consolidates:
+- `DynatraceResponse` / `ImportResult` dataclasses
+- Rate-limited `requests.Session` with retry adapter
+- Auth resolution (OAuth2 platform-token exchange + Api-Token fallback)
+"""
+
+from __future__ import annotations
+
+import json
+import threading
+import time
+from dataclasses import dataclass
+from typing import Any, Callable, Dict, Optional
+
+import requests
+import structlog
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
+
+logger = structlog.get_logger()
+
+
+@dataclass
+class DynatraceResponse:
+    """Response wrapper for any Dynatrace API call."""
+
+    data: Optional[Any]
+    status_code: int
+    error: Optional[str] = None
+
+    @property
+    def is_success(self) -> bool:
+        return 200 <= self.status_code < 300
+
+
+@dataclass
+class ImportResult:
+    """Result of an import/create operation."""
+
+    entity_type: str
+    entity_name: str
+    success: bool
+    dynatrace_id: Optional[str] = None
+    error_message: Optional[str] = None
+
+
+class OAuth2PlatformTokenProvider:
+    """Exchange OAuth2 client credentials for a Dynatrace platform bearer token.
+
+    Required for the Automation API and other Gen3 Platform endpoints. If the
+    caller does not supply OAuth2 credentials, higher-level clients fall back
+    to the Api-Token header (works for Settings 2.0 / Documents on classic
+    auth configurations).
+    """
+
+    # 60-second safety margin before expiry so callers get a fresh token.
+    _REFRESH_MARGIN_SECONDS = 60
+
+    def __init__(
+        self,
+        client_id: str,
+        client_secret: str,
+        token_url: str = "https://sso.dynatrace.com/sso/oauth2/token",
+        scope: str = (
+            "settings:objects:read settings:objects:write "
+            "automation:workflows:read automation:workflows:write "
+            "document:documents:read document:documents:write"
+        ),
+        resource: Optional[str] = None,
+    ) -> None:
+        self.client_id = client_id
+        self.client_secret = client_secret
+        self.token_url = token_url
+        self.scope = scope
+        self.resource = resource
+        self._access_token: Optional[str] = None
+        self._expires_at: float = 0.0
+        self._lock = threading.Lock()
+
+    def bearer_header(self) -> str:
+        return f"Bearer {self._fetch_token()}"
+
+    def _fetch_token(self) -> str:
+        with self._lock:
+            now = time.time()
+            if self._access_token and now < self._expires_at:
+                return self._access_token
+
+            data = {
+                "grant_type": "client_credentials",
+                "client_id": self.client_id,
+                "client_secret": self.client_secret,
+                "scope": self.scope,
+            }
+            if self.resource:
+                data["resource"] = self.resource
+
+            response = requests.post(self.token_url, data=data, timeout=30)
+            response.raise_for_status()
+            body = response.json()
+            self._access_token = body["access_token"]
+            expires_in = int(body.get("expires_in", 300))
+            self._expires_at = now + max(0, expires_in - self._REFRESH_MARGIN_SECONDS)
+            return self._access_token
+
+
+class HttpTransport:
+    """Rate-limited session with retry + auth-header resolution."""
+
+    def __init__(
+        self,
+        rate_limit: float = 5.0,
+        api_token: Optional[str] = None,
+        oauth: Optional[OAuth2PlatformTokenProvider] = None,
+    ) -> None:
+        self.rate_limit = rate_limit
+        self._api_token = api_token
+        self._oauth = oauth
+        self._last_request_time = 0.0
+
+        self.session = requests.Session()
+        retries = Retry(
+            total=3, backoff_factor=1, status_forcelist=[429, 500, 502, 503, 504]
+        )
+        adapter = HTTPAdapter(max_retries=retries)
+        self.session.mount("https://", adapter)
+        self.session.headers.update({"Content-Type": "application/json"})
+
+    # ------------------------------------------------------------------
+
+    def _rate_limit_wait(self) -> None:
+        if self.rate_limit > 0:
+            elapsed = time.time() - self._last_request_time
+            min_interval = 1.0 / self.rate_limit
+            if elapsed < min_interval:
+                time.sleep(min_interval - elapsed)
+        self._last_request_time = time.time()
+
+    def _auth_header(self, prefer_oauth: bool) -> str:
+        if prefer_oauth and self._oauth is not None:
+            return self._oauth.bearer_header()
+        if self._api_token:
+            return f"Api-Token {self._api_token}"
+        if self._oauth is not None:
+            return self._oauth.bearer_header()
+        raise RuntimeError(
+            "No Dynatrace credentials configured — set DYNATRACE_API_TOKEN "
+            "or OAuth2 client credentials."
+        )
+
+    # ------------------------------------------------------------------
+
+    def request(
+        self,
+        method: str,
+        url: str,
+        data: Optional[Dict[str, Any]] = None,
+        params: Optional[Dict[str, Any]] = None,
+        prefer_oauth: bool = False,
+        headers: Optional[Dict[str, str]] = None,
+    ) -> DynatraceResponse:
+        self._rate_limit_wait()
+        merged_headers = {"Authorization": self._auth_header(prefer_oauth)}
+        if headers:
+            merged_headers.update(headers)
+
+        try:
+            response = self.session.request(
+                method=method,
+                url=url,
+                json=data,
+                params=params,
+                headers=merged_headers,
+                timeout=60,
+            )
+            response_data: Optional[Any] = None
+            if response.content:
+                try:
+                    response_data = response.json()
+                except json.JSONDecodeError:
+                    response_data = response.text
+
+            if response.status_code >= 400:
+                error_msg = (
+                    str(response_data) if response_data else response.reason
+                )
+                return DynatraceResponse(
+                    data=response_data,
+                    status_code=response.status_code,
+                    error=error_msg,
+                )
+            return DynatraceResponse(
+                data=response_data, status_code=response.status_code
+            )
+        except requests.exceptions.RequestException as exc:
+            logger.error("Dynatrace API error", error=str(exc))
+            return DynatraceResponse(data=None, status_code=0, error=str(exc))
+
+    # Convenience wrappers --------------------------------------------
+
+    def get(self, url: str, **kwargs: Any) -> DynatraceResponse:
+        return self.request("GET", url, **kwargs)
+
+    def post(
+        self, url: str, data: Dict[str, Any], **kwargs: Any
+    ) -> DynatraceResponse:
+        return self.request("POST", url, data=data, **kwargs)
+
+    def put(
+        self, url: str, data: Dict[str, Any], **kwargs: Any
+    ) -> DynatraceResponse:
+        return self.request("PUT", url, data=data, **kwargs)
+
+    def delete(self, url: str, **kwargs: Any) -> DynatraceResponse:
+        return self.request("DELETE", url, **kwargs)
+
+
+# --------------------------------------------------------------------------
+
+
+def platform_url(environment_url: str) -> str:
+    """Map an environment URL to its Platform (apps.) equivalent.
+
+    Document API + Automation API live on the `apps.` subdomain for SaaS
+    tenants; managed/classic tenants expose the same hostname.
+    """
+    return environment_url.replace(".live.", ".apps.").rstrip("/")

@@ -1,108 +1,115 @@
 """
-Dashboard Transformer - Converts New Relic dashboards to Dynatrace format.
+Dashboard Transformer — Gen3 target.
 
-Uses the AST-based NRQL compiler for accurate query translation (282 tested patterns)
-instead of regex-based conversion.
+Emits the Dynatrace Grail-native dashboard JSON consumed by the Document
+API (schema `type == 'dashboard'`, `version: 13`). Tiles are keyed by
+string indices in a `tiles` map with a parallel `layouts` map, and every
+data tile carries a DQL query — no Config v1 dashboard fallback on the
+default path.
+
+Multi-page NR dashboards still yield one Gen3 dashboard per page.
+
+Legacy (Config v1 dashboard) behavior is preserved in
+`transformers/legacy/dashboard_transformer_v1.py`.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 import structlog
 
-from .mapping_rules import (
-    VISUALIZATION_TYPE_MAP,
-    EntityMapper,
-)
+from .mapping_rules import EntityMapper
 from .nrql_converter import NRQLtoDQLConverter
 
 logger = structlog.get_logger()
 
 
+# Gen3 visualization names (the Grail dashboard `visualization` string
+# on data tiles). Mapped from NR widget ids.
+_VIZ_MAP_GEN3 = {
+    "viz.line": "lineChart",
+    "viz.area": "areaChart",
+    "viz.bar": "barChart",
+    "viz.pie": "pieChart",
+    "viz.stacked-bar": "barChart",
+    # Heatmap now uses the Gen3 honeycomb tile (Phase 19 — was "heatmap" fallback).
+    "viz.heatmap": "honeycomb",
+    "viz.table": "table",
+    "viz.billboard": "singleValue",
+    "viz.markdown": "markdown",
+    "viz.histogram": "histogram",
+    "viz.json": "table",
+    "viz.bullet": "singleValue",
+    # Funnel renders as a composite of barChart stages (Phase 19 — was "table").
+    "viz.funnel": "funnel",  # handled specially in _transform_widget
+    # Event feed renders as a table with a canonical timestamp sort (Phase 19).
+    "viz.event-feed": "table",
+    "viz.inline": "singleValue",
+}
+
+
+# NR dashboard permission -> DT Document sharing block.
+_PERMISSION_MAP = {
+    "PUBLIC_READ_ONLY": {"access": ["read"], "scope": "public"},
+    "PUBLIC_READ_WRITE": {"access": ["read", "write"], "scope": "public"},
+    "PRIVATE": {"access": [], "scope": "private"},
+}
+
+_GRID_W = 4   # Gen3 columns per NR column
+_GRID_H = 4   # Gen3 rows per NR row
+
+
 @dataclass
 class DashboardTransformResult:
-    """Result of a dashboard transformation.
+    """Result of NR dashboard -> Gen3 Grail dashboard translation.
 
-    A single NR dashboard may produce multiple DT dashboards (one per page),
-    so `data` is a list of dashboard dicts.
+    Each element of `data` is a Document-API-ready JSON blob (the
+    `content` payload of a `documentsClient.createDocument` call where
+    `type='dashboard'`).
     """
-    success: bool
-    data: List[Dict[str, Any]] = None
-    warnings: List[str] = None
-    errors: List[str] = None
 
-    def __post_init__(self):
-        self.data = self.data or []
-        self.warnings = self.warnings or []
-        self.errors = self.errors or []
+    success: bool
+    data: List[Dict[str, Any]] = field(default_factory=list)
+    warnings: List[str] = field(default_factory=list)
+    errors: List[str] = field(default_factory=list)
 
 
 class DashboardTransformer:
-    """
-    Transforms New Relic dashboards to Dynatrace dashboard format.
+    """NR dashboard -> Gen3 Grail dashboard JSON (Document API payload)."""
 
-    Handles:
-    - Dashboard metadata conversion
-    - Page to dashboard conversion (New Relic dashboards can have multiple pages)
-    - Widget/visualization conversion
-    - NRQL to DQL query conversion (where possible)
-    - Layout transformation
-    """
-
-    # Dynatrace tile size unit (typically 38 pixels per unit)
-    TILE_UNIT = 38
-
-    # Default tile dimensions
-    DEFAULT_TILE_WIDTH = 6
-    DEFAULT_TILE_HEIGHT = 4
-
-    def __init__(self, registry=None):
+    def __init__(self, registry=None) -> None:
         self.mapper = EntityMapper()
         self._nrql_converter = NRQLtoDQLConverter(registry=registry)
 
     def transform(self, nr_dashboard: Dict[str, Any]) -> DashboardTransformResult:
-        """
-        Transform a New Relic dashboard to Dynatrace format.
-
-        A multi-page NR dashboard produces multiple DT dashboards (one per page),
-        returned in the `data` list.
-        """
-        dashboards = []
-        all_warnings = []
+        dashboards: List[Dict[str, Any]] = []
+        all_warnings: List[str] = []
 
         try:
-            pages = nr_dashboard.get("pages", [])
-
+            pages = nr_dashboard.get("pages", []) or []
             if not pages:
                 return DashboardTransformResult(
-                    success=False,
-                    errors=["Dashboard has no pages"]
+                    success=False, errors=["Dashboard has no pages"]
                 )
 
-            # Convert each page to a separate Dynatrace dashboard
             for page_index, page in enumerate(pages):
-                page_result = self._transform_page(
+                dash, warns = self._transform_page(
                     nr_dashboard=nr_dashboard,
                     page=page,
                     page_index=page_index,
-                    total_pages=len(pages)
+                    total_pages=len(pages),
                 )
-                if page_result.get("dashboard"):
-                    dashboards.append(page_result["dashboard"])
-                if page_result.get("warnings"):
-                    all_warnings.extend(page_result["warnings"])
-
-        except Exception as e:
-            logger.error("Dashboard transformation failed", error=str(e))
+                if dash is not None:
+                    dashboards.append(dash)
+                all_warnings.extend(warns)
+        except Exception as exc:  # noqa: BLE001
+            logger.error("Dashboard transformation failed", error=str(exc))
             return DashboardTransformResult(
-                success=False,
-                errors=[f"Transformation error: {str(e)}"]
+                success=False, errors=[f"Transformation error: {exc}"]
             )
 
         return DashboardTransformResult(
-            success=True,
-            data=dashboards,
-            warnings=all_warnings
+            success=True, data=dashboards, warnings=all_warnings
         )
 
     def _transform_page(
@@ -110,218 +117,263 @@ class DashboardTransformer:
         nr_dashboard: Dict[str, Any],
         page: Dict[str, Any],
         page_index: int,
-        total_pages: int
-    ) -> Dict[str, Any]:
-        """Transform a single dashboard page. Returns dict with 'dashboard' and 'warnings'."""
-        warnings = []
-
-        # Build dashboard name
-        dashboard_name = nr_dashboard.get("name", "Untitled Dashboard")
+        total_pages: int,
+    ):
+        warnings: List[str] = []
+        base_name = nr_dashboard.get("name", "Untitled Dashboard")
         page_name = page.get("name", f"Page {page_index + 1}")
+        name = f"{base_name} - {page_name}" if total_pages > 1 else base_name
 
-        if total_pages > 1:
-            dashboard_name = f"{dashboard_name} - {page_name}"
+        tiles: Dict[str, Any] = {}
+        layouts: Dict[str, Any] = {}
 
-        # Create Dynatrace dashboard structure
-        dt_dashboard = {
-            "dashboardMetadata": {
-                "name": dashboard_name,
-                "shared": self._map_permissions(nr_dashboard.get("permissions")),
-                "owner": "migration-tool",
-                "tags": ["migrated-from-newrelic"],
-                "preset": False,
-                "dynamicFilters": {
-                    "filters": [],
-                    "genericTagFilters": []
-                }
-            },
-            "tiles": []
-        }
+        for i, widget in enumerate(page.get("widgets", []) or []):
+            tile, layout, wwarn = self._transform_widget(widget)
+            key = str(i)
+            tiles[key] = tile
+            layouts[key] = layout
+            warnings.extend(wwarn)
 
-        # Add description if available
-        description = nr_dashboard.get("description") or page.get("description")
-        if description:
-            dt_dashboard["dashboardMetadata"]["description"] = description
-
-        # Transform widgets to tiles
-        widgets = page.get("widgets", [])
-        for widget in widgets:
-            tile_result = self._transform_widget(widget)
-            if tile_result:
-                dt_dashboard["tiles"].append(tile_result["tile"])
-                if tile_result.get("warnings"):
-                    warnings.extend(tile_result["warnings"])
-
-        # Transform variables to dashboard filters
-        variables = nr_dashboard.get("variables", [])
-        if variables:
-            filter_result = self._transform_variables(variables)
-            dt_dashboard["dashboardMetadata"]["dynamicFilters"] = filter_result
-
-        logger.info(
-            "Transformed dashboard page",
-            name=dashboard_name,
-            tiles=len(dt_dashboard["tiles"])
+        variables = self._transform_variables(
+            nr_dashboard.get("variables", []) or []
+        )
+        saved_views = self._transform_saved_filters(
+            nr_dashboard.get("savedFilters", []) or []
+            or page.get("savedFilters", []) or []
+        )
+        sharing = _PERMISSION_MAP.get(
+            str(nr_dashboard.get("permissions", "PRIVATE")).upper(),
+            _PERMISSION_MAP["PRIVATE"],
         )
 
-        return {
-            "dashboard": dt_dashboard,
-            "warnings": warnings
+        dashboard = {
+            "version": 13,
+            "name": name,
+            "description": nr_dashboard.get("description")
+            or page.get("description")
+            or f"Migrated from New Relic dashboard '{base_name}'.",
+            "variables": variables,
+            "tiles": tiles,
+            "layouts": layouts,
+            "savedViews": saved_views,
+            "sharing": sharing,
+            "settings": {
+                "gridLayout": {"columns": 24},
+                "theme": "auto",
+            },
         }
 
-    def _transform_widget(self, widget: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        """Transform a New Relic widget to a Dynatrace tile."""
-        warnings = []
+        if sharing["scope"] == "public" and not sharing["access"]:
+            warnings.append(
+                f"Permissions for '{name}' resolved to public with no access — "
+                "operator should verify DT Document sharing after import."
+            )
 
-        visualization = widget.get("visualization", {})
-        viz_id = visualization.get("id", "")
+        logger.info(
+            "Transformed Gen3 dashboard page",
+            name=name,
+            tiles=len(tiles),
+            variables=len(variables),
+            saved_views=len(saved_views),
+        )
+        return dashboard, warnings
 
-        # Map visualization type to Dynatrace tile type
-        tile_type = VISUALIZATION_TYPE_MAP.get(viz_id, "DATA_EXPLORER")
+    # ------------------------------------------------------------------
+    # Widgets → tiles
+    # ------------------------------------------------------------------
 
-        # Get layout information
-        layout = widget.get("layout", {})
-        bounds = self._transform_layout(layout)
+    def _transform_widget(self, widget: Dict[str, Any]):
+        warnings: List[str] = []
+        viz_id = (widget.get("visualization") or {}).get("id", "")
+        visualization = _VIZ_MAP_GEN3.get(viz_id, "table")
+        title = widget.get("title", "Untitled")
+        raw = widget.get("rawConfiguration", {}) or {}
 
-        # Base tile structure
-        tile = {
-            "name": widget.get("title", "Untitled"),
-            "tileType": tile_type,
-            "configured": True,
-            "bounds": bounds,
-            "tileFilter": {}
-        }
-
-        # Handle specific tile types
-        if tile_type == "MARKDOWN":
-            tile = self._transform_markdown_widget(widget, tile)
-        elif tile_type == "SINGLE_VALUE":
-            tile = self._transform_billboard_widget(widget, tile, warnings)
+        if viz_id == "viz.markdown":
+            tile = {
+                "type": "markdown",
+                "title": title,
+                "content": raw.get("text", ""),
+            }
+        elif viz_id == "viz.funnel":
+            tile, funnel_warns = self._funnel_composite_tile(title, raw)
+            warnings.extend(funnel_warns)
+        elif viz_id == "viz.event-feed":
+            tile, feed_warns = self._event_feed_tile(title, raw)
+            warnings.extend(feed_warns)
+        elif viz_id == "viz.heatmap":
+            tile, hm_warns = self._honeycomb_tile(title, raw)
+            warnings.extend(hm_warns)
         else:
-            tile = self._transform_chart_widget(widget, tile, warnings)
-
-        return {"tile": tile, "warnings": warnings}
-
-    def _transform_layout(self, layout: Dict[str, Any]) -> Dict[str, int]:
-        """Transform New Relic layout to Dynatrace bounds."""
-        # New Relic uses a 12-column grid
-        # Dynatrace uses absolute pixel positions
-
-        column = layout.get("column", 1) - 1  # NR is 1-indexed
-        row = layout.get("row", 1) - 1
-        width = layout.get("width", self.DEFAULT_TILE_WIDTH)
-        height = layout.get("height", self.DEFAULT_TILE_HEIGHT)
-
-        return {
-            "top": row * self.TILE_UNIT * 2,
-            "left": column * self.TILE_UNIT * 2,
-            "width": width * self.TILE_UNIT * 2,
-            "height": height * self.TILE_UNIT * 2
-        }
-
-    def _transform_markdown_widget(
-        self,
-        widget: Dict[str, Any],
-        tile: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        """Transform markdown widget."""
-        raw_config = widget.get("rawConfiguration", {})
-        text = raw_config.get("text", "")
-
-        tile["tileType"] = "MARKDOWN"
-        tile["markdown"] = text
-
-        return tile
-
-    def _transform_billboard_widget(
-        self,
-        widget: Dict[str, Any],
-        tile: Dict[str, Any],
-        warnings: List[str]
-    ) -> Dict[str, Any]:
-        """Transform billboard (single value) widget using the NRQL compiler."""
-        raw_config = widget.get("rawConfiguration", {})
-        nrql_queries = raw_config.get("nrqlQueries", [])
-
-        tile["tileType"] = "DATA_EXPLORER"
-
-        if nrql_queries:
-            query = nrql_queries[0].get("query", "")
-            title = widget.get("title", "Billboard")
-            dql_result = self._convert_nrql_to_dql(query, title)
-
-            tile["customName"] = title
-            tile["queries"] = [{
-                "id": "A",
-                "enabled": True,
-                "freeText": dql_result["dql"],
-                "queryMetaData": {
-                    "customName": title
-                }
-            }]
-
-            if dql_result["warnings"]:
-                warnings.extend(dql_result["warnings"])
-
-            if not dql_result["fully_converted"]:
+            nrql_queries = raw.get("nrqlQueries", []) or []
+            query = nrql_queries[0].get("query", "") if nrql_queries else ""
+            dql_result = self._convert_nrql_to_dql(query, title) if query else {
+                "dql": "",
+                "warnings": [],
+                "fully_converted": False,
+                "confidence": "LOW",
+            }
+            warnings.extend(dql_result["warnings"])
+            if query and not dql_result["fully_converted"]:
                 warnings.append(
-                    f"Billboard '{title}' converted with {dql_result.get('confidence', 'UNKNOWN')} "
+                    f"Tile '{title}' converted with {dql_result.get('confidence', 'UNKNOWN')} "
                     f"confidence. Original NRQL: {query[:100]}..."
                 )
+            tile = {
+                "type": "data",
+                "title": title,
+                "query": dql_result["dql"],
+                "visualization": visualization,
+                "visualizationSettings": {"chartSettings": {"legend": {"hidden": False}}},
+            }
 
-        return tile
+        layout = self._transform_layout(widget.get("layout", {}) or {})
+        return tile, layout, warnings
 
-    def _transform_chart_widget(
-        self,
-        widget: Dict[str, Any],
-        tile: Dict[str, Any],
-        warnings: List[str]
-    ) -> Dict[str, Any]:
-        """Transform chart widgets (line, area, bar, etc.)."""
-        raw_config = widget.get("rawConfiguration", {})
-        nrql_queries = raw_config.get("nrqlQueries", [])
+    # ------------------------------------------------------------------
+    # Phase 19 widget renderers
+    # ------------------------------------------------------------------
 
-        tile["tileType"] = "DATA_EXPLORER"
+    def _funnel_composite_tile(self, title: str, raw: Dict[str, Any]):
+        """NR funnel -> a Gen3 barChart tile with stages.
 
-        # Build data explorer configuration
-        tile["customName"] = widget.get("title", "Chart")
+        A true funnel is multi-query; we collapse the stages into a single
+        DQL expression `makeTimeseries count(), by:{stage}` where `stage` is
+        derived from the `WHERE <stage predicate>` clause of each NR leg.
+        The barChart with `orientation: horizontal` + sorted stages gives
+        the funnel look without a separate tile per stage.
+        """
+        warnings: List[str] = []
+        stages = raw.get("stages") or []
+        nrql_queries = raw.get("nrqlQueries") or []
+        stage_names: List[str] = []
+        predicates: List[str] = []
+        # NR funnels often encode stage predicates in a single NRQL FUNNEL
+        # clause or as a list. Support both shapes.
+        if stages:
+            for s in stages:
+                stage_names.append(s.get("name", "stage"))
+                predicates.append(s.get("predicate", "true"))
+        elif nrql_queries:
+            # Flatten each leg into its name + predicate.
+            for q in nrql_queries:
+                stage_names.append(q.get("name", "stage"))
+                predicates.append(q.get("query", ""))
 
-        if nrql_queries:
-            query = nrql_queries[0].get("query", "")
+        if not stage_names:
+            warnings.append(
+                f"Funnel tile '{title}' has no stages — emitted a markdown "
+                "placeholder instead of a chart."
+            )
+            return (
+                {
+                    "type": "markdown",
+                    "title": title,
+                    "content": "_Funnel with no stages — reconfigure in DT._",
+                },
+                warnings,
+            )
 
-            # Convert NRQL to DQL using the AST compiler
-            dql_result = self._convert_nrql_to_dql(query, widget.get("title", "Chart"))
+        base_event = raw.get("sourceEvent", "PageView")
+        # Emit one countIf() per stage as separate fields; DT barChart plots them.
+        count_ifs = ",\n  ".join(
+            f'"{name}" = countIf({pred or "true"})'
+            for name, pred in zip(stage_names, predicates)
+        )
+        dql = (
+            f"fetch bizevents, from:now()-1d\n"
+            f'| filter event.type == "{base_event}"\n'
+            f"| summarize {{\n  {count_ifs}\n}}"
+        )
+        tile = {
+            "type": "data",
+            "title": title,
+            "query": dql,
+            "visualization": "barChart",
+            "visualizationSettings": {
+                "chartSettings": {
+                    "legend": {"hidden": False},
+                    "layout": "horizontal",
+                    "sortCriterion": "desc",
+                },
+                "funnelEmulation": True,
+            },
+        }
+        warnings.append(
+            f"Funnel tile '{title}' emitted as a composite barChart. "
+            "Validate stage counts in DT after import."
+        )
+        return tile, warnings
 
-            tile["queries"] = [{
-                "id": "A",
-                "enabled": True,
-                "freeText": dql_result["dql"],
-                "queryMetaData": {
-                    "customName": widget.get("title", "Query A")
-                }
-            }]
+    def _event_feed_tile(self, title: str, raw: Dict[str, Any]):
+        warnings: List[str] = []
+        nrql_queries = raw.get("nrqlQueries") or []
+        query = nrql_queries[0].get("query", "") if nrql_queries else ""
+        dql_result = self._convert_nrql_to_dql(query, title) if query else {
+            "dql": "", "warnings": [], "fully_converted": True, "confidence": "HIGH",
+        }
+        warnings.extend(dql_result["warnings"])
+        # Force a canonical timestamp sort for event-feed semantics.
+        dql = dql_result["dql"] or "fetch events, from:now()-1d"
+        if "| sort" not in dql:
+            dql = f"{dql}\n| sort timestamp desc"
+        tile = {
+            "type": "data",
+            "title": title,
+            "query": dql,
+            "visualization": "table",
+            "visualizationSettings": {
+                "chartSettings": {"legend": {"hidden": True}},
+                "table": {
+                    "columnAttributes": [
+                        {"name": "timestamp", "width": "160px", "fixed": True},
+                    ],
+                    "eventFeedMode": True,
+                },
+            },
+        }
+        return tile, warnings
 
-            if dql_result["warnings"]:
-                warnings.extend(dql_result["warnings"])
+    def _honeycomb_tile(self, title: str, raw: Dict[str, Any]):
+        warnings: List[str] = []
+        nrql_queries = raw.get("nrqlQueries") or []
+        query = nrql_queries[0].get("query", "") if nrql_queries else ""
+        dql_result = self._convert_nrql_to_dql(query, title) if query else {
+            "dql": "", "warnings": [], "fully_converted": False, "confidence": "LOW",
+        }
+        warnings.extend(dql_result["warnings"])
+        tile = {
+            "type": "data",
+            "title": title,
+            "query": dql_result["dql"],
+            "visualization": "honeycomb",
+            "visualizationSettings": {
+                "honeycomb": {
+                    "shape": "hexagon",
+                    "colorMode": "byValue",
+                    "legend": {"hidden": False},
+                },
+            },
+        }
+        return tile, warnings
 
-            if not dql_result["fully_converted"]:
-                warnings.append(
-                    f"Chart '{widget.get('title')}' NRQL query requires manual review. "
-                    f"Original: {query[:100]}..."
-                )
+    @staticmethod
+    def _transform_layout(layout: Dict[str, Any]) -> Dict[str, Any]:
+        column = (layout.get("column", 1) or 1) - 1
+        row = (layout.get("row", 1) or 1) - 1
+        width = layout.get("width", 4)
+        height = layout.get("height", 3)
+        return {
+            "x": column * _GRID_W,
+            "y": row * _GRID_H,
+            "w": width * _GRID_W,
+            "h": height * _GRID_H,
+        }
 
-        return tile
+    # ------------------------------------------------------------------
 
     def _convert_nrql_to_dql(self, nrql: str, title: str = "") -> Dict[str, Any]:
-        """
-        Convert NRQL to DQL using the AST-based compiler.
-
-        Uses a formal three-stage compiler (lexer/parser/AST/emitter)
-        with 282 tested patterns including apdex, percentage, funnel,
-        K8s metrics, subqueries, COMPARE WITH, and more.
-        """
         result = self._nrql_converter.convert(nrql, title or "query")
-
         return {
             "dql": result.dql,
             "warnings": result.warnings,
@@ -330,55 +382,79 @@ class DashboardTransformer:
             "fixes": result.fixes,
         }
 
-    def _transform_variables(self, variables: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """Transform dashboard variables to Dynatrace filters."""
-        filters = []
-        tag_filters = []
+    @staticmethod
+    def _transform_variables(variables: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Gen3 dashboard variables with cascading dependency resolution.
 
+        NR variables can reference other variables via `{{varName}}` inside
+        their NRQL source. Gen3 honors this same `{{varName}}` syntax in
+        the variable's input query, so we carry references through unchanged
+        and additionally emit a `dependsOn` array so DT renders them in
+        dependency order.
+        """
+        import re
+        out: List[Dict[str, Any]] = []
+        names_in_order = [v.get("name", "var") for v in variables]
         for var in variables:
-            var_name = var.get("name", "")
-            var_type = var.get("type", "")
+            nrql_source = var.get("nrql", "") or var.get("query", "")
+            var_type = str(var.get("type", "NRQL")).lower()
+            depends_on = [
+                ref
+                for ref in re.findall(r"\{\{(\w+)\}\}", nrql_source)
+                if ref in names_in_order
+            ]
+            out.append(
+                {
+                    "key": var.get("name", "var"),
+                    "type": _gen3_variable_type(var_type),
+                    "visible": bool(var.get("visible", True)),
+                    "input": {
+                        "query": nrql_source,
+                        "type": "dql" if var_type == "nrql" else "csv",
+                    },
+                    "multiSelect": bool(var.get("isMultiSelection", False)),
+                    "defaultValue": var.get("defaultValue", ""),
+                    # Phase 19: dependency order for cascading variables.
+                    "dependsOn": depends_on,
+                }
+            )
+        return out
 
-            # Create a generic tag filter
-            tag_filters.append({
-                "name": var_name,
-                "entityTypes": [],
-                "tagFilter": True
-            })
+    @staticmethod
+    def _transform_saved_filters(saved_filters: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """NR saved filter sets -> Document `savedViews` entries.
 
-        return {
-            "filters": filters,
-            "genericTagFilters": tag_filters
-        }
-
-    def _map_permissions(self, permissions: Optional[str]) -> bool:
-        """Map New Relic permissions to Dynatrace shared setting."""
-        if not permissions:
-            return False
-
-        permission_map = {
-            "PUBLIC_READ_ONLY": True,
-            "PUBLIC_READ_WRITE": True,
-            "PRIVATE": False
-        }
-
-        return permission_map.get(permissions, False)
+        Each NR saved filter is a named set of variable assignments. Gen3
+        exposes these under `savedViews` on the dashboard Document so users
+        can flip between them.
+        """
+        views: List[Dict[str, Any]] = []
+        for sf in saved_filters:
+            views.append(
+                {
+                    "name": sf.get("name", "saved-view"),
+                    "description": sf.get("description", ""),
+                    "variableValues": sf.get("variableAssignments") or {},
+                }
+            )
+        return views
 
     def transform_all(
-        self,
-        dashboards: List[Dict[str, Any]]
+        self, dashboards: List[Dict[str, Any]]
     ) -> List[DashboardTransformResult]:
-        """Transform multiple dashboards."""
-        results = []
-
-        for dashboard in dashboards:
-            result = self.transform(dashboard)
-            results.append(result)
-
+        results = [self.transform(d) for d in dashboards]
         successful = sum(1 for r in results if r.success)
         total_pages = sum(len(r.data) for r in results if r.success)
         logger.info(
-            f"Transformed {successful}/{len(results)} dashboards ({total_pages} pages)"
+            f"Transformed {successful}/{len(results)} dashboards ({total_pages} Gen3 pages)"
         )
-
         return results
+
+
+def _gen3_variable_type(nr_type: str) -> str:
+    """Map NR variable type to Gen3 variable type."""
+    return {
+        "nrql": "query",
+        "enum": "csv",
+        "string": "csv",
+    }.get(str(nr_type).lower(), "query")

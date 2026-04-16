@@ -6,9 +6,9 @@
 
 Universal migration tool for converting New Relic monitoring configurations to Dynatrace. Migrates dashboards (with a real NRQL-to-DQL compiler), alerts, synthetic monitors, SLOs, and workloads. Three-phase pipeline: Export (NR NerdGraph) -> Transform -> Import (DT APIs). Supports config-as-code export (Monaco, Terraform).
 
-**Last Updated:** 2026-04-09
-**Version:** 1.3.0
-**Phases Completed:** 0-10 (all complete)
+**Last Updated:** 2026-04-16
+**Version:** 2.0.0
+**Phases Completed:** 0-26 + 19b + 3rd-pass + Phase 25 (all complete)
 
 ## Quick Reference
 
@@ -60,7 +60,7 @@ python migrate.py --version
 | CLI | Click + Rich | Subcommands with progress display |
 | Logging | structlog | Structured logging |
 | HTTP | requests | API clients |
-| Testing | pytest | 920 unit + 8 integration tests across 29 files |
+| Testing | pytest + hypothesis | 1237 unit (incl 36 property-based) + 8 integration tests |
 
 ## Architecture
 
@@ -68,20 +68,34 @@ python migrate.py --version
 EXPORT (NR NerdGraph)  ->  TRANSFORM  ->  IMPORT (DT APIs)
                                       ->  EXPORT (Monaco / Terraform)
 
-Transformers (10):                     Targets:
-  DashboardTransformer (AST compiler)    Dashboards (Documents API)
-  AlertTransformer                       Alerting Profiles + Metric Events
-  NotificationTransformer                Problem Notifications
-  SyntheticTransformer                   HTTP/Browser Monitors
-  SLOTransformer                         SLOs
-  WorkloadTransformer                    Management Zones
-  InfrastructureTransformer              Metric Events (host/process)
-  LogParsingTransformer                  Log Processing Rules
-  TagTransformer                         Auto-Tag Rules
-  DropRuleTransformer                    Ingest Rules
+Gen3 Default Transformers (40+):          Targets:
+  DashboardTransformer (AST compiler)       Grail Dashboards (Document API)
+  AlertTransformer + NotificationTfmr       Workflows + Davis Anomaly Detectors
+  SyntheticTransformer                      builtin:synthetic_test
+  SLOTransformer                            builtin:monitoring.slo
+  WorkloadTransformer                       builtin:segment + IAM policy
+  InfrastructureTransformer                 Davis Anomaly Detectors + Workflows
+  LogParsingTransformer                     OpenPipeline DPL processors
+  TagTransformer                            OpenPipeline enrichment
+  DropRuleTransformer                       OpenPipeline drop/removeFields
+  BrowserRUMTransformer                     builtin:rum.web.app-config
+  MobileRUMTransformer                      builtin:mobile-application
+  LambdaTransformer                         DT Lambda extension layer ARNs
+  CloudIntegrationTransformer               builtin:cloud.{aws,azure,gcp}
+  KubernetesTransformer                     DynaKube CR + Helm values
+  AIOpsTransformer                          Workflows + enrichments + detectors
+  VulnerabilityTransformer                  builtin:appsec.vulnerability-*
+  + 24 more (see docs/COVERAGE.md for full inventory)
 
 NRQL Compiler Pipeline:
-  NRQL string -> Lexer -> Token[] -> Parser -> AST -> DQLEmitter -> DQL string
+  NRQL string -> Shorthands -> Lexer -> Token[] -> Parser -> AST ->
+  DQLEmitter -> DQL string -> Phase19Uplift -> ConfidenceSync
+
+Gen2 Legacy (via --legacy):       Gen3 Default Targets:
+  transformers/legacy/               Workflows + Davis Detectors
+  clients/legacy/                    Segments + IAM policies
+  exporters/legacy/                  OpenPipeline processors
+                                     Document API dashboards/notebooks
 ```
 
 ### Transformer Interface Standard
@@ -95,17 +109,20 @@ All transformers follow a consistent pattern:
 
 | Path | Purpose |
 |------|---------|
-| `compiler/` | NRQL-to-DQL AST compiler (292 tested patterns) |
-| `clients/` | NR NerdGraph + DT API clients (Config v1 + Documents v2 + Settings v2) |
-| `transformers/` | 10 entity transformers + NRQL converter + mapping tables |
-| `validators/` | DQL syntax validator + 19-rule auto-fixer |
-| `registry/` | DTEnvironmentRegistry (live validation) + SLOAuditor |
-| `migration/` | Rollback, checkpoint, incremental, reports, retry, diff |
-| `exporters/` | Monaco YAML + Terraform HCL config-as-code exporters |
-| `config/` | Pydantic BaseSettings from .env |
-| `utils/` | Logging, auth (OAuth), validators |
+| `compiler/` | NRQL-to-DQL AST compiler (292 tested patterns) + `shorthands.py` |
+| `clients/` | Gen3 facade: Settings 2.0 + Document + Automation + OAuth2; legacy Config v1 under `clients/legacy/` |
+| `transformers/` | 40+ entity transformers (Gen3 default) + NRQL converter + mapping tables + `mappings/` submodules + `metric_transform.py` plugin hook; legacy Gen2 under `transformers/legacy/` |
+| `validators/` | DQL syntax validator + 24-rule auto-fixer (parity with nrql-engine) |
+| `registry/` | DTEnvironmentRegistry (metrics, entities, segments, dashboards, locations) + SLOAuditor |
+| `migration/` | Rollback, checkpoint, incremental, reports, retry, diff, `canary.py` (Phase 20), `audit.py` (Phase 20) |
+| `exporters/` | Gen3 Monaco v2 YAML + Gen3 Terraform HCL; legacy exporters under `exporters/legacy/` |
+| `agents/` | Per-language APM agent migration orchestrator (7 languages) |
+| `tools/` | `nrdb_archive.py` (pre-decommission JSONL snapshot) |
+| `config/` | Pydantic BaseSettings from .env + `project_links.py` URL registry |
+| `utils/` | Logging, auth (OAuth), validators, `error_taxonomy.py` (WarningCode/ErrorCode) |
 | `examples/` | Sample NRQL queries for batch testing |
-| `tests/` | 920 unit + 8 integration tests across 29 files |
+| `docs/` | `COVERAGE.md`, `migration-coverage.md`, `gen2-only-capabilities.md`, `out-of-scope.md`, `validation.md`, `architecture.md`, `nrql-engine-sync-audit.md` |
+| `tests/` | 1237 unit (incl 36 Hypothesis) + 8 integration tests; `tests/legacy/` for Gen2 paths; `tests/integration/` for schema/IaC validation (env-gated) |
 
 ## Rules
 
@@ -116,9 +133,9 @@ All transformers follow a consistent pattern:
 @.claude/rules/development.md
 @.claude/rules/deployment.md
 
-## Skills (domain knowledge)
+## Skills (domain knowledge from VisualCode-AI-Template/SKILLS/)
 
-### Always active
+### Always active — core compilation + export
 @/Users/Shared/GitHub/PROJECTS/VisualCode-AI-Template/SKILLS/dynatrace-dql/SKILL.md
 @/Users/Shared/GitHub/PROJECTS/VisualCode-AI-Template/SKILLS/nrql-to-dql/SKILL.md
 @/Users/Shared/GitHub/PROJECTS/VisualCode-AI-Template/SKILLS/dynatrace-apis/SKILL.md
@@ -126,11 +143,23 @@ All transformers follow a consistent pattern:
 @/Users/Shared/GitHub/PROJECTS/VisualCode-AI-Template/SKILLS/dynatrace-monaco/SKILL.md
 @/Users/Shared/GitHub/PROJECTS/VisualCode-AI-Template/SKILLS/dynatrace-terraform/SKILL.md
 
+### Always active — Gen3 transformer targets (Phase 11–24)
+@/Users/Shared/GitHub/PROJECTS/VisualCode-AI-Template/SKILLS/dynatrace-workflow/SKILL.md
+@/Users/Shared/GitHub/PROJECTS/VisualCode-AI-Template/SKILLS/dynatrace-alert-routing/SKILL.md
+@/Users/Shared/GitHub/PROJECTS/VisualCode-AI-Template/SKILLS/dynatrace-iam/SKILL.md
+@/Users/Shared/GitHub/PROJECTS/VisualCode-AI-Template/SKILLS/dynatrace-entity-tagging/SKILL.md
+@/Users/Shared/GitHub/PROJECTS/VisualCode-AI-Template/SKILLS/dynatrace-lookup-tables/SKILL.md
+@/Users/Shared/GitHub/PROJECTS/VisualCode-AI-Template/SKILLS/dynatrace-notebook-authoring/SKILL.md
+@/Users/Shared/GitHub/PROJECTS/VisualCode-AI-Template/SKILLS/k8s-dynatrace-operator/SKILL.md
+@/Users/Shared/GitHub/PROJECTS/VisualCode-AI-Template/SKILLS/dynatrace-account-management/SKILL.md
+
 ## Key Constraints
 
 - **No hardcoded credentials** — all secrets via .env / environment variables
 - **Community project** — not officially supported by Dynatrace
 - **Feature branches** — never commit features directly to main
-- **Compiler vs Converter** — `compiler/` handles pure NRQL->DQL translation. `transformers/nrql_converter.py` wraps it with post-processing and auto-fixes.
-- **DQL validation** — structurally valid DQL doesn't guarantee data returns. Field existence requires live validation against Grail API.
-- **Phase gates** — Every phase must have complete tests, documentation, and memory updates before moving to the next phase.
+- **Compiler vs Converter** — `compiler/` handles pure NRQL->DQL translation. `transformers/nrql_converter.py` wraps it with post-processing, auto-fixes, Phase 19 confidence uplift, Phase 23 `MetricTransform` plugin hook, and numeric confidence-score sync.
+- **Gen3 default vs `--legacy`** — All transformers, clients, and exporters emit Gen3 objects by default. Gen2 code lives under `*/legacy/` and is only reachable via `--legacy` CLI flag or `MIGRATION_LEGACY_MODE=true` env var. See `docs/gen2-only-capabilities.md` for the 8 capabilities only `--legacy` provides.
+- **DQL validation** — structurally valid DQL doesn't guarantee data returns. Field existence requires live validation against Grail API. See `docs/validation.md` for the 6-tier validation strategy.
+- **nrql-engine parity** — the TS sibling at `/Users/Shared/GitHub/PROJECTS/nrql-engine/` is kept at parity (53/53 transformer files covered). CI `nrql-engine-parity` job guards drift. See `docs/nrql-engine-sync-audit.md`.
+- **Phase gates** — Every phase must have complete tests, documentation, and memory updates before moving to the next phase. Phase 15 (release) is on hold; phase 25 (Gen3 workarounds for Gen2-only capabilities) is pending.

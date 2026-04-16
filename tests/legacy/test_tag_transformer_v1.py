@@ -7,7 +7,7 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
-from transformers.tag_transformer import (
+from transformers.legacy.tag_transformer_v1 import (
     TagTransformer,
     TagTransformResult,
 )

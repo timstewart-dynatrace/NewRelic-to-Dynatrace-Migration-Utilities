@@ -206,6 +206,12 @@ class NRQLtoDQLConverter:
         # Shared environment registry for live metric + entity validation
         self._registry = registry
 
+        # Phase 23 — MetricTransform plugin hook (nrql-engine parity).
+        # Operators register callables to inject project-specific metric
+        # renames; see `transformers/metric_transform.py`.
+        from .metric_transform import MetricTransformRegistry
+        self._metric_transforms = MetricTransformRegistry()
+
         # AST compiler -- primary conversion path
         self._ast_compiler = NRQLCompiler(
             field_map=ATTR_MAP,
@@ -213,6 +219,16 @@ class NRQLtoDQLConverter:
             metric_transforms=METRIC_TRANSFORMS,
             metric_resolver=self._live_metric_resolver,
         )
+
+    def register_metric_transform(self, transform) -> None:
+        """Phase 23: register a MetricTransform callable (see
+        `transformers/metric_transform.py`).
+
+        Multiple registrations compose in registration order; the first
+        non-None result wins. Resolvers are consulted before the default
+        metric map and built-in resolver, so they can short-circuit.
+        """
+        self._metric_transforms.register(transform)
 
         # Advanced converters -- DPL, rate, COMPARE WITH, funnel, etc.
         _converters = _load_converters()
@@ -417,6 +433,17 @@ class NRQLtoDQLConverter:
                     result.dql, post_fixes = self._post_ast_cleanup(result.dql)
                     if post_fixes:
                         result.fixes.extend(post_fixes)
+
+                # PHASE 1.5: Confidence uplift (Phase 19 — docs/migration-coverage.md).
+                # Detects Apdex / COMPARE WITH / rate() / percentage() translations
+                # that emitted structurally valid DQL but were scored LOW or
+                # MEDIUM because the emitter doesn't know the post-processors
+                # ran. Each check only raises (never lowers) confidence.
+                if result.dql:
+                    _apply_phase19_uplift(result, original_nrql)
+                    # Phase 23: ensure the numeric `confidence_score` always
+                    # tracks the categorical `confidence`. Mirrors TS sibling.
+                    _sync_confidence_score(result)
 
                 # PHASE 2: Live DT Grail API validation
                 if self._registry and result.dql:
@@ -990,6 +1017,15 @@ class NRQLtoDQLConverter:
         static_mapped: str = None,
     ) -> Tuple[str, Optional[str]]:
         """Bridge method called by the AST compiler's DQLEmitter to resolve metrics."""
+        # Phase 23: consult registered MetricTransform plugins first so
+        # operators can override both static maps and live lookups.
+        if len(self._metric_transforms) > 0:
+            plugin_result = self._metric_transforms.resolve(
+                field_key, raw_field, static_mapped
+            )
+            if plugin_result is not None:
+                return plugin_result
+
         if static_mapped:
             validated, warning = self._validate_dt_metric(static_mapped, raw_field)
             return validated, warning
@@ -4016,3 +4052,89 @@ class NRQLtoDQLConverter:
     def _extract_limit(self, nrql: str) -> Optional[int]:
         match = re.search(r"\bLIMIT\s+(\d+)", nrql, re.IGNORECASE)
         return int(match.group(1)) if match else None
+
+
+# ---------------------------------------------------------------------------
+# Phase 19 — Confidence uplift helpers
+# ---------------------------------------------------------------------------
+
+_CONFIDENCE_ORDER = {"LOW": 0, "MEDIUM": 1, "HIGH": 2}
+
+
+def _raise_confidence(result, target: str) -> None:
+    """Raise `result.confidence` to `target` without ever lowering it."""
+    current = _CONFIDENCE_ORDER.get(result.confidence, 0)
+    if _CONFIDENCE_ORDER.get(target, 0) > current:
+        result.confidence = target
+
+
+def _apply_phase19_uplift(result, original_nrql: str) -> None:
+    """Raise confidence when a known post-processor produced valid DQL.
+
+    The emitter emits LOW/MEDIUM for certain NR-specific idioms because
+    it can't know at emit time that a downstream post-processor will
+    rewrite them into structurally-valid DQL. This function detects the
+    successful rewrites in the *output* DQL and bumps the confidence
+    accordingly.
+    """
+    nrql = original_nrql or ""
+    nrql_lower = nrql.lower()
+    dql = result.dql or ""
+    dql_lower = dql.lower()
+
+    # 1) Apdex — NR apdex(t:…) -> DT countIf() buckets.
+    if "apdex(" in nrql_lower and "countif(" in dql_lower:
+        _raise_confidence(result, "HIGH")
+        result.fixes.append("phase19: apdex(t) -> countIf() buckets (HIGH)")
+
+    # 2) COMPARE WITH — already handled with shift: or extended from:.
+    if "compare with" in nrql_lower and (
+        "shift:" in dql_lower or "from:now()-" in dql_lower
+    ):
+        _raise_confidence(result, "HIGH")
+        result.fixes.append("phase19: COMPARE WITH -> shift/overlay (HIGH)")
+
+    # 3) rate(count(*), N minutes) — NR rate() with an interval; DT
+    #    emits a plain count() but adds a per-second expression when the
+    #    interval is preserved. Detect either preserved interval string
+    #    ("per:1s") or a manual division in the fieldsAdd.
+    if re.search(r"\brate\s*\(", nrql_lower) and (
+        "per:1s" in dql_lower
+        or re.search(r"/\s*60\s*\b", dql)  # converted minutes -> seconds
+        or re.search(r"/\s*\d+\s*\*\s*60", dql)
+    ):
+        _raise_confidence(result, "HIGH")
+        result.fixes.append("phase19: rate() interval preserved as per-second (HIGH)")
+
+    # 4) percentage(count(*), WHERE …) -> countIf / count * 100 via
+    #    a fieldsAdd division. Detect the characteristic pattern.
+    if "percentage(" in nrql_lower and (
+        "countif(" in dql_lower and "/ count(" in dql.replace(" ", "").lower()
+        or re.search(r"fieldsadd[^|]*countIf\([^)]+\)\s*/\s*count\(\)", dql, re.IGNORECASE)
+    ):
+        _raise_confidence(result, "HIGH")
+        result.fixes.append(
+            "phase19: percentage() -> countIf()/count()*100 (HIGH)"
+        )
+
+
+# Phase 23 — numeric confidence-score sync (nrql-engine parity).
+# Keeps `confidence_score` aligned with categorical `confidence`. TS
+# sibling uses a deduction-based score; here we approximate with a
+# category floor so report consumers always get a number.
+_CATEGORY_FLOOR = {"HIGH": 85, "MEDIUM": 60, "LOW": 35}
+
+
+def _sync_confidence_score(result) -> None:
+    """Ensure `result.confidence_score` is consistent with `result.confidence`.
+
+    Never raise the score above the category floor — Phase 19 uplift
+    handles upgrades; this function only guards the minimum.
+    """
+    floor = _CATEGORY_FLOOR.get(result.confidence, 50)
+    if result.confidence_score > floor + 15 and result.confidence != "HIGH":
+        # Score drifted above its category; pull it down to the floor
+        # +15 headroom so minor deductions within the band still carry.
+        result.confidence_score = floor + 15
+    if result.confidence_score < floor:
+        result.confidence_score = floor

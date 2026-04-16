@@ -1,103 +1,167 @@
-import os
-import shutil
-import sys
-import tempfile
-from pathlib import Path
+"""Tests for the Gen3 Terraform exporter."""
 
 import pytest
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 from exporters.terraform import TerraformExporter
 
 
 @pytest.fixture
-def transformed_data():
-    return {
-        "dashboards": [{"dashboardMetadata": {"name": "Test Dash"}, "tiles": []}],
-        "alerting_profiles": [{"name": "Critical"}],
-        "metric_events": [{"summary": "High Latency"}],
-        "management_zones": [{"name": "Production"}],
-        "http_monitors": [{"name": "Health Check"}],
-        "slos": [{"name": "Availability"}],
-    }
+def exporter():
+    return TerraformExporter()
 
 
 @pytest.fixture
-def output_dir():
-    d = tempfile.mkdtemp()
-    yield Path(d)
-    shutil.rmtree(d)
+def gen3_data():
+    return {
+        "dashboards": [
+            {"version": 13, "name": "Svc Overview", "tiles": {}, "layouts": {}}
+        ],
+        "workflows": [
+            {
+                "title": "Alert Routing",
+                "description": "policy migration",
+                "trigger": {"event": {"config": {"davis_event": {"detectorIds": ["d1"]}}}},
+                "tasks": [{"name": "email"}],
+            }
+        ],
+        "anomaly_detectors": [
+            {
+                "schemaId": "builtin:davis.anomaly-detectors",
+                "scope": "environment",
+                "detectorId": "d1",
+                "value": {"name": "svc-latency", "enabled": True},
+            }
+        ],
+        "segments": [
+            {
+                "schemaId": "builtin:segment",
+                "scope": "environment",
+                "value": {
+                    "name": "Production",
+                    "description": "prod workloads",
+                    "includes": {
+                        "items": [{"dataObject": "_all_data_object", "filter": {"type": "Group"}}]
+                    },
+                },
+            }
+        ],
+        "iam_policies": [
+            {
+                "schemaId": "builtin:iam.policy",
+                "scope": "environment",
+                "value": {
+                    "name": "prod-read",
+                    "description": "bucket-scoped",
+                    "statementQuery": 'ALLOW storage:logs:read WHERE segment:"Production"',
+                },
+            }
+        ],
+        "synthetic_tests": [
+            {
+                "schemaId": "builtin:synthetic_test",
+                "scope": "environment",
+                "value": {"name": "api-ping", "type": "HTTP"},
+            }
+        ],
+        "slos": [
+            {
+                "schemaId": "builtin:monitoring.slo",
+                "scope": "environment",
+                "value": {
+                    "name": "checkout-slo",
+                    "enabled": True,
+                    "metricExpression": "(100)*(builtin:service.availability)",
+                    "evaluationType": "AGGREGATE",
+                    "timeframe": "-7d",
+                    "filter": "",
+                    "target": 99.9,
+                    "warning": 99.5,
+                },
+            }
+        ],
+        "openpipeline_processors": [
+            {
+                "schemaId": "builtin:openpipeline.logs.pipelines",
+                "scope": "environment",
+                "value": {"name": "enrich-env", "enabled": True},
+            }
+        ],
+    }
 
 
-class TestTerraformExporter:
-    def test_should_create_provider_tf(self, transformed_data, output_dir):
-        exporter = TerraformExporter()
-        exporter.export(transformed_data, output_dir)
+class TestTerraformGen3Output:
+    def test_provider_declares_oauth_and_token_inputs(self, exporter, gen3_data, tmp_path):
+        exporter.export(gen3_data, tmp_path)
+        provider = (tmp_path / "provider.tf").read_text()
+        assert "dynatrace-oss/dynatrace" in provider
+        assert "dt_api_token" in provider
+        assert "automation_client_id" in provider
+        assert "automation_client_secret" in provider
 
-        provider_tf = output_dir / "provider.tf"
-        assert provider_tf.exists()
-        content = provider_tf.read_text()
-        assert "dynatrace-oss/dynatrace" in content
-        assert "provider" in content
-        assert "dt_env_url" in content
-        assert "dt_api_token" in content
+    def test_dashboards_emit_dynatrace_document(self, exporter, gen3_data, tmp_path):
+        exporter.export(gen3_data, tmp_path)
+        hcl = (tmp_path / "dashboards.tf").read_text()
+        assert 'resource "dynatrace_document"' in hcl
+        assert 'type    = "dashboard"' in hcl
 
-    def test_should_export_dashboards(self, transformed_data, output_dir):
-        exporter = TerraformExporter()
-        exporter.export(transformed_data, output_dir)
+    def test_workflows_emit_dynatrace_automation_workflow(self, exporter, gen3_data, tmp_path):
+        exporter.export(gen3_data, tmp_path)
+        hcl = (tmp_path / "workflows.tf").read_text()
+        assert 'resource "dynatrace_automation_workflow"' in hcl
+        assert "definition" in hcl
 
-        dashboards_tf = output_dir / "dashboards.tf"
-        assert dashboards_tf.exists()
-        content = dashboards_tf.read_text()
-        assert "dynatrace_json_dashboard" in content
-        assert "migrated_" in content
+    def test_anomaly_detectors_use_generic_setting(self, exporter, gen3_data, tmp_path):
+        exporter.export(gen3_data, tmp_path)
+        hcl = (tmp_path / "anomaly_detectors.tf").read_text()
+        assert 'resource "dynatrace_generic_setting"' in hcl
+        assert "builtin:davis.anomaly-detectors" in hcl
 
-    def test_should_export_alerting_profiles(self, transformed_data, output_dir):
-        exporter = TerraformExporter()
-        exporter.export(transformed_data, output_dir)
+    def test_segments_emit_dynatrace_segment(self, exporter, gen3_data, tmp_path):
+        exporter.export(gen3_data, tmp_path)
+        hcl = (tmp_path / "segments.tf").read_text()
+        assert 'resource "dynatrace_segment"' in hcl
+        assert 'data_object = "_all_data_object"' in hcl
 
-        alerting_tf = output_dir / "alerting_profiles.tf"
-        assert alerting_tf.exists()
-        content = alerting_tf.read_text()
-        assert "dynatrace_alerting_profile" in content
-        assert "Critical" in content
+    def test_iam_policy_emits_statement_query(self, exporter, gen3_data, tmp_path):
+        exporter.export(gen3_data, tmp_path)
+        hcl = (tmp_path / "iam_policies.tf").read_text()
+        assert 'resource "dynatrace_iam_policy"' in hcl
+        assert "statement_query" in hcl
 
-    def test_should_export_monitors(self, transformed_data, output_dir):
-        exporter = TerraformExporter()
-        exporter.export(transformed_data, output_dir)
+    def test_slos_emit_dynatrace_slo_v2(self, exporter, gen3_data, tmp_path):
+        exporter.export(gen3_data, tmp_path)
+        hcl = (tmp_path / "slos.tf").read_text()
+        assert 'resource "dynatrace_slo_v2"' in hcl
+        assert "target_success    = 99.9" in hcl
 
-        monitors_tf = output_dir / "http_monitors.tf"
-        assert monitors_tf.exists()
-        content = monitors_tf.read_text()
-        assert "dynatrace_http_monitor" in content
-        assert "Health Check" in content
+    def test_synthetic_tests_use_generic_setting(self, exporter, gen3_data, tmp_path):
+        exporter.export(gen3_data, tmp_path)
+        hcl = (tmp_path / "synthetic_tests.tf").read_text()
+        assert 'resource "dynatrace_generic_setting"' in hcl
+        assert "builtin:synthetic_test" in hcl
 
-    def test_should_handle_empty_data(self, output_dir):
-        exporter = TerraformExporter()
-        summary = exporter.export({}, output_dir)
+    def test_openpipeline_uses_generic_setting(self, exporter, gen3_data, tmp_path):
+        exporter.export(gen3_data, tmp_path)
+        hcl = (tmp_path / "openpipeline_processors.tf").read_text()
+        assert "builtin:openpipeline.logs.pipelines" in hcl
 
-        assert summary == {}
-        # provider.tf should still be created
-        assert (output_dir / "provider.tf").exists()
+    def test_should_not_emit_gen2_resource_types(self, exporter, gen3_data, tmp_path):
+        exporter.export(gen3_data, tmp_path)
+        files = list(tmp_path.glob("*.tf"))
+        combined = "\n".join(f.read_text() for f in files)
+        for forbidden in (
+            "dynatrace_alerting",
+            "dynatrace_management_zone",
+            "dynatrace_autotag",
+            "dynatrace_problem_notification",
+            "dynatrace_metric_events",
+            "dynatrace_http_monitor",
+            "dynatrace_browser_monitor",
+            "dynatrace_json_dashboard",
+        ):
+            assert forbidden not in combined
 
-    def test_should_sanitize_resource_names(self, output_dir):
-        data = {
-            "management_zones": [{"name": "My Zone!!! @#$"}],
-        }
-        exporter = TerraformExporter()
-        exporter.export(data, output_dir)
-
-        mz_tf = output_dir / "management_zones.tf"
-        content = mz_tf.read_text()
-        # Terraform resource names use underscores, not hyphens
-        assert "migrated_my_zone" in content
-
-    def test_should_return_summary(self, transformed_data, output_dir):
-        exporter = TerraformExporter()
-        summary = exporter.export(transformed_data, output_dir)
-
-        assert summary["dashboards"] == 1
-        assert summary["alerting_profiles"] == 1
-        assert summary["management_zones"] == 1
-        assert summary["http_monitors"] == 1
-        assert summary["slos"] == 1
+    def test_summary_counts_entities(self, exporter, gen3_data, tmp_path):
+        summary = exporter.export(gen3_data, tmp_path)
+        for key in gen3_data:
+            assert summary.get(key) == len(gen3_data[key])

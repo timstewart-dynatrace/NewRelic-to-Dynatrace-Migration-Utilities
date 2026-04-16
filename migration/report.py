@@ -26,19 +26,48 @@ class ConversionReport:
         fixes: Optional[List[str]] = None,
         dashboard_name: str = "",
         widget_title: str = "",
+        confidence_score: Optional[int] = None,  # Phase 20 — numeric 0-100
+        warning_codes: Optional[List[str]] = None,  # Phase 22 taxonomy
+        runbook_url: Optional[str] = None,
     ) -> None:
-        """Add a converted query to the report."""
+        """Add a converted query to the report.
+
+        `confidence_score` and `warning_codes` were added in Phase 20 to
+        let downstream consumers group / filter beyond the categorical
+        confidence bucket. Both are optional; old call sites still work.
+        """
         self.entries.append(
             {
                 "original_nrql": original_nrql,
                 "converted_dql": converted_dql,
                 "confidence": confidence.upper(),
+                "confidence_score": confidence_score,
                 "warnings": warnings or [],
+                "warning_codes": warning_codes or [],
                 "fixes": fixes or [],
                 "dashboard_name": dashboard_name,
                 "widget_title": widget_title,
+                "runbook_url": runbook_url,
             }
         )
+
+    def warnings_by_code(self) -> Dict[str, int]:
+        """Phase 20 — bucket warning codes across all entries for at-a-glance triage."""
+        counts: Dict[str, int] = {}
+        for entry in self.entries:
+            for code in entry.get("warning_codes", []) or []:
+                counts[code] = counts.get(code, 0) + 1
+        return counts
+
+    def average_confidence_score(self) -> Optional[float]:
+        """Mean numeric confidence across entries that supplied a score."""
+        scored = [
+            e["confidence_score"] for e in self.entries
+            if isinstance(e.get("confidence_score"), (int, float))
+        ]
+        if not scored:
+            return None
+        return sum(scored) / len(scored)
 
     def summary(self) -> Dict:
         """Return aggregate statistics about conversion results."""

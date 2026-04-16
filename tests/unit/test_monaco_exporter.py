@@ -1,120 +1,144 @@
-import json
-import os
-import shutil
-import sys
-import tempfile
+"""Tests for the Gen3 Monaco exporter."""
+
 from pathlib import Path
 
 import pytest
+import yaml
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 from exporters.monaco import MonacoExporter
 
 
 @pytest.fixture
-def transformed_data():
-    return {
-        "dashboards": [{"dashboardMetadata": {"name": "Test Dash"}, "tiles": []}],
-        "alerting_profiles": [{"name": "Critical"}],
-        "metric_events": [{"summary": "High Latency"}],
-        "management_zones": [{"name": "Production"}],
-        "http_monitors": [{"name": "Health Check"}],
-        "slos": [{"name": "Availability"}],
-    }
+def exporter():
+    return MonacoExporter()
 
 
 @pytest.fixture
-def output_dir():
-    d = tempfile.mkdtemp()
-    yield Path(d)
-    shutil.rmtree(d)
+def gen3_data():
+    return {
+        "dashboards": [
+            {"version": 13, "name": "Service Overview", "tiles": {}, "layouts": {}}
+        ],
+        "workflows": [
+            {
+                "title": "Alert Routing",
+                "trigger": {"event": {"config": {"davis_event": {"detectorIds": ["d1"]}}}},
+                "tasks": [{"name": "email", "action": "dynatrace.email:email-action"}],
+            }
+        ],
+        "anomaly_detectors": [
+            {
+                "schemaId": "builtin:davis.anomaly-detectors",
+                "scope": "environment",
+                "detectorId": "d1",
+                "value": {"name": "svc-latency", "enabled": True},
+            }
+        ],
+        "segments": [
+            {
+                "schemaId": "builtin:segment",
+                "scope": "environment",
+                "value": {"name": "Production"},
+            }
+        ],
+        "iam_policies": [
+            {
+                "schemaId": "builtin:iam.policy",
+                "scope": "environment",
+                "value": {
+                    "name": "prod-read",
+                    "statementQuery": 'ALLOW storage:logs:read WHERE segment:"Production"',
+                },
+            }
+        ],
+        "synthetic_tests": [
+            {
+                "schemaId": "builtin:synthetic_test",
+                "scope": "environment",
+                "value": {"name": "api-ping", "type": "HTTP"},
+            }
+        ],
+        "slos": [
+            {
+                "schemaId": "builtin:monitoring.slo",
+                "scope": "environment",
+                "value": {"name": "checkout-slo", "target": 99.9},
+            }
+        ],
+        "openpipeline_processors": [
+            {
+                "schemaId": "builtin:openpipeline.logs.pipelines",
+                "scope": "environment",
+                "value": {"name": "enrich-env", "enabled": True},
+            }
+        ],
+    }
 
 
-class TestMonacoExporter:
-    def test_should_create_project_yaml(self, transformed_data, output_dir):
-        exporter = MonacoExporter()
-        exporter.export(transformed_data, output_dir)
+class TestMonacoGen3Structure:
+    def test_should_emit_manifest_yaml_not_project_yaml(self, exporter, gen3_data, tmp_path):
+        exporter.export(gen3_data, tmp_path)
+        assert (tmp_path / "manifest.yaml").is_file()
+        assert not (tmp_path / "project.yaml").is_file()
 
-        project_yaml = output_dir / "project.yaml"
-        assert project_yaml.exists()
-        content = project_yaml.read_text()
-        assert "project" in content
-        assert "migrated-project" in content
+    def test_manifest_should_declare_oauth_and_token_auth(self, exporter, gen3_data, tmp_path):
+        exporter.export(gen3_data, tmp_path)
+        manifest = yaml.safe_load((tmp_path / "manifest.yaml").read_text())
+        auth = manifest["environmentGroups"][0]["environments"][0]["auth"]
+        assert "token" in auth
+        assert "oAuth" in auth
 
-    def test_should_export_dashboards_as_json(self, transformed_data, output_dir):
-        exporter = MonacoExporter()
-        exporter.export(transformed_data, output_dir)
+    def test_should_place_settings_under_schema_dir(self, exporter, gen3_data, tmp_path):
+        exporter.export(gen3_data, tmp_path)
+        project = tmp_path / "migrated"
+        # builtin:davis.anomaly-detectors slugified
+        schema_dir = project / "settings" / "builtin-davis-anomaly-detectors"
+        assert schema_dir.is_dir()
+        assert (schema_dir / "svc-latency.yaml").is_file()
+        assert (schema_dir / "svc-latency.json").is_file()
 
-        dash_dir = output_dir / "dashboards"
-        assert dash_dir.exists()
-        json_files = list(dash_dir.glob("*.json"))
-        assert len(json_files) == 1
-        dashboard = json.loads(json_files[0].read_text())
-        assert dashboard["dashboardMetadata"]["name"] == "Test Dash"
+    def test_should_place_dashboards_under_documents_dir(self, exporter, gen3_data, tmp_path):
+        exporter.export(gen3_data, tmp_path)
+        docs = tmp_path / "migrated" / "documents"
+        assert (docs / "service-overview.json").is_file()
+        yaml_config = yaml.safe_load((docs / "service-overview.yaml").read_text())
+        assert yaml_config["configs"][0]["type"]["document"]["kind"] == "dashboard"
 
-    def test_should_export_alerting_profiles_as_yaml(self, transformed_data, output_dir):
-        exporter = MonacoExporter()
-        exporter.export(transformed_data, output_dir)
+    def test_should_place_workflows_under_workflows_dir(self, exporter, gen3_data, tmp_path):
+        exporter.export(gen3_data, tmp_path)
+        wf_dir = tmp_path / "migrated" / "workflows"
+        assert (wf_dir / "alert-routing.json").is_file()
+        yaml_config = yaml.safe_load((wf_dir / "alert-routing.yaml").read_text())
+        assert yaml_config["configs"][0]["type"]["automation"]["resource"] == "workflow"
 
-        profile_dir = output_dir / "alerting_profiles"
-        assert profile_dir.exists()
-        yaml_files = list(profile_dir.glob("*.yaml"))
-        assert len(yaml_files) == 1
-        json_files = list(profile_dir.glob("*.json"))
-        assert len(json_files) == 1
-        entity = json.loads(json_files[0].read_text())
-        assert entity["name"] == "Critical"
+    def test_summary_counts_all_gen3_entity_types(self, exporter, gen3_data, tmp_path):
+        summary = exporter.export(gen3_data, tmp_path)
+        for key in (
+            "dashboards",
+            "workflows",
+            "anomaly_detectors",
+            "segments",
+            "iam_policies",
+            "synthetic_tests",
+            "slos",
+            "openpipeline_processors",
+        ):
+            assert summary.get(key) == 1
 
-    def test_should_export_management_zones(self, transformed_data, output_dir):
-        exporter = MonacoExporter()
-        exporter.export(transformed_data, output_dir)
+    def test_should_not_emit_gen2_dirs(self, exporter, gen3_data, tmp_path):
+        exporter.export(gen3_data, tmp_path)
+        project = tmp_path / "migrated"
+        for forbidden in (
+            "alerting_profiles",
+            "metric_events",
+            "management_zones",
+            "auto_tags",
+            "synthetic-monitors",
+        ):
+            assert not (project / forbidden).exists()
+            assert not (project / "settings" / f"builtin-{forbidden}").exists()
 
-        mz_dir = output_dir / "management_zones"
-        assert mz_dir.exists()
-        json_files = list(mz_dir.glob("*.json"))
-        assert len(json_files) == 1
-        entity = json.loads(json_files[0].read_text())
-        assert entity["name"] == "Production"
-
-    def test_should_export_monitors(self, transformed_data, output_dir):
-        exporter = MonacoExporter()
-        exporter.export(transformed_data, output_dir)
-
-        synth_dir = output_dir / "synthetic-monitors"
-        assert synth_dir.exists()
-        json_files = list(synth_dir.glob("*.json"))
-        assert len(json_files) == 1
-        monitor = json.loads(json_files[0].read_text())
-        assert monitor["name"] == "Health Check"
-
-    def test_should_handle_empty_data(self, output_dir):
-        exporter = MonacoExporter()
-        summary = exporter.export({}, output_dir)
-
+    def test_should_handle_empty_input(self, exporter, tmp_path):
+        summary = exporter.export({}, tmp_path)
         assert summary == {}
-        # project.yaml should still be created
-        assert (output_dir / "project.yaml").exists()
-
-    def test_should_sanitize_names(self, output_dir):
-        data = {
-            "management_zones": [{"name": "My Zone!!! @#$"}],
-        }
-        exporter = MonacoExporter()
-        exporter.export(data, output_dir)
-
-        mz_dir = output_dir / "management_zones"
-        json_files = list(mz_dir.glob("*.json"))
-        assert len(json_files) == 1
-        # Name should be sanitized: lowercase, special chars replaced with hyphens
-        filename = json_files[0].stem
-        assert filename == "my-zone"
-
-    def test_should_return_summary(self, transformed_data, output_dir):
-        exporter = MonacoExporter()
-        summary = exporter.export(transformed_data, output_dir)
-
-        assert summary["dashboards"] == 1
-        assert summary["alerting_profiles"] == 1
-        assert summary["management_zones"] == 1
-        assert summary["http_monitors"] == 1
-        assert summary["slos"] == 1
+        assert (tmp_path / "manifest.yaml").is_file()

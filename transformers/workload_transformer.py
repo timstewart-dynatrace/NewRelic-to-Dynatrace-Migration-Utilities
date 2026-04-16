@@ -1,9 +1,24 @@
 """
-Workload Transformer - Converts New Relic Workloads to Dynatrace Management Zones.
+Workload Transformer — Gen3 target.
+
+Converts New Relic Workloads into Dynatrace Gen3 objects:
+
+  NR Workload  ->  Segment (builtin:segment)
+                +  Bucket-scoped IAM policy skeleton
+
+Segments are the Gen3 successor to Management Zones. They are filter
+definitions over `_all_data_object` / bucket scopes, expressed as a tree
+of Group / Statement nodes (same JSON shape consumed by the
+`dynatrace_segment` Terraform resource).
+
+Legacy (Management Zone) behavior is preserved in
+`transformers/legacy/workload_transformer_v1.py` and reached via
+`--legacy`.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
+import re
 
 import structlog
 
@@ -12,33 +27,18 @@ logger = structlog.get_logger()
 
 @dataclass
 class WorkloadTransformResult:
-    """Result of workload transformation."""
-    success: bool
-    management_zone: Optional[Dict[str, Any]] = None
-    warnings: List[str] = None
-    errors: List[str] = None
+    """Result of workload -> Segment + IAM translation (Gen3)."""
 
-    def __post_init__(self):
-        self.warnings = self.warnings or []
-        self.errors = self.errors or []
+    success: bool
+    segment: Optional[Dict[str, Any]] = None
+    iam_policy: Optional[Dict[str, Any]] = None
+    warnings: List[str] = field(default_factory=list)
+    errors: List[str] = field(default_factory=list)
 
 
 class WorkloadTransformer:
-    """
-    Transforms New Relic Workloads to Dynatrace Management Zones.
+    """NR Workload -> DT Segment + IAM policy skeleton (Gen3)."""
 
-    New Relic Workloads:
-    - Group entities for collective monitoring
-    - Can use entity GUIDs or search queries
-    - Support health status aggregation
-
-    Dynatrace Management Zones:
-    - Group entities using rules
-    - Support dimension filters, entity selectors
-    - Used for access control and dashboards
-    """
-
-    # Entity type mapping from New Relic to Dynatrace
     ENTITY_TYPE_MAP = {
         "APPLICATION": "SERVICE",
         "APM_APPLICATION": "SERVICE",
@@ -47,250 +47,246 @@ class WorkloadTransformer:
         "HOST": "HOST",
         "INFRASTRUCTURE_HOST": "HOST",
         "SYNTHETIC_MONITOR": "SYNTHETIC_TEST",
-        "WORKLOAD": None,  # Workloads don't map directly
-        "DASHBOARD": None,  # Dashboards aren't entities in DT management zones
+        "WORKLOAD": None,
+        "DASHBOARD": None,
     }
 
-    def __init__(self):
-        pass
-
     def transform(self, nr_workload: Dict[str, Any]) -> WorkloadTransformResult:
-        """Transform a New Relic Workload to Dynatrace Management Zone."""
-        warnings = []
-        errors = []
+        warnings: List[str] = []
+        errors: List[str] = []
 
         try:
-            workload_name = nr_workload.get("name", "Unnamed Workload")
+            name = nr_workload.get("name", "Unnamed Workload")
+            collection = nr_workload.get("collection", []) or []
+            queries = nr_workload.get("entitySearchQueries", []) or []
 
-            # Get entities in the workload
-            collection = nr_workload.get("collection", [])
-            entity_search_queries = nr_workload.get("entitySearchQueries", [])
-
-            # Build management zone rules
-            rules = []
-
-            # Convert direct entity collection to rules
-            if collection:
-                collection_rules = self._convert_collection_to_rules(
-                    collection,
-                    warnings
-                )
-                rules.extend(collection_rules)
-
-            # Convert entity search queries to rules
-            if entity_search_queries:
-                query_rules = self._convert_queries_to_rules(
-                    entity_search_queries,
-                    warnings
-                )
-                rules.extend(query_rules)
-
-            # If no rules generated, create a tag-based rule
-            if not rules:
-                warnings.append(
-                    f"Workload '{workload_name}' could not be converted to specific rules. "
-                    "A tag-based rule has been created. Apply the tag to relevant entities."
-                )
-                rules.append(self._create_tag_rule(workload_name))
-
-            # Build Dynatrace Management Zone
-            dt_management_zone = {
-                "name": f"[Migrated] {workload_name}",
-                "description": f"Migrated from New Relic Workload: {workload_name}",
-                "rules": rules
-            }
+            filter_tree = self._build_filter_tree(name, collection, queries, warnings)
+            segment = self._build_segment(name, filter_tree)
+            iam_policy = self._build_iam_policy(name)
 
             logger.info(
-                "Transformed workload to management zone",
-                name=workload_name,
-                rules_count=len(rules)
+                "Transformed workload to Gen3 segment",
+                name=name,
+                children=len(filter_tree.get("children", [])),
             )
-
             return WorkloadTransformResult(
                 success=True,
-                management_zone=dt_management_zone,
-                warnings=warnings
+                segment=segment,
+                iam_policy=iam_policy,
+                warnings=warnings,
             )
-
-        except Exception as e:
-            logger.error("Workload transformation failed", error=str(e))
+        except Exception as exc:  # noqa: BLE001
+            logger.error("Workload transformation failed", error=str(exc))
             return WorkloadTransformResult(
-                success=False,
-                errors=[f"Transformation error: {str(e)}"]
+                success=False, errors=[f"Transformation error: {exc}"]
             )
 
-    def _convert_collection_to_rules(
+    # ------------------------------------------------------------------
+    # Segment filter-tree construction
+    # ------------------------------------------------------------------
+
+    def _build_filter_tree(
         self,
+        workload_name: str,
         collection: List[Dict[str, Any]],
-        warnings: List[str]
-    ) -> List[Dict[str, Any]]:
-        """Convert a collection of entities to management zone rules."""
-        rules = []
-        entities_by_type: Dict[str, List[str]] = {}
-
-        # Group entities by type
-        for entity in collection:
-            entity_type = entity.get("type", "UNKNOWN")
-            entity_name = entity.get("name", "")
-
-            dt_type = self.ENTITY_TYPE_MAP.get(entity_type)
-            if dt_type:
-                if dt_type not in entities_by_type:
-                    entities_by_type[dt_type] = []
-                entities_by_type[dt_type].append(entity_name)
-            else:
-                warnings.append(
-                    f"Entity type '{entity_type}' for '{entity_name}' "
-                    "does not have a direct Dynatrace equivalent"
-                )
-
-        # Create rules for each entity type
-        for dt_type, entity_names in entities_by_type.items():
-            if len(entity_names) <= 10:
-                # Create name-based conditions for small sets
-                for name in entity_names:
-                    rule = self._create_name_rule(dt_type, name)
-                    rules.append(rule)
-            else:
-                # For large sets, suggest using tags
-                warnings.append(
-                    f"Workload contains {len(entity_names)} {dt_type} entities. "
-                    "Consider using tags for better management. Creating name-based rules."
-                )
-                for name in entity_names:
-                    rule = self._create_name_rule(dt_type, name)
-                    rules.append(rule)
-
-        return rules
-
-    def _convert_queries_to_rules(
-        self,
         queries: List[Dict[str, Any]],
-        warnings: List[str]
-    ) -> List[Dict[str, Any]]:
-        """Convert entity search queries to management zone rules."""
-        rules = []
+        warnings: List[str],
+    ) -> Dict[str, Any]:
+        """Build a Segment filter tree (Group -> Statement children)."""
+        children: List[Dict[str, Any]] = []
 
-        for query_obj in queries:
-            query = query_obj.get("query", "")
-
-            # Parse the query to extract conditions
-            parsed = self._parse_entity_query(query)
-
-            if parsed["entity_type"]:
-                dt_type = self.ENTITY_TYPE_MAP.get(parsed["entity_type"])
-                if dt_type:
-                    rule = {
-                        "type": "ME",
-                        "enabled": True,
-                        "entitySelector": f"type(\"{dt_type}\")"
-                    }
-
-                    # Add name filter if present
-                    if parsed["name_filter"]:
-                        rule["entitySelector"] += f",entityName.contains(\"{parsed['name_filter']}\")"
-
-                    # Add tag filter if present
-                    if parsed["tags"]:
-                        for tag_key, tag_value in parsed["tags"]:
-                            rule["entitySelector"] += f",tag(\"{tag_key}:{tag_value}\")"
-
-                    rules.append(rule)
-                else:
-                    warnings.append(
-                        f"Query entity type '{parsed['entity_type']}' "
-                        "could not be mapped to Dynatrace"
-                    )
-            else:
+        # Phase 25: prefer entity-ID-based statements when GUIDs are available;
+        # fall back to exact entity.name == (not contains) when the NR collection
+        # carries names. This closes Gen2-only capability #4.
+        by_type_ids: Dict[str, List[str]] = {}  # dt_type -> [guid1, ...]
+        by_type_names: Dict[str, List[str]] = {}  # dt_type -> [name1, ...]
+        for entity in collection:
+            etype = entity.get("type", "UNKNOWN")
+            ename = entity.get("name", "")
+            eguid = entity.get("guid", "")
+            dt_type = self.ENTITY_TYPE_MAP.get(etype)
+            if dt_type is None:
                 warnings.append(
-                    f"Could not parse query: {query[:100]}... "
-                    "Manual rule creation may be required."
+                    f"Entity type '{etype}' for '{ename}' has no Gen3 segment mapping."
                 )
+                continue
+            if eguid:
+                by_type_ids.setdefault(dt_type, []).append(eguid)
+            else:
+                by_type_names.setdefault(dt_type, []).append(ename)
 
-        return rules
+        for dt_type, guids in by_type_ids.items():
+            children.append(
+                {
+                    "type": "Group",
+                    "logicalOperator": "OR",
+                    "children": [
+                        self._statement("dt.entity.type", "=", dt_type),
+                        {
+                            "type": "Group",
+                            "logicalOperator": "OR",
+                            "children": [
+                                self._statement("dt.entity.id", "=", g) for g in guids
+                            ],
+                        },
+                    ],
+                }
+            )
+
+        for dt_type, names in by_type_names.items():
+            children.append(
+                {
+                    "type": "Group",
+                    "logicalOperator": "OR",
+                    "children": [
+                        self._statement("dt.entity.type", "=", dt_type),
+                        {
+                            "type": "Group",
+                            "logicalOperator": "OR",
+                            "children": [
+                                self._statement("entity.name", "=", n) for n in names
+                            ],
+                        },
+                    ],
+                }
+            )
+
+        for q in queries:
+            parsed = self._parse_entity_query(q.get("query", ""))
+            dt_type = self.ENTITY_TYPE_MAP.get(parsed["entity_type"]) if parsed["entity_type"] else None
+            if not dt_type:
+                warnings.append(
+                    f"Could not map entity search query to a Gen3 segment filter: "
+                    f"'{q.get('query', '')[:100]}'"
+                )
+                continue
+            group_children: List[Dict[str, Any]] = [
+                self._statement("dt.entity.type", "=", dt_type)
+            ]
+            if parsed["name_filter"]:
+                group_children.append(
+                    self._statement("entity.name", "contains", parsed["name_filter"])
+                )
+            for tag_key, tag_value in parsed["tags"]:
+                group_children.append(
+                    self._statement(f"tags.{tag_key}", "=", tag_value)
+                )
+            children.append(
+                {
+                    "type": "Group",
+                    "logicalOperator": "AND",
+                    "children": group_children,
+                }
+            )
+
+        if not children:
+            # Fallback: tag-based selection driven by a migration marker tag.
+            tag_value = self._slug(workload_name)
+            warnings.append(
+                f"Workload '{workload_name}' could not be converted to specific filters. "
+                f"Emitted a tag-based fallback: apply tag 'migrated-workload:{tag_value}' "
+                "to relevant entities."
+            )
+            children.append(
+                self._statement("tags.migrated-workload", "=", tag_value)
+            )
+
+        return {"type": "Group", "logicalOperator": "OR", "children": children}
+
+    @staticmethod
+    def _statement(key: str, op: str, value: str) -> Dict[str, Any]:
+        return {
+            "type": "Statement",
+            "key": {"value": key},
+            "operator": {"value": op},
+            "value": {"value": value},
+        }
+
+    # ------------------------------------------------------------------
+    # Segment wrapper (builtin:segment schema)
+    # ------------------------------------------------------------------
+
+    def _build_segment(self, name: str, filter_tree: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            "schemaId": "builtin:segment",
+            "scope": "environment",
+            "value": {
+                "name": f"[Migrated] {name}",
+                "description": f"Migrated from New Relic Workload: {name}",
+                "isPublic": False,
+                "includes": {
+                    "items": [
+                        {
+                            "dataObject": "_all_data_object",
+                            "filter": filter_tree,
+                        }
+                    ]
+                },
+            },
+        }
+
+    # ------------------------------------------------------------------
+    # IAM policy skeleton (bucket-scoped)
+    # ------------------------------------------------------------------
+
+    def _build_iam_policy(self, workload_name: str) -> Dict[str, Any]:
+        slug = self._slug(workload_name)
+        return {
+            "schemaId": "builtin:iam.policy",
+            "scope": "environment",
+            "value": {
+                "name": f"workload-{slug}-read",
+                "description": (
+                    f"Bucket-scoped read policy generated from NR workload '{workload_name}'. "
+                    "Bind to appropriate user groups after import."
+                ),
+                "statementQuery": (
+                    'ALLOW storage:logs:read, storage:events:read, storage:metrics:read, storage:spans:read '
+                    f'WHERE segment:"[Migrated] {workload_name}"'
+                ),
+            },
+        }
+
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
 
     def _parse_entity_query(self, query: str) -> Dict[str, Any]:
-        """
-        Parse a New Relic entity search query.
-
-        Example queries:
-        - "type = 'APPLICATION'"
-        - "name LIKE 'production%'"
-        - "tags.environment = 'prod'"
-        """
-        result = {
+        result: Dict[str, Any] = {
             "entity_type": None,
             "name_filter": None,
-            "tags": []
+            "tags": [],
         }
-
         query_lower = query.lower()
 
-        # Extract entity type
-        if "type" in query_lower:
-            # Simple extraction - look for common patterns
-            type_patterns = [
-                ("application", "APPLICATION"),
-                ("host", "HOST"),
-                ("service", "APM_APPLICATION"),
-                ("browser", "BROWSER_APPLICATION"),
-                ("mobile", "MOBILE_APPLICATION"),
-                ("synthetic", "SYNTHETIC_MONITOR"),
-            ]
+        for pattern, entity_type in (
+            ("application", "APPLICATION"),
+            ("host", "HOST"),
+            ("service", "APM_APPLICATION"),
+            ("browser", "BROWSER_APPLICATION"),
+            ("mobile", "MOBILE_APPLICATION"),
+            ("synthetic", "SYNTHETIC_MONITOR"),
+        ):
+            if pattern in query_lower:
+                result["entity_type"] = entity_type
+                break
 
-            for pattern, entity_type in type_patterns:
-                if pattern in query_lower:
-                    result["entity_type"] = entity_type
-                    break
+        name_match = re.search(r"name\s+like\s+'([^']+)'", query, re.IGNORECASE)
+        if name_match:
+            result["name_filter"] = name_match.group(1).replace("%", "")
 
-        # Extract name filter
-        if "name" in query_lower:
-            # Look for LIKE patterns
-            import re
-            name_match = re.search(r"name\s+like\s+'([^']+)'", query, re.IGNORECASE)
-            if name_match:
-                result["name_filter"] = name_match.group(1).replace("%", "")
-
-        # Extract tags
-        if "tags." in query_lower:
-            import re
-            tag_matches = re.findall(r"tags\.(\w+)\s*=\s*'([^']+)'", query, re.IGNORECASE)
-            result["tags"] = tag_matches
-
+        result["tags"] = re.findall(r"tags\.(\w+)\s*=\s*'([^']+)'", query, re.IGNORECASE)
         return result
 
-    def _create_name_rule(self, entity_type: str, name: str) -> Dict[str, Any]:
-        """Create a management zone rule based on entity name."""
-        return {
-            "type": "ME",
-            "enabled": True,
-            "entitySelector": f"type(\"{entity_type}\"),entityName.equals(\"{name}\")"
-        }
-
-    def _create_tag_rule(self, workload_name: str) -> Dict[str, Any]:
-        """Create a tag-based management zone rule."""
-        # Sanitize workload name for tag value
-        tag_value = workload_name.lower().replace(" ", "-")
-        tag_value = "".join(c if c.isalnum() or c == "-" else "" for c in tag_value)
-
-        return {
-            "type": "ME",
-            "enabled": True,
-            "entitySelector": f"tag(\"migrated-workload:{tag_value}\")"
-        }
+    @staticmethod
+    def _slug(text: str) -> str:
+        slug = text.lower().replace(" ", "-")
+        return "".join(c if c.isalnum() or c == "-" else "" for c in slug)
 
     def transform_all(
-        self,
-        workloads: List[Dict[str, Any]]
+        self, workloads: List[Dict[str, Any]]
     ) -> List[WorkloadTransformResult]:
-        """Transform multiple workloads."""
-        results = []
-
-        for workload in workloads:
-            result = self.transform(workload)
-            results.append(result)
-
+        results = [self.transform(w) for w in workloads]
         successful = sum(1 for r in results if r.success)
-        logger.info(f"Transformed {successful}/{len(results)} workloads to management zones")
-
+        logger.info(f"Transformed {successful}/{len(results)} workloads to Gen3 segments")
         return results

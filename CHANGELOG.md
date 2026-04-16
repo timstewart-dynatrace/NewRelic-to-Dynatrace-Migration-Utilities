@@ -7,6 +7,152 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-04-16
+
+> Phases 11–26 + 19b + 3rd-pass + Phase 25. Gen3-default migration
+> engine with `--legacy` Gen2 fallback. 1271 unit + 14 gated tests.
+> 53/53 nrql-engine transformer parity. 40+ transformers across 19
+> NR surface categories. See `docs/COVERAGE.md` for the full matrix.
+> performed; everything described here lives in the working tree.
+
+### Added — Phase 16 (P0 coverage)
+- `agents/` orchestrator: per-language APM-agent action plans
+  (Java, .NET, Node.js, Python, Ruby, PHP, Go) — `migrate.py agents`
+- `transformers/lambda_transformer.py` — NR Lambda → DT Lambda
+  extension with per-runtime layer ARN templates
+- `transformers/browser_rum_transformer.py` — NR Browser app →
+  `builtin:rum.web.app-config` + Core Web Vitals + event-source mapping
+- `transformers/mobile_rum_transformer.py` — NR Mobile app →
+  `builtin:mobile-application` + 8-platform SDK-swap runbook
+- `transformers/custom_instrumentation_translator.py` — `newrelic.*()` →
+  DT/OTel pattern scanner (`migrate.py scan-instrumentation`)
+
+### Added — Phase 17 (P1 alerts + data + identity)
+- `non_nrql_alert_transformer`, `baseline_alert_transformer`,
+  `lookup_table_transformer`, `maintenance_window_transformer`,
+  `change_tracking_transformer`, `custom_event_ingest_transformer`,
+  `identity_transformer`, `log_obfuscation_transformer`
+- `tools/nrdb_archive.py` + `migrate.py archive` — resumable
+  pre-decommission JSONL snapshot (per-event-type cursors)
+
+### Added — Phase 18 (specialized products)
+- `cloud_integration_transformer` (AWS/Azure/GCP), `kubernetes_transformer`
+  (DynaKube), `aiops_transformer`, `vulnerability_transformer`,
+  `npm_transformer`, `ai_monitoring_transformer`, `prometheus_transformer`
+
+### Added — Phase 19 (dashboard + compiler uplift)
+- Dashboard widget parity: funnel composite, native honeycomb heatmap,
+  event-feed table with canonical sort, cascading variables with
+  `dependsOn`, permissions → Document sharing, saved filter sets →
+  `savedViews`
+- `_apply_phase19_uplift` in `nrql_converter.py` raises confidence to
+  HIGH when post-processors successfully translated Apdex / COMPARE
+  WITH / rate() / percentage()
+
+### Added — Phase 19b (nrql-engine compiler parity)
+- `compiler/shorthands.py` — standalone `expand_nr_shorthands()`
+- 16 regression tests pin Python compiler to TS sibling for shorthand
+  expansion, K8s metric overrides + entity-field map, DQL fixer
+  method coverage; CI parity job in `.github/workflows/ci.yml`
+
+### Added — Phase 20 (operational safety)
+- `migration/canary.py` — two-wave import with approval gate
+  (`--canary <pct>`, `--canary-auto-proceed`)
+- `migration/audit.py` + `migrate.py audit` — drift detection
+  (RENAMED / DELETED / MODIFIED / EXTRA) against live tenant
+- `DynatraceClient.delete_entity` — unified Gen3 delete dispatch
+  (Settings 2.0 + Document + Automation); rollback CLI now actually
+  executes deletes
+- `ConversionReport` enrichment — numeric `confidence_score`,
+  `warning_codes`, `runbook_url` per entry; `warnings_by_code()` and
+  `average_confidence_score()` aggregators
+
+### Added — Phase 21 (cross-repo alignment)
+- `HISTORY.md` — breadcrumb file for past + planned ownership changes
+- `config/project_links.py` — single-source URL registry; flip one
+  field when `nrql-engine` relocates to `dynatrace-dma`
+
+### Added — Phase 22 (lifecycle scaffolding)
+- `docs/out-of-scope.md` — permanent exclusions + decision log
+- `utils/error_taxonomy.py` — `WarningCode` / `ErrorCode` enums +
+  `CodedMessage` dataclass + `warn()` / `error()` helpers
+- `.github/workflows/ci.yml` — added `nrql-engine-parity` job
+- `DECISIONS.md` — entries for legacy-removal deferral, project-links
+  centralization, coded-warnings adoption
+
+### Added — Phase 23 (second-wave nrql-engine parity)
+- `key_transaction_transformer` — NR Key Transaction → SLO + OpenPipeline
+  enrichment + Workflow bundle with `migratedFrom` metadata
+- `otel_metrics_transformer` — NR OTel ingestion → `builtin:otel.ingest.metrics`
+  + collector YAML snippet
+- `statsd_transformer` — NR StatsD → ActiveGate `builtin:statsd.metrics`
+- `cloudwatch_metric_streams_transformer` — Firehose path
+  (`builtin:aws.metric-streams`) + Terraform snippet
+- `transformers/metric_transform.py` — `MetricTransform` protocol +
+  `MetricTransformRegistry` chain;
+  `NRQLtoDQLConverter.register_metric_transform()` lets operators
+  inject project-specific metric renames without forking
+- `transformers/mappings/` package — per-concern re-export modules
+  (`metrics`, `attributes`, `aggregations`, `event_types`,
+  `metric_transforms`, `visualizations`)
+- Numeric `confidence_score` always synced to categorical `confidence`
+  via `_sync_confidence_score`
+
+### Tests
+- 1151 unit tests + 8 integration tests passing as of Phase 20
+
+### Documentation
+- `docs/migration-coverage.md` — exhaustive can/cannot inventory
+  (~160 ✅ / ~25 🟡 / ~2 🔴 / ~8 ⛔)
+- `docs/out-of-scope.md` — permanent exclusions
+- `docs/nrql-engine-sync-audit.md` — first + second-pass audit findings
+- `docs/architecture.md` — top-level codebase map (Phase 20)
+
+### Changed (BREAKING — Gen3-default, planned for 2.0.0)
+- All transformers emit Gen3 Dynatrace objects by default
+  - `AlertTransformer` → Workflow + `builtin:davis.anomaly-detectors`
+  - `NotificationTransformer` → Workflow action tasks (folded into the alert transform)
+  - `InfrastructureTransformer` → Davis Anomaly Detector + Workflow
+  - `WorkloadTransformer` → `builtin:segment` + bucket-scoped IAM policy
+  - `TagTransformer` → OpenPipeline enrichment (`builtin:openpipeline.*`)
+  - `LogParsingTransformer` + `DropRuleTransformer` → OpenPipeline `parse` / `drop` / `removeFields` processors
+  - `DashboardTransformer` → Grail dashboard JSON (Document API, `version: 13`)
+  - `SyntheticTransformer` → `builtin:synthetic_test`
+  - `SLOTransformer` → `builtin:monitoring.slo`
+- `DynatraceClient` rewritten as a Gen3 façade over `SettingsV2Client` +
+  `DocumentClient` + `AutomationClient`; Config v1 methods moved to
+  `clients/legacy/config_v1_client.py`.
+- Monaco + Terraform exporters emit Gen3 resources
+  (`dynatrace_document`, `dynatrace_automation_workflow`, `dynatrace_segment`,
+  `dynatrace_iam_policy`, `dynatrace_slo_v2`, `dynatrace_generic_setting`).
+- `registry/environment.py` — management-zone registry replaced with
+  segment registry (`builtin:segment`).
+- Orchestrator consumes Gen3 `TransformResult` fields: `workflow`,
+  `anomaly_detectors`, `segment`, `iam_policy`, `synthetic_tests`,
+  `openpipeline_processors`.
+
+### Added
+- `--legacy` CLI flag on `migrate`, `export-monaco`, `export-terraform`;
+  `MIGRATION_LEGACY_MODE` env var mirrors the flag.
+- `migrate.py preflight` subcommand — probes Settings 2.0, Document,
+  and Automation APIs and suggests `--legacy` if any Gen3 surface is missing.
+- OAuth2 platform-token provider (`OAuth2PlatformTokenProvider`) for
+  Gen3 Platform APIs, alongside existing Api-Token auth.
+- Legacy submodules preserved: `transformers/legacy/`, `clients/legacy/`,
+  `exporters/legacy/`.
+- Gen3 test suites — 19 DynatraceClient tests (composition, auth,
+  Settings 2.0 pagination, Document `pageKey`, Automation), 18 exporter
+  tests, 7 legacy-flag + preflight tests.
+
+### Deprecated
+- Alerting Profiles, Management Zones, Auto-Tag Rules, Problem
+  Notifications, Config v1 dashboards / synthetics / SLOs — reachable
+  only via `--legacy`. Planned for removal once Gen3 rollout completes.
+
+### Migration notes
+- `nrql-engine` will relocate to `dynatrace-dma` in a future release.
+  URLs in artifacts and docs will be repointed via a patch release.
+
 ## [1.3.0] - 2026-04-10
 
 ### Added (Phase 10 — Fill Functional Gaps)

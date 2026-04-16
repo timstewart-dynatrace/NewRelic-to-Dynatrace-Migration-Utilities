@@ -15,20 +15,75 @@ A universal, comprehensive migration framework for converting New Relic monitori
 
 ![Architecture Overview](docs/images/architecture-overview.svg)
 
-### Supported Components
+### Supported Components (Gen3 default)
 
-| Component         | New Relic                      | →   | Dynatrace                        | Status  |
-| ----------------- | ------------------------------ | --- | -------------------------------- | ------- |
-| **Dashboards**    | Dashboard (multi-page)         | →   | Dashboard                        | ✅ Full |
-| **Alerts**        | Alert Policy + NRQL Conditions | →   | Alerting Profile + Metric Events | ✅ Full |
-| **Synthetics**    | Ping/Browser/API Monitors      | →   | HTTP/Browser Monitors            | ✅ Full |
-| **SLOs**          | Service Level Objectives       | →   | SLOs                             | ✅ Full |
-| **Workloads**     | Entity Groupings               | →   | Management Zones                 | ✅ Full |
-| **Notifications** | Channels (Email, Slack, etc.)  | →   | Problem Notifications            | ✅ Full |
+| Component         | New Relic                      | →   | Dynatrace (Gen3)                                   | Status  |
+| ----------------- | ------------------------------ | --- | -------------------------------------------------- | ------- |
+| **Dashboards**    | Dashboard (multi-page)         | →   | Document API dashboard (Grail DQL tiles)           | ✅ Full |
+| **Alerts**        | Alert Policy + NRQL Conditions | →   | Workflow + `builtin:davis.anomaly-detectors`       | ✅ Full |
+| **Synthetics**    | Ping/Browser/API Monitors      | →   | `builtin:synthetic_test`                           | ✅ Full |
+| **SLOs**          | Service Level Objectives       | →   | `builtin:monitoring.slo`                           | ✅ Full |
+| **Workloads**     | Entity Groupings               | →   | `builtin:segment` + bucket-scoped IAM policy       | ✅ Full |
+| **Notifications** | Channels (Email, Slack, etc.)  | →   | Workflow action tasks                              | ✅ Full |
+| **Tags**          | Entity tags                    | →   | OpenPipeline enrichment (`builtin:openpipeline.*`) | ✅ Full |
+| **Log rules**     | Parsing + drop rules           | →   | OpenPipeline `parse` / `drop` processors           | ✅ Full |
+
+### Gen2 (classic tenant) compatibility
+
+If your Dynatrace tenant does not yet have Gen3 features (Workflows,
+Segments, OpenPipeline, Document API), run every CLI command with the
+`--legacy` flag or set `MIGRATION_LEGACY_MODE=true` in `.env`:
+
+```bash
+python migrate.py preflight                        # probe tenant capability
+python migrate.py migrate --legacy --dry-run       # Gen2 path
+python migrate.py export-monaco --legacy --input ./output --output ./monaco
+python migrate.py export-terraform --legacy --input ./output --output ./tf
+```
+
+Legacy mode emits the classic entities — Alerting Profiles, Metric Events,
+Management Zones, Auto-Tag Rules, Problem Notifications, and Config v1
+dashboards/synthetics/SLOs. This path is a stop-gap; it will be removed
+once Gen3 rollout is complete on supported tenants.
+
+**When must you use `--legacy`?** Eight specific capabilities have no
+Gen3 equivalent — per-severity alerting delay ladders, typed problem-
+notification integrations (Jira/ServiceNow/OpsGenie/xMatters/VictorOps/
+Teams), template-value auto-tagging (`{TAG:name}`), entity-ID-targeted
+Management Zone rules, Config v1 dashboard `preset`/`tags` metadata,
+Config v1 dashboard fallback when Documents API is disabled, and
+private-synthetic-location inventory lookup. See
+[`docs/gen2-only-capabilities.md`](docs/gen2-only-capabilities.md) for
+the complete list with workarounds.
+
+> The `nrql-engine` repo will relocate to `dynatrace-dma` in an upcoming
+> release. URLs in generated artifacts and docs will be repointed via a
+> follow-up patch release.
 
 ### Pipeline
 
 ![Pipeline Architecture](docs/images/pipeline.svg)
+
+### CLI subcommand reference (current as of Phase 20)
+
+| Subcommand | What it does |
+|---|---|
+| `migrate` | Run a full migration (export → transform → import). Supports `--full`, `--export-only`, `--import-only`, `--dry-run`, `--components`, `--rollback <file>`, `--retry <file>`, `--resume`, `--incremental`, `--report`, `--diff`, `--legacy`, `--canary <pct>`, `--canary-auto-proceed`. |
+| `compile` | NRQL → DQL one-off, with `--interactive`, `--file`, `--validate`. |
+| `convert` | NRQL → DQL with full post-processing + auto-fix. |
+| `batch` | CSV / Excel batch compile with NRQL column. |
+| `reference` | Print NRQL → DQL reference table; `--mappings` for the full mapping tables. |
+| `audit-slos` | Audit DT SLOs against live metrics for missing/invalid keys. |
+| `preflight` | **Phase 14.** Probe target tenant for Gen3 API availability; suggests `--legacy` if any Gen3 surface is missing. |
+| `agents` | **Phase 16.** Per-language APM-agent migration action plans (`--language java/dotnet/nodejs/python/ruby/php/go`, `--phase`, `--dry-run`). |
+| `scan-instrumentation` | **Phase 16.** Scan source for `newrelic.*()` SDK calls and emit suggested DT replacements. |
+| `archive` | **Phase 17.** Pre-decommission NRDB JSONL snapshot (resumable). |
+| `audit` | **Phase 20.** Diff a baseline export vs the live tenant. Reports DELETED / RENAMED / MODIFIED / EXTRA. Exits 1 on drift. |
+| `export-monaco` | Emit Monaco v2 project (Gen3 default; `--legacy` for Gen2). |
+| `export-terraform` | Emit Terraform HCL (Gen3 default; `--legacy` for Gen2). |
+
+See `docs/migration-coverage.md` for the per-surface ✅/🟡/🔴/⛔ map and
+`docs/out-of-scope.md` for permanent exclusions.
 
 ### Quick Start
 
