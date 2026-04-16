@@ -7,9 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-> **Release on hold** (since 2026-04-15) at user direction. The
-> `[Unreleased]` block accumulates work across phases 11–23 + 19b + 20–22.
-> No version bump, git tag, PyPI publish, or merge to main has been
+## [2.0.0] - 2026-04-16
+
+> Phases 11–26 + 19b + 3rd-pass + Phase 25. Gen3-default migration
+> engine with `--legacy` Gen2 fallback. 1271 unit + 14 gated tests.
+> 53/53 nrql-engine transformer parity. 40+ transformers across 19
+> NR surface categories. See `docs/COVERAGE.md` for the full matrix.
 > performed; everything described here lives in the working tree.
 
 ### Added — Phase 16 (P0 coverage)

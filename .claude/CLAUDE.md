@@ -7,8 +7,8 @@
 Universal migration tool for converting New Relic monitoring configurations to Dynatrace. Migrates dashboards (with a real NRQL-to-DQL compiler), alerts, synthetic monitors, SLOs, and workloads. Three-phase pipeline: Export (NR NerdGraph) -> Transform -> Import (DT APIs). Supports config-as-code export (Monaco, Terraform).
 
 **Last Updated:** 2026-04-16
-**Version:** 1.3.0 (v2.0.0 in progress on feature branch; release on hold)
-**Phases Completed:** 0-24 + 19b + 26 (Gen3 refactor + coverage expansion + validation)
+**Version:** 2.0.0
+**Phases Completed:** 0-26 + 19b + 3rd-pass + Phase 25 (all complete)
 
 ## Quick Reference
 
