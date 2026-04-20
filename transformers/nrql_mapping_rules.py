@@ -153,6 +153,10 @@ METRIC_MAP: dict[str, str] = {
     'loadaverage15min': 'dt.host.cpu.load15m',
     # NR SystemSample normalized names
     'cpuutilization': 'dt.host.cpu.usage',
+    # NR `host.*` dotted-prefix form (normalizes to `host<name>` after
+    # `.replace(".", "")`). Added for gh #14 — these were reported as
+    # Unknown-metric from `migrate.py compile`.
+    'hostcpupercent': 'dt.host.cpu.usage',
 
     # =========================================================================
     # HOST METRICS -- MEMORY
@@ -161,6 +165,7 @@ METRIC_MAP: dict[str, str] = {
     # =========================================================================
     'memoryusedpercent': 'dt.host.memory.usage',
     'memoryutilization': 'dt.host.memory.usage',
+    'hostmemoryusedpercent': 'dt.host.memory.usage',  # gh #14
     'memoryfreebytes': 'dt.host.memory.avail.bytes',
     'memoryfree': 'dt.host.memory.avail.bytes',
     'memoryfreepercent': 'dt.host.memory.avail.percent',
@@ -179,6 +184,7 @@ METRIC_MAP: dict[str, str] = {
     # =========================================================================
     'diskusedpercent': 'dt.host.disk.used.percent',
     'diskutilization': 'dt.host.disk.used.percent',
+    'hostdiskusedpercent': 'dt.host.disk.used.percent',  # gh #14
     'diskfreepercent': 'dt.host.disk.free',
     'diskused': 'dt.host.disk.used',
     'diskusedbytes': 'dt.host.disk.used',
