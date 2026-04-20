@@ -24,6 +24,8 @@ from typing import Any, Dict, List, Optional
 
 import structlog
 
+from ._workflow_utils import tasks_list_to_dict
+
 logger = structlog.get_logger()
 
 
@@ -124,7 +126,8 @@ class KeyTransactionTransformer:
                         },
                     }
                 },
-                "tasks": [
+                # Gen3 Automation API requires `tasks` as a dict keyed by task id.
+                "tasks": tasks_list_to_dict([
                     {
                         "name": "placeholder_action",
                         "action": "dynatrace.automations:run-javascript",
@@ -136,7 +139,7 @@ class KeyTransactionTransformer:
                         "input": {"script": "export default () => ({ ok: true });"},
                         "position": {"x": 0, "y": 1},
                     }
-                ],
+                ]),
                 # Metadata links the three artifacts so post-migration audit
                 # can identify which SLO/enrichment/workflow are a set.
                 "migratedFrom": {

@@ -297,3 +297,89 @@ class TestPrometheus:
     def test_runbook_includes_nri_uninstall(self):
         r = PrometheusTransformer().transform({"mode": "scrape"})
         assert any("newrelic-prometheus-agent" in s for s in r.runbook["nri_prometheus_uninstall"])
+
+
+# ---------------------------------------------------------------------------
+# Regression for gh import-phase issue #3 — workflow `tasks` must be a dict
+# keyed by task id. Gen3 Automation API returns
+# `{'tasks': ['Input should be a valid dictionary']}` for list-shaped input.
+# ---------------------------------------------------------------------------
+
+
+from transformers._workflow_utils import tasks_list_to_dict
+
+
+class TestWorkflowTasksDictShape:
+    def test_tasks_list_to_dict_keys_by_task_name(self):
+        tasks = [
+            {"name": "send_email", "action": "email"},
+            {"name": "log_event", "action": "log"},
+        ]
+        out = tasks_list_to_dict(tasks)
+        assert isinstance(out, dict)
+        assert out["send_email"]["action"] == "email"
+        assert out["log_event"]["action"] == "log"
+
+    def test_tasks_list_to_dict_handles_collisions(self):
+        tasks = [
+            {"name": "notify", "action": "email"},
+            {"name": "notify", "action": "slack"},
+            {"name": "notify", "action": "pagerduty"},
+        ]
+        out = tasks_list_to_dict(tasks)
+        assert list(out.keys()) == ["notify", "notify_2", "notify_3"]
+        assert out["notify"]["action"] == "email"
+        assert out["notify_3"]["action"] == "pagerduty"
+
+    def test_tasks_list_to_dict_slugs_invalid_chars(self):
+        out = tasks_list_to_dict([{"name": "Send Email! (now)"}])
+        # Only one key, slug-safe.
+        (key,) = out.keys()
+        # No spaces, punctuation, or uppercase.
+        assert key.replace("_", "").isalnum()
+        assert key.islower()
+
+    def test_tasks_list_to_dict_is_idempotent_on_dict_input(self):
+        already_dict = {"a": {"x": 1}, "b": {"x": 2}}
+        assert tasks_list_to_dict(already_dict) is already_dict  # short-circuit
+
+    def test_alert_transformer_emits_tasks_as_dict(self):
+        # Full-stack regression: running an AlertTransformer through a policy
+        # with channels produces a workflow whose `tasks` field is a dict,
+        # not a list.
+        from transformers.alert_transformer import AlertTransformer
+        r = AlertTransformer().transform({
+            "name": "test-policy",
+            "id": "pol-1",
+            "conditions": [{
+                "conditionType": "NRQL",
+                "name": "latency",
+                "nrql": {"query": "SELECT average(duration) FROM Transaction"},
+                "terms": [{"threshold": 500, "priority": "critical",
+                           "operator": "ABOVE"}],
+            }],
+            "notifications": [
+                {"type": "EMAIL", "name": "oncall-email",
+                 "properties": [{"key": "to", "value": "oncall@example.com"}]},
+            ],
+        })
+        assert r.success
+        wf = r.workflow
+        assert isinstance(wf["tasks"], dict), (
+            "Gen3 Automation API rejects list-shaped `tasks` with 400 "
+            "`Input should be a valid dictionary` — tasks must be a dict "
+            "keyed by task id."
+        )
+        # Still has at least one task.
+        assert len(wf["tasks"]) >= 1
+
+    def test_aiops_transformer_emits_tasks_as_dict(self):
+        from transformers.aiops_transformer import AIOpsTransformer
+        r = AIOpsTransformer().transform({
+            "workflows": [{
+                "name": "routing",
+                "destinations": [{"name": "slack", "url": "https://hooks.slack/x"}],
+            }],
+        })
+        assert r.success
+        assert isinstance(r.workflows[0]["tasks"], dict)

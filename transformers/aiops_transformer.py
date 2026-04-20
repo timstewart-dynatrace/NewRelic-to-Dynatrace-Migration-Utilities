@@ -30,6 +30,8 @@ from typing import Any, Dict, List
 
 import structlog
 
+from ._workflow_utils import tasks_list_to_dict
+
 logger = structlog.get_logger()
 
 
@@ -160,7 +162,8 @@ class AIOpsTransformer:
                     },
                 }
             },
-            "tasks": tasks,
+            # Gen3 Automation API requires `tasks` as a dict keyed by task id.
+            "tasks": tasks_list_to_dict(tasks),
         }
 
     def _anomaly_detector(self, setting: Dict[str, Any]) -> Dict[str, Any]:
