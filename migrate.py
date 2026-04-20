@@ -301,6 +301,12 @@ class MigrationOrchestrator:
             "warnings": [],
             "errors": [],
             "skipped": [],
+            # Per-entity transform failure counts (result.success == False).
+            # Feeds the "Failed" column of the migration summary so silent
+            # failures don't hide behind a lower-than-exported "Transformed"
+            # count. Keyed by entity-type slug: dashboard, alert, synthetic,
+            # slo, workload.
+            "failed": {},
         }
 
         with Progress(
@@ -328,10 +334,17 @@ class MigrationOrchestrator:
                         if result.success:
                             transformed_data["dashboards"].extend(result.data)
                             self._update_entity_hash(item, "dashboard", idx)
+                        else:
+                            transformed_data["failed"]["dashboard"] = (
+                                transformed_data["failed"].get("dashboard", 0) + 1
+                            )
                         transformed_data["warnings"].extend(result.warnings or [])
                         transformed_data["errors"].extend(result.errors or [])
                 progress.update(task, completed=1)
                 msg = f"  ✓ Transformed {len(transformed_data['dashboards'])} dashboards"
+                failed_dashboards = transformed_data["failed"].get("dashboard", 0)
+                if failed_dashboards:
+                    msg += f" [red](failed {failed_dashboards})[/red]"
                 if skipped_count:
                     msg += f" [dim](skipped {skipped_count} unchanged)[/dim]"
                 console.print(msg)
@@ -359,6 +372,10 @@ class MigrationOrchestrator:
                                 result.anomaly_detectors or []
                             )
                             self._update_entity_hash(item, "alert", idx)
+                        else:
+                            transformed_data["failed"]["alert"] = (
+                                transformed_data["failed"].get("alert", 0) + 1
+                            )
                         transformed_data["warnings"].extend(result.warnings or [])
                         transformed_data["errors"].extend(result.errors or [])
                 progress.update(task, completed=1)
@@ -389,6 +406,10 @@ class MigrationOrchestrator:
                         if result.success:
                             transformed_data["synthetic_tests"].append(result.monitor)
                             self._update_entity_hash(item, "synthetic", idx)
+                        else:
+                            transformed_data["failed"]["synthetic"] = (
+                                transformed_data["failed"].get("synthetic", 0) + 1
+                            )
                         transformed_data["warnings"].extend(result.warnings or [])
                         transformed_data["errors"].extend(result.errors or [])
                 progress.update(task, completed=1)
@@ -417,6 +438,10 @@ class MigrationOrchestrator:
                         if result.success:
                             transformed_data["slos"].append(result.slo)
                             self._update_entity_hash(item, "slo", idx)
+                        else:
+                            transformed_data["failed"]["slo"] = (
+                                transformed_data["failed"].get("slo", 0) + 1
+                            )
                         transformed_data["warnings"].extend(result.warnings or [])
                         transformed_data["errors"].extend(result.errors or [])
                 progress.update(task, completed=1)
@@ -447,6 +472,10 @@ class MigrationOrchestrator:
                             if result.iam_policy:
                                 transformed_data["iam_policies"].append(result.iam_policy)
                             self._update_entity_hash(item, "workload", idx)
+                        else:
+                            transformed_data["failed"]["workload"] = (
+                                transformed_data["failed"].get("workload", 0) + 1
+                            )
                         transformed_data["warnings"].extend(result.warnings or [])
                         transformed_data["errors"].extend(result.errors or [])
                 progress.update(task, completed=1)
@@ -841,36 +870,50 @@ class MigrationOrchestrator:
         table.add_column("Component", style="cyan")
         table.add_column("Exported", justify="right")
         table.add_column("Transformed", justify="right")
+        table.add_column("Failed", justify="right", style="red")
         table.add_column("Imported", justify="right", style="green")
 
         if "export_data" in results:
             export_data = results["export_data"]
             transformed = results.get("transformed_data", {})
+            failed_counts = transformed.get("failed", {}) or {}
             imported = results.get("import_results", {"successful": []})
 
             components_data = [
                 ("Dashboards", len(export_data.get("dashboards", [])),
                  len(transformed.get("dashboards", [])),
+                 failed_counts.get("dashboard", 0),
                  sum(1 for i in imported.get("successful", []) if i["type"] == "dashboard")),
                 ("Alert Policies → Workflows", len(export_data.get("alert_policies", [])),
                  len(transformed.get("workflows", [])),
+                 failed_counts.get("alert", 0),
                  sum(1 for i in imported.get("successful", []) if i["type"] == "workflow")),
                 ("Davis Anomaly Detectors", "-",
                  len(transformed.get("anomaly_detectors", [])),
+                 "-",
                  sum(1 for i in imported.get("successful", []) if i["type"] == "anomaly_detector")),
                 ("Synthetic Tests", len(export_data.get("synthetic_monitors", [])),
                  len(transformed.get("synthetic_tests", [])),
+                 failed_counts.get("synthetic", 0),
                  sum(1 for i in imported.get("successful", []) if i["type"] == "synthetic_test")),
                 ("SLOs", len(export_data.get("slos", [])),
                  len(transformed.get("slos", [])),
+                 failed_counts.get("slo", 0),
                  sum(1 for i in imported.get("successful", []) if i["type"] == "slo")),
                 ("Workloads → Segments", len(export_data.get("workloads", [])),
                  len(transformed.get("segments", [])),
+                 failed_counts.get("workload", 0),
                  sum(1 for i in imported.get("successful", []) if i["type"] == "segment")),
             ]
 
-            for name, exported, transformed_count, imported_count in components_data:
-                table.add_row(name, str(exported), str(transformed_count), str(imported_count))
+            for name, exported, transformed_count, failed_count, imported_count in components_data:
+                table.add_row(
+                    name,
+                    str(exported),
+                    str(transformed_count),
+                    str(failed_count),
+                    str(imported_count),
+                )
 
         console.print(table)
 

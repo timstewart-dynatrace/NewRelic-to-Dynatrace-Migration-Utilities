@@ -220,17 +220,15 @@ class NRQLtoDQLConverter:
             metric_resolver=self._live_metric_resolver,
         )
 
-    def register_metric_transform(self, transform) -> None:
-        """Phase 23: register a MetricTransform callable (see
-        `transformers/metric_transform.py`).
-
-        Multiple registrations compose in registration order; the first
-        non-None result wins. Resolvers are consulted before the default
-        metric map and built-in resolver, so they can short-circuit.
-        """
-        self._metric_transforms.register(transform)
-
         # Advanced converters -- DPL, rate, COMPARE WITH, funnel, etc.
+        # These MUST be initialized at construction time because callers like
+        # DashboardTransformer instantiate the converter and immediately hit
+        # `.convert(nrql)` without ever calling `register_metric_transform`.
+        # A previous refactor tucked this block inside
+        # `register_metric_transform`, which silently left `_compare_converter`
+        # and its siblings undefined on every default-constructed instance,
+        # surfacing as `AttributeError: '_compare_converter'` the moment NRQL
+        # with COMPARE WITH hit the convert() path.
         _converters = _load_converters()
         if _converters:
             self._regex_to_dpl = _converters["regex_to_dpl"]()
@@ -259,6 +257,16 @@ class NRQLtoDQLConverter:
         self._auto_create_slos: bool = False
         self._created_slos: Dict[str, str] = {}     # GUID -> DT SLO ID
         self._slo_details_cache: Dict[str, Dict] = {}
+
+    def register_metric_transform(self, transform) -> None:
+        """Phase 23: register a MetricTransform callable (see
+        `transformers/metric_transform.py`).
+
+        Multiple registrations compose in registration order; the first
+        non-None result wins. Resolvers are consulted before the default
+        metric map and built-in resolver, so they can short-circuit.
+        """
+        self._metric_transforms.register(transform)
 
     # ------------------------------------------------------------------
     # Public API
