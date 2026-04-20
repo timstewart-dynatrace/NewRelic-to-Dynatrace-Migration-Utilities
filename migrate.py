@@ -1567,6 +1567,107 @@ def batch_compile(input_file: str, output_file: Optional[str], nrql_column: str)
     console.print(f"[green]Results saved to {out_path}[/green]")
 
 
+@click.command("extract-nrql")
+@click.option("--input", "-i", "input_dir", type=click.Path(exists=True), default="./inventory",
+              show_default=True, help="Directory containing exports/newrelic_export.json")
+@click.option("--output", "-o", "output_file", type=click.Path(), default="./inventory/all-nrql.txt",
+              show_default=True, help="Output file (.txt for compile, .csv for batch)")
+@click.option("--format", "output_format", type=click.Choice(["txt", "csv"]), default=None,
+              help="Output format (default: inferred from --output extension)")
+def extract_nrql_cmd(input_dir: str, output_file: str, output_format: Optional[str]):
+    """Extract NRQL queries from the export JSON into a flat list.
+
+    Walks the consolidated export at <input>/exports/newrelic_export.json and
+    collects NRQL strings from dashboard widgets, alert conditions, and SLO
+    indicators. Writes one query per line (.txt) or a CSV with an `nrql`
+    column (.csv) for use with `compile --file` or `batch --file`.
+
+    Example:
+
+      python migrate.py extract-nrql \\
+          --input ./inventory --output ./inventory/all-nrql.txt
+
+      python migrate.py extract-nrql \\
+          --input ./inventory --output ./inventory/all-nrql.csv
+    """
+    import csv
+    import json
+
+    export_path = Path(input_dir) / "exports" / "newrelic_export.json"
+    if not export_path.exists():
+        console.print(f"[red]Export not found at {export_path}[/red]")
+        console.print("Run `migrate.py migrate --export-only --output <dir>` first.")
+        sys.exit(1)
+
+    with open(export_path) as f:
+        exp = json.load(f)
+
+    # Walk known NRQL-carrying paths in the consolidated export
+    queries = set()
+
+    # Dashboards: pages[*].widgets[*].rawConfiguration.nrqlQueries[*].query
+    for dash in exp.get("dashboards", []) or []:
+        for page in (dash.get("pages") or []):
+            for widget in (page.get("widgets") or []):
+                raw = widget.get("rawConfiguration") or {}
+                for nq in (raw.get("nrqlQueries") or []):
+                    q = (nq.get("query") or "").strip()
+                    if q:
+                        queries.add(q)
+
+    # Alert policies: conditions[*].nrql.query (and legacy .query)
+    for policy in exp.get("alert_policies", []) or []:
+        for cond in (policy.get("conditions") or []):
+            # NRQL conditions typically have .nrql.query
+            nrql = cond.get("nrql") or {}
+            q = (nrql.get("query") or "").strip()
+            if q:
+                queries.add(q)
+            # Some shapes expose the query at cond.query directly
+            q2 = (cond.get("query") or "").strip()
+            if q2:
+                queries.add(q2)
+
+    # SLOs: indicator.from + indicator.where concatenated to an NRQL-shaped string
+    for slo in exp.get("slos", []) or []:
+        indicator = slo.get("indicator") or {}
+        # Some SLO shapes hold raw NRQL; others split good/valid events
+        for key in ("from", "where", "query", "good_events_nrql", "valid_events_nrql"):
+            val = (indicator.get(key) or "").strip()
+            if val and ("SELECT " in val.upper() or "FROM " in val.upper()):
+                queries.add(val)
+
+    if not queries:
+        console.print("[yellow]No NRQL queries found in export. Is the export populated?[/yellow]")
+
+    # Infer format from extension if not given
+    out_path = Path(output_file)
+    fmt = output_format
+    if fmt is None:
+        fmt = "csv" if out_path.suffix.lower() == ".csv" else "txt"
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    sorted_queries = sorted(queries)
+
+    if fmt == "csv":
+        with open(out_path, "w", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow(["nrql"])
+            for q in sorted_queries:
+                writer.writerow([q])
+    else:
+        with open(out_path, "w") as f:
+            for q in sorted_queries:
+                f.write(q + "\n")
+
+    console.print(f"[green]Wrote {len(sorted_queries)} unique NRQL queries to {out_path}[/green]")
+    console.print(f"  Format: {fmt}  •  Deduped: yes  •  Source: {export_path}")
+    if fmt == "txt":
+        console.print(f"  Next: [cyan]python3 migrate.py compile --file {out_path} --output translated.dql[/cyan]")
+    else:
+        console.print(f"  Next: [cyan]python3 migrate.py batch --file {out_path} --output results.csv[/cyan]")
+
+
 def _get_version():
     try:
         from _version import __version__
@@ -1686,6 +1787,7 @@ cli.add_command(convert_nrql, "convert")
 cli.add_command(reference, "reference")
 cli.add_command(audit_slos, "audit-slos")
 cli.add_command(batch_compile, "batch")
+cli.add_command(extract_nrql_cmd, "extract-nrql")
 cli.add_command(export_monaco, "export-monaco")
 cli.add_command(export_terraform, "export-terraform")
 cli.add_command(preflight, "preflight")
