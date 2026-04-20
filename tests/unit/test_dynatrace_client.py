@@ -680,3 +680,115 @@ class TestAnomalyDetectorWirePayload:
             and isinstance(item["value"], str)
             for item in value["analyzer"]["input"]
         )
+
+
+class TestAnalyzerInputQueryIsDql:
+    """Regression — analyzer.input[{key:"query"}].value must be DQL, not NRQL.
+
+    The live Gen3 tenant server-validates the query value as DQL syntax. PR
+    #21 fixed the surrounding schema shape but passed RAW NRQL through into
+    analyzer.input, so the tenant rejected 7/7 `[Migrated]` detectors with
+    400 "Error parsing parameter 'query'. Invalid DQL query. `FROM` isn't
+    allowed here." — NRQL is not DQL.
+
+    These wire-level tests catch any future regression that passes NRQL
+    through unchanged.
+    """
+
+    _ALLOWED_PREFIXES = ("fetch", "timeseries", "//")
+    _FORBIDDEN_TOKENS = ("SELECT", "FROM ")  # NRQL-only keywords
+
+    def _query_value(self, detector):
+        value = detector["value"]["analyzer"]["input"]
+        return next(item["value"] for item in value if item["key"] == "query")
+
+    def _first_token(self, s):
+        return s.lstrip().split()[0] if s and s.strip() else ""
+
+    def test_alert_transformer_emits_dql_for_nrql_source(self):
+        from transformers.alert_transformer import AlertTransformer
+
+        nrql = (
+            "SELECT average(`newrelic.goldenmetrics.apm.application.throughput`)"
+            " FROM Metric FACET entity.guid, appName"
+        )
+        r = AlertTransformer().transform({
+            "name": "Golden Signals",
+            "id": "pol-1",
+            "conditions": [{
+                "conditionType": "NRQL",
+                "name": "throughput",
+                "nrql": {"query": nrql},
+                "terms": [{"threshold": 100, "priority": "critical",
+                           "operator": "ABOVE"}],
+            }],
+            "notifications": [],
+        })
+        assert r.success
+        query = self._query_value(r.anomaly_detectors[0])
+        first = self._first_token(query)
+        assert first in self._ALLOWED_PREFIXES, (
+            f"analyzer.input[query].value must start with one of "
+            f"{self._ALLOWED_PREFIXES}; got first token {first!r} in "
+            f"{query!r}"
+        )
+        # The NR-only tokens must not appear as code (they can appear
+        # inside a `//` comment — so slice off any leading comment line
+        # before asserting).
+        code_only = "\n".join(
+            line for line in query.splitlines()
+            if not line.lstrip().startswith("//")
+        )
+        for tok in self._FORBIDDEN_TOKENS:
+            assert tok not in code_only, (
+                f"Forbidden NRQL token {tok!r} leaked into DQL code portion "
+                f"of analyzer.input[query].value: {code_only!r}"
+            )
+
+    def test_baseline_transformer_emits_dql_for_nrql_source(self):
+        from transformers.baseline_alert_transformer import BaselineAlertTransformer
+
+        r = BaselineAlertTransformer().transform({
+            "name": "response-time-baseline",
+            "conditionType": "baseline",
+            "baselineDirection": "upper_only",
+            "deviations": 3.0,
+            "nrql": {"query": "SELECT average(duration) FROM Transaction"},
+        })
+        assert r.success
+        query = self._query_value(r.anomaly_detectors[0])
+        first = self._first_token(query)
+        assert first in self._ALLOWED_PREFIXES, (
+            f"Baseline detector analyzer.input[query] must start with one of "
+            f"{self._ALLOWED_PREFIXES}; got {first!r}"
+        )
+
+    def test_empty_nrql_gets_valid_placeholder(self):
+        # `analyzer.input[].value` minLength=1 — an empty query breaks
+        # server validation. The fallback must always produce something
+        # valid.
+        from transformers.baseline_alert_transformer import BaselineAlertTransformer
+
+        r = BaselineAlertTransformer().transform({
+            "name": "no-nrql", "conditionType": "baseline",
+            # no `nrql` key
+        })
+        assert r.success
+        query = self._query_value(r.anomaly_detectors[0])
+        assert query.strip(), "Fallback query must be non-empty"
+        assert self._first_token(query) in self._ALLOWED_PREFIXES
+
+    def test_unconverted_fallback_preserves_original_nrql_in_comment(self):
+        """When the NRQL→DQL conversion can't be done with confidence, the
+        operator still needs the original NRQL to fix it by hand. Pin that
+        the fallback format carries it through.
+        """
+        from transformers._detector_utils import _fallback
+        out = _fallback(
+            "SELECT gibberish(not real nrql) FROM NoSuchEvent SINCE forever"
+        )
+        assert out.startswith("// UNCONVERTED NRQL:")
+        assert "gibberish" in out and "NoSuchEvent" in out
+        # Must still end with a valid DQL placeholder so the payload
+        # server-validates.
+        assert "timeseries count()" in out

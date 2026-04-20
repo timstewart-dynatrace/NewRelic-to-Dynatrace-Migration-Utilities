@@ -23,6 +23,7 @@ from typing import Any, Dict, List, Optional
 
 import structlog
 
+from ._detector_utils import nrql_to_analyzer_query
 from ._workflow_utils import tasks_list_to_dict
 from .mapping_rules import OPERATOR_MAP, EntityMapper
 
@@ -144,10 +145,12 @@ class AlertTransformer:
         # against any Gen3 tenant. All 4 sibling transformers got this
         # rewrite in PR #20 commit #2; THIS ONE was missed (the primary
         # NRQL alert → Davis detector converter).
-        # `analyzer.input[].value` requires minLength=1, so `query` must
-        # never be empty — substitute a harmless placeholder if the NRQL
-        # source is missing.
-        dql_query = query if query else "timeseries count()"
+        # `analyzer.input[].value` is server-validated as DQL syntax;
+        # sending raw NRQL produces "Invalid DQL query. `FROM` isn't
+        # allowed here." Route through NRQLtoDQLConverter; fall back to
+        # a `// UNCONVERTED NRQL` comment + placeholder when the query
+        # can't be confidently translated.
+        dql_query = nrql_to_analyzer_query(query, warnings=warnings)
         analyzer_input = [
             {"key": "query", "value": dql_query},
             {"key": "threshold", "value": str(threshold)},
