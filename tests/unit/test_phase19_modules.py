@@ -239,3 +239,115 @@ class TestConverterEndToEndWithUplift:
         # Phase 19 fix list should mark apdex when countIf buckets present.
         if "countif(" in r.dql.lower():
             assert r.confidence == "HIGH"
+
+
+# ---------------------------------------------------------------------------
+# Regression for gh #(n): dashboard transform fails when NRQL has
+# COMPARE WITH because `NRQLtoDQLConverter._compare_converter` was left
+# uninitialized by a mis-placed init block that only ran when
+# `register_metric_transform` was called.
+# ---------------------------------------------------------------------------
+
+
+class TestCompareWithDashboardRegression:
+    """Dashboard with a COMPARE WITH NRQL query must transform successfully.
+
+    Symptom before the fix: DashboardTransformer.transform() returned
+    success=False with errors like:
+      "Transformation error: 'NRQLtoDQLConverter' object has no attribute
+       '_compare_converter'"
+
+    Observed in production: 4 of 16 lab dashboards failed this way because
+    one dashboard with a `COMPARE WITH` query produced 1 failure per page.
+    """
+
+    def _dashboard_with_nrql(self, nrql: str):
+        return {
+            "name": "compare-with-lab",
+            "pages": [
+                {
+                    "name": "p1",
+                    "widgets": [
+                        {
+                            "title": "Events 24h vs 24h ago",
+                            "visualization": {"id": "viz.line"},
+                            "layout": {"column": 1, "row": 1, "width": 6, "height": 4},
+                            "rawConfiguration": {
+                                "nrqlQueries": [{"query": nrql}],
+                            },
+                        }
+                    ],
+                }
+            ],
+        }
+
+    def test_converter_has_compare_converter_attribute_after_init(self):
+        # The mis-placed init block meant `_compare_converter` only existed
+        # after `register_metric_transform` was called. Pin that it's set at
+        # construction time.
+        c = NRQLtoDQLConverter()
+        assert hasattr(c, "_compare_converter"), (
+            "NRQLtoDQLConverter._compare_converter must be initialized in "
+            "__init__, not in register_metric_transform — DashboardTransformer "
+            "never calls register_metric_transform."
+        )
+
+    def test_dashboard_with_compare_with_query_transforms_successfully(self):
+        d = self._dashboard_with_nrql(
+            "SELECT count(*) FROM LabBusinessEvent TIMESERIES "
+            "SINCE 1 day ago COMPARE WITH 1 day ago"
+        )
+        r = DashboardTransformer().transform(d)
+        assert r.success, (
+            f"Dashboard transform should not raise AttributeError on "
+            f"COMPARE WITH queries; got errors: {r.errors}"
+        )
+        # And the transformed page should exist with a DQL query that
+        # preserved the COMPARE WITH semantics (shift or append).
+        assert r.data and r.data[0].get("tiles"), "Expected at least one tile"
+
+    def test_transformed_data_has_failed_counter_key(self):
+        """The Gen3 transform phase must expose a `failed` counter dict so
+        the migration summary can render a Failed column. Before this fix
+        the only failure signal was `transformed_data["errors"]` (a flat
+        list of strings with no entity-type attribution), so
+        "Transformed: 12" on a summary table hid the 4 dashboards that
+        failed with an AttributeError.
+        """
+        import inspect
+
+        import migrate
+        src = inspect.getsource(migrate.MigrationOrchestrator._transform_phase)
+        assert '"failed": {}' in src, (
+            "MigrationOrchestrator._transform_phase must initialize a "
+            "`failed` counter dict on transformed_data — the summary table "
+            "reads from it to render the Failed column."
+        )
+        assert 'transformed_data["failed"]' in src, (
+            "Transform loops must populate transformed_data['failed'] when "
+            "a per-entity result.success is False — otherwise failures stay "
+            "silent in the summary."
+        )
+
+    def test_dashboard_with_compare_with_preserves_semantics(self):
+        """The translated DQL must carry the COMPARE WITH intent —
+        either as a `shift:` argument or an `append` subquery. This is the
+        "do NOT change translation semantics" guard from the PR brief.
+        """
+        d = self._dashboard_with_nrql(
+            "SELECT count(*) FROM Transaction TIMESERIES COMPARE WITH 1 week ago"
+        )
+        r = DashboardTransformer().transform(d)
+        assert r.success
+        tile_queries = [
+            t.get("query", "")
+            for t in r.data[0].get("tiles", {}).values()
+            if isinstance(t, dict)
+        ]
+        assert tile_queries, "Expected a tile with a DQL query"
+        translated = " ".join(tile_queries).lower()
+        # Either the AST compiler produced `shift:` / `append` or the
+        # fallback converter produced an equivalent construct.
+        assert ("shift:" in translated) or ("append" in translated), (
+            f"COMPARE WITH semantics lost; emitted: {tile_queries!r}"
+        )
