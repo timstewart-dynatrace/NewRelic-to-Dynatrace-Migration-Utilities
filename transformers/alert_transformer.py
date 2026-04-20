@@ -135,51 +135,74 @@ class AlertTransformer:
             " ", "-"
         )[:180]
 
+        # builtin:davis.anomaly-detectors schema v1.0.14 (verified 2026-04-20
+        # against sprint tenant). Top-level is {enabled,title,description,
+        # source,executionSettings,analyzer{name,input[{key,value}]},
+        # eventTemplate{properties[{key,value}]}} — the old shape with
+        # {name, strategy, source.{type,query,...}, eventTemplate.{title,
+        # description,eventType,davisMerge}} triggered 10 validator errors
+        # against any Gen3 tenant. All 4 sibling transformers got this
+        # rewrite in PR #20 commit #2; THIS ONE was missed (the primary
+        # NRQL alert → Davis detector converter).
+        # `analyzer.input[].value` requires minLength=1, so `query` must
+        # never be empty — substitute a harmless placeholder if the NRQL
+        # source is missing.
+        dql_query = query if query else "timeseries count()"
+        analyzer_input = [
+            {"key": "query", "value": dql_query},
+            {"key": "threshold", "value": str(threshold)},
+            {"key": "alertCondition", "value": operator_dt},
+            {"key": "alertOnMissingData", "value": "false"},
+            {"key": "violatingSamples", "value": str(violating)},
+            {"key": "slidingWindow", "value": str(samples)},
+            {"key": "dealertingSamples", "value": "5"},
+        ]
+
+        event_properties = [
+            {"key": "event.type", "value": "CUSTOM_ALERT"},
+            {"key": "event.name", "value": f"[Migrated] {condition_name}"},
+            {"key": "source.policy", "value": policy_name},
+            {"key": "source.condition", "value": condition_name},
+            {"key": "migrated.from", "value": "newrelic"},
+        ]
+        if query:
+            # Preserve the NR source — previous code carried this as
+            # source.originalNRQL on the value object; the new schema only
+            # allows text `source`, so stash it in eventTemplate.properties.
+            event_properties.append(
+                {"key": "original.nrql", "value": query}
+            )
+        event_properties.append(
+            {"key": "evaluation.window", "value": f"{aggregation_window}s"}
+        )
+        runbook_url = condition.get("runbookUrl")
+        if runbook_url:
+            event_properties.append({"key": "runbook.url", "value": runbook_url})
+
         detector: Dict[str, Any] = {
             "schemaId": "builtin:davis.anomaly-detectors",
             "scope": "environment",
             "detectorId": detector_id,
             "value": {
-                "name": f"[Migrated] {condition_name}",
-                "description": description
-                or f"Migrated from New Relic policy '{policy_name}'. Original NRQL: {query[:200]}",
                 "enabled": enabled,
-                "source": {
-                    "type": "DQL",
-                    # Post-processing (NRQLtoDQLConverter) fills this when invoked
-                    # from the orchestrator; we keep the raw NRQL as a reference field.
-                    "query": "",
-                    "originalNRQL": query,
-                    "evaluationWindow": f"{aggregation_window}s",
-                },
-                "strategy": {
-                    "type": "STATIC_THRESHOLD",
-                    "threshold": threshold,
-                    "alertCondition": operator_dt,
-                    "samples": samples,
-                    "violatingSamples": violating,
-                    "dealingWithGapsStrategy": "DROP_DATA",
-                    "alertOnNoData": False,
+                "title": f"[Migrated] {condition_name}",
+                "description": description
+                or f"Migrated from New Relic policy '{policy_name}'. "
+                   f"Original NRQL: {query[:200]}",
+                "source": "newrelic-migration",
+                "executionSettings": {"actor": None, "queryOffset": None},
+                "analyzer": {
+                    "name": (
+                        "dt.statistics.ui.anomaly_detection"
+                        ".StaticThresholdAnomalyDetectionAnalyzer"
+                    ),
+                    "input": analyzer_input,
                 },
                 "eventTemplate": {
-                    "title": f"[Migrated] {condition_name}",
-                    "description": description or condition_name,
-                    "eventType": "CUSTOM_ALERT",
-                    "davisMerge": True,
-                    "properties": [
-                        {"key": "source.policy", "value": policy_name},
-                        {"key": "source.condition", "value": condition_name},
-                        {"key": "migrated.from", "value": "newrelic"},
-                    ],
+                    "properties": event_properties,
                 },
             },
         }
-
-        runbook_url = condition.get("runbookUrl")
-        if runbook_url:
-            detector["value"]["eventTemplate"]["properties"].append(
-                {"key": "runbook.url", "value": runbook_url}
-            )
 
         return detector
 
