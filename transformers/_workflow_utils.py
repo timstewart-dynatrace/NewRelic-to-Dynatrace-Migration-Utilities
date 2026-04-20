@@ -16,7 +16,6 @@ from __future__ import annotations
 import re
 from typing import Any, Dict, List
 
-
 _TASK_ID_CHARS = re.compile(r"[^a-zA-Z0-9_]")
 
 
