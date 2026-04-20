@@ -152,8 +152,15 @@ class TestAIOps:
             }],
         })
         det = r.anomaly_detectors[0]
-        assert det["value"]["strategy"]["type"] == "AUTO_ADAPTIVE_BASELINE"
-        assert det["value"]["strategy"]["sensitivity"] == 4.5
+        value = det["value"]
+        # New builtin:davis.anomaly-detectors schema (v1.0.14) — top-level
+        # fields are {enabled,title,description,source,executionSettings,
+        # analyzer,eventTemplate}; the old `name`/`strategy` are gone.
+        assert value["title"].startswith("[NR AIOps]")
+        assert value["analyzer"]["name"].endswith("AutoAdaptiveAnomalyDetectionAnalyzer")
+        inputs = {i["key"]: i["value"] for i in value["analyzer"]["input"]}
+        assert inputs["numberOfSignalFluctuations"] == "4.5"
+        assert "builtin:service.errors.total.rate" in inputs["query"]
 
     def test_empty_workflow_warns(self):
         r = AIOpsTransformer().transform({

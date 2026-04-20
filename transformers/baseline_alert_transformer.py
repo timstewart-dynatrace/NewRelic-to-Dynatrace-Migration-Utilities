@@ -19,10 +19,12 @@ import structlog
 logger = structlog.get_logger()
 
 
-# NR baseline direction -> DT alert condition.
+# NR baseline direction -> DT `alertCondition` value inside
+# `analyzer.input`. The current builtin:davis.anomaly-detectors schema
+# documents `ABOVE`, `BELOW`, and `OUTSIDE_BOUNDS` for the input field.
 _BASELINE_DIRECTION_MAP = {
-    "upper_only": "ABOVE_UPPER_BOUND",
-    "lower_only": "BELOW_LOWER_BOUND",
+    "upper_only": "ABOVE",
+    "lower_only": "BELOW",
     "both": "OUTSIDE_BOUNDS",
     "upper_and_lower": "OUTSIDE_BOUNDS",
 }
@@ -51,7 +53,6 @@ class BaselineAlertTransformer:
             sensitivity = float(nr_condition.get("deviations", 3.0))
 
             if kind == "outlier":
-                strategy_type = "AUTO_ADAPTIVE_OUTLIER"
                 facet = nr_condition.get("facet", "")
                 if not facet:
                     warnings.append(
@@ -61,10 +62,9 @@ class BaselineAlertTransformer:
                     )
                     facet = "dt.entity.service"
             else:
-                strategy_type = "AUTO_ADAPTIVE_BASELINE"
                 facet = nr_condition.get("facet", "")
 
-            alert_condition = _BASELINE_DIRECTION_MAP.get(direction, "ABOVE_UPPER_BOUND")
+            alert_condition = _BASELINE_DIRECTION_MAP.get(direction, "ABOVE")
 
             nrql = nr_condition.get("nrql", {}).get("query", "")
             if not nrql:
@@ -72,44 +72,67 @@ class BaselineAlertTransformer:
                     f"Baseline condition '{name}' has no NRQL source — "
                     "the detector will reference a placeholder DQL."
                 )
+            # `analyzer.input[].value` has minLength=1 in the current schema,
+            # so we always need a non-empty query. If NRQL is missing, emit a
+            # harmless `timeseries count()` as a best-effort placeholder.
+            dql_query = nrql if nrql else "timeseries count()"
 
             detector_id = f"davis-baseline-{name}".lower()
             detector_id = "".join(
                 c if c.isalnum() or c == "-" else "-" for c in detector_id
             )[:180]
+            # New builtin:davis.anomaly-detectors schema (v1.0.14, 2026-04-20):
+            # top level has {enabled,title,description,source,executionSettings,
+            # analyzer{name,input[{key,value}]},eventTemplate{properties[{...}]}}
+            # — old shape with `name`, `strategy`, `source.{type,query}`,
+            # `eventTemplate.{title,description,eventType,davisMerge}` was
+            # rejected with 10 validator errors against sprint tenants.
+            analyzer_input = [
+                {"key": "query", "value": dql_query},
+                {"key": "numberOfSignalFluctuations", "value": str(sensitivity)},
+                {"key": "alertCondition", "value": alert_condition},
+                {"key": "alertOnMissingData", "value": "false"},
+                {"key": "violatingSamples", "value": "3"},
+                {"key": "slidingWindow", "value": "5"},
+                {"key": "dealertingSamples", "value": "5"},
+            ]
+            if facet:
+                analyzer_input.append(
+                    {"key": "dimensions", "value": facet}
+                )
+            analyzer_input.append(
+                {"key": "learningPeriodDays", "value": str(
+                    int(nr_condition.get("learningPeriodDays", 7))
+                )}
+            )
+
             detector = {
                 "schemaId": "builtin:davis.anomaly-detectors",
                 "scope": "environment",
                 "detectorId": detector_id,
                 "value": {
-                    "name": f"[Migrated baseline] {name}",
+                    "enabled": bool(nr_condition.get("enabled", True)),
+                    "title": f"[Migrated baseline] {name}",
                     "description": (
                         f"Migrated from NR {kind} condition. "
                         f"Direction: {direction}, sensitivity: {sensitivity}σ."
                     ),
-                    "enabled": bool(nr_condition.get("enabled", True)),
-                    "source": {
-                        "type": "DQL",
-                        "query": "",  # populated by NRQLtoDQLConverter downstream
-                        "originalNRQL": nrql,
-                    },
-                    "strategy": {
-                        "type": strategy_type,
-                        "alertCondition": alert_condition,
-                        "sensitivity": sensitivity,
-                        "byDimensions": [facet] if facet else [],
-                        "learningPeriodDays": int(
-                            nr_condition.get("learningPeriodDays", 7)
+                    "source": "newrelic-migration",
+                    "executionSettings": {"actor": None, "queryOffset": None},
+                    "analyzer": {
+                        "name": (
+                            "dt.statistics.ui.anomaly_detection"
+                            ".AutoAdaptiveAnomalyDetectionAnalyzer"
                         ),
+                        "input": analyzer_input,
                     },
                     "eventTemplate": {
-                        "title": f"[Migrated baseline] {name}",
-                        "description": name,
-                        "eventType": "CUSTOM_ALERT",
-                        "davisMerge": True,
                         "properties": [
+                            {"key": "event.type", "value": "CUSTOM_ALERT"},
+                            {"key": "event.name", "value": f"[Migrated baseline] {name}"},
                             {"key": "migrated.from", "value": "newrelic"},
                             {"key": "source.kind", "value": kind},
+                            {"key": "original.nrql", "value": nrql or "(none provided)"},
                         ],
                     },
                 },
