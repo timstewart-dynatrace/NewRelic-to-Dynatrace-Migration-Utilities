@@ -258,10 +258,11 @@ class TestExportAll:
             mock.return_value = _mock_response(empty_search)
             # Override for specific queries
             mock.side_effect = [
-                _mock_response(empty_search),     # dashboards
+                _mock_response(empty_search),      # dashboards
                 _mock_response(empty_policies),    # alerts
                 _mock_response(empty_channels),    # notifications
-                _mock_response(empty_search),      # synthetics
+                _mock_response(empty_search),      # synthetics — modern variant
+                _mock_response(empty_search),      # synthetics — legacy fallback
                 _mock_response(empty_slos),        # slos
                 _mock_response(empty_search),      # workloads
             ]
@@ -271,3 +272,117 @@ class TestExportAll:
             assert "alert_policies" in result
             assert "slos" in result
             assert "workloads" in result
+
+
+def _sent_query(mock_post, call_index=0):
+    """Return the GraphQL query string from the Nth mocked POST call."""
+    call = mock_post.call_args_list[call_index]
+    payload = call.kwargs.get("json") or call.args[1]
+    return payload["query"]
+
+
+class TestSchemaDriftRegressions:
+    """Regression tests for NR GraphQL schema drift observed 2026-04-20.
+
+    Each test pins one query shape that broke in production — if a future
+    refactor reintroduces the old shape, the test fails loudly.
+    """
+
+    def test_dashboard_detail_query_selects_defaultValues_subfields(self, client):
+        # Realistic response shape — defaultValues is a list of objects, not scalars.
+        dashboard_data = {
+            "actor": {"entity": {
+                "guid": "d1", "name": "Dash", "pages": [],
+                "variables": [{
+                    "name": "env",
+                    "type": "NRQL",
+                    "defaultValues": [{"value": {"string": "production"}}],
+                    "isMultiSelection": False,
+                }],
+            }}
+        }
+        with patch.object(client.session, 'post') as mock:
+            mock.return_value = _mock_response(dashboard_data)
+            result = client.get_dashboard_definition("d1")
+
+        query = _sent_query(mock)
+        # Must select subfields — NR rejects bare `defaultValues` with
+        # "must have a selection of subfields".
+        assert "defaultValues {" in query
+        assert "value {" in query
+        assert "string" in query
+        # And the client must parse the object-shaped response without error.
+        assert result["variables"][0]["defaultValues"][0]["value"]["string"] == "production"
+
+    def test_workload_detail_query_has_no_entitySearchQueries_field(self, client):
+        # NR's current schema: entitySearchQueries is mutation-input only.
+        # WorkloadEntity.collection now requires `name: String!` and has moved
+        # under the CollectionEntity fragment.
+        workload_data = {
+            "actor": {"entity": {
+                "guid": "w1", "name": "Prod",
+                "collection": {"members": {"results": {"entities": [
+                    {"guid": "e1", "name": "checkout", "entityType": "APM_APPLICATION"},
+                    {"guid": "e2", "name": "web-01",   "entityType": "HOST"},
+                ]}}},
+            }}
+        }
+        with patch.object(client.session, 'post') as mock:
+            mock.return_value = _mock_response(workload_data)
+            result = client.get_workload_details("w1")
+
+        query = _sent_query(mock)
+        # The two fields that caused the production 200-OK drops must NOT appear
+        # as selection fields — they are either mutation-input-only or renamed.
+        assert "entitySearchQueries {" not in query, (
+            "entitySearchQueries is mutation-input only; querying it on "
+            "WorkloadEntity triggers 'Cannot query field' errors."
+        )
+        # The new read-side path uses the CollectionEntity fragment with an
+        # explicit collection name — prevents the null-name error.
+        assert 'collection(name: "WORKLOAD")' in query
+        assert "... on CollectionEntity" in query
+        # And the nested response must flatten to the flat list shape the
+        # workload transformer consumes (guid/name/type, not entityType).
+        assert result["collection"] == [
+            {"guid": "e1", "name": "checkout", "type": "APM_APPLICATION"},
+            {"guid": "e2", "name": "web-01",   "type": "HOST"},
+        ]
+        assert result["entitySearchQueries"] == []
+
+    def test_synthetic_outline_probes_modern_type_first(self, client):
+        # Modern NR schema: synthetics are domain='SYNTH' AND type='MONITOR'.
+        # Older type='SYNTHETIC_MONITOR' returns zero outlines against modern
+        # tenants. The client must try the modern variant first.
+        modern_hit = {"actor": {"entitySearch": {"results": {
+            "entities": [{"guid": "m1", "name": "Health Check"}],
+            "nextCursor": None,
+        }}}}
+        detail = {"actor": {"entity": {"guid": "m1", "name": "Health Check", "monitorType": "SIMPLE"}}}
+        with patch.object(client.session, 'post') as mock:
+            mock.side_effect = [_mock_response(modern_hit), _mock_response(detail)]
+            monitors = client.get_all_synthetic_monitors()
+
+        first_query = _sent_query(mock, 0)
+        assert "domain = 'SYNTH'" in first_query
+        assert "type = 'MONITOR'" in first_query
+        # Modern hit → legacy variant must NOT be tried.
+        assert mock.call_count == 2  # outline + one detail fetch, no fallback
+        assert len(monitors) == 1
+
+    def test_synthetic_outline_falls_back_to_legacy_when_modern_empty(self, client):
+        empty = {"actor": {"entitySearch": {"results": {"entities": [], "nextCursor": None}}}}
+        legacy_hit = {"actor": {"entitySearch": {"results": {
+            "entities": [{"guid": "m_legacy", "name": "Legacy Monitor"}],
+            "nextCursor": None,
+        }}}}
+        detail = {"actor": {"entity": {"guid": "m_legacy", "name": "Legacy Monitor", "monitorType": "SIMPLE"}}}
+        with patch.object(client.session, 'post') as mock:
+            mock.side_effect = [_mock_response(empty), _mock_response(legacy_hit), _mock_response(detail)]
+            monitors = client.get_all_synthetic_monitors()
+
+        first_query = _sent_query(mock, 0)
+        second_query = _sent_query(mock, 1)
+        assert "domain = 'SYNTH'" in first_query and "type = 'MONITOR'" in first_query
+        assert "type = 'SYNTHETIC_MONITOR'" in second_query
+        assert [m["name"] for m in monitors] == ["Legacy Monitor"]

@@ -256,7 +256,11 @@ class NewRelicClient:
                         variables {
                             name
                             type
-                            defaultValues
+                            defaultValues {
+                                value {
+                                    string
+                                }
+                            }
                             isMultiSelection
                             items {
                                 title
@@ -474,17 +478,40 @@ class NewRelicClient:
     # Synthetic Monitor Export Methods
     # =========================================================================
 
+    # entitySearch identifiers for synthetic monitors. NR's current schema
+    # uses domain='SYNTH' AND type='MONITOR'; older tenants may still return
+    # results for type='SYNTHETIC_MONITOR'. Probe both, take whichever hits.
+    _SYNTHETIC_SEARCH_VARIANTS = [
+        ("modern", "accountId = %d AND domain = 'SYNTH' AND type = 'MONITOR'"),
+        ("legacy", "accountId = %d AND type = 'SYNTHETIC_MONITOR'"),
+    ]
+
     def get_all_synthetic_monitors(self) -> List[Dict[str, Any]]:
         """Export all synthetic monitors."""
-        # NerdGraph does not substitute GraphQL variables inside the
-        # `entitySearch.query` string literal, so `accountId` must be
-        # interpolated at the Python level.
         account_id = int(self.account_id)
+        nr_export_logger.info("get_all_synthetic_monitors: entering", account_id=account_id)
+        for label, template in self._SYNTHETIC_SEARCH_VARIANTS:
+            search_expr = template % account_id
+            monitors = self._fetch_synthetic_monitors(search_expr, label)
+            if monitors:
+                nr_export_logger.info("synthetic query matched",
+                                      query_variant=label, count=len(monitors))
+                logger.info(f"Exported {len(monitors)} synthetic monitors")
+                return monitors
+            nr_export_logger.info("synthetic query returned no monitors",
+                                  query_variant=label)
+        logger.info("Exported 0 synthetic monitors")
+        return []
+
+    def _fetch_synthetic_monitors(self, search_expr: str, query_variant: str) -> List[Dict[str, Any]]:
+        """Run the entitySearch + per-entity detail loop for one query variant."""
+        # NerdGraph does not substitute GraphQL variables inside
+        # `entitySearch.query`, so interpolate the search expression directly.
         query = """
         query($cursor: String) {
             actor {
                 entitySearch(
-                    query: "accountId = %d AND type = 'SYNTHETIC_MONITOR'"
+                    query: "%s"
                     options: { limit: 200 }
                 ) {
                     results(cursor: $cursor) {
@@ -502,24 +529,25 @@ class NewRelicClient:
                 }
             }
         }
-        """ % account_id
+        """ % search_expr
 
-        monitors = []
+        monitors: List[Dict[str, Any]] = []
         cursor = None
-
         while True:
-            response = self.execute_query(query, {
-                "cursor": cursor
-            })
-
+            response = self.execute_query(query, {"cursor": cursor})
             if response.errors:
-                nr_export_logger.warning("entitySearch errors", entity_type="SYNTHETIC_MONITOR", errors=response.errors)
+                nr_export_logger.warning("entitySearch errors",
+                                         entity_type="SYNTHETIC_MONITOR",
+                                         query_variant=query_variant,
+                                         errors=response.errors)
             if not response.is_success:
                 break
 
             results = response.data["actor"]["entitySearch"]["results"]
             entities = results.get("entities", [])
-            nr_export_logger.info("entitySearch outlines", entity_type="SYNTHETIC_MONITOR",
+            nr_export_logger.info("entitySearch outlines",
+                                  entity_type="SYNTHETIC_MONITOR",
+                                  query_variant=query_variant,
                                   count=len(entities),
                                   entities=[(e.get("guid"), e.get("name")) for e in entities])
 
@@ -528,14 +556,14 @@ class NewRelicClient:
                 if full_monitor:
                     monitors.append(full_monitor)
                 else:
-                    nr_export_logger.warning("detail fetch returned None", entity_type="SYNTHETIC_MONITOR",
+                    nr_export_logger.warning("detail fetch returned None",
+                                             entity_type="SYNTHETIC_MONITOR",
+                                             query_variant=query_variant,
                                              guid=entity.get("guid"), name=entity.get("name"))
 
             cursor = results.get("nextCursor")
             if not cursor:
                 break
-
-        logger.info(f"Exported {len(monitors)} synthetic monitors")
         return monitors
 
     def get_synthetic_monitor_details(self, guid: str) -> Optional[Dict[str, Any]]:
@@ -748,7 +776,16 @@ class NewRelicClient:
         return workloads
 
     def get_workload_details(self, guid: str) -> Optional[Dict[str, Any]]:
-        """Get full workload configuration."""
+        """Get full workload configuration.
+
+        Modern NerdGraph no longer exposes ``entitySearchQueries`` as a
+        readable field on ``WorkloadEntity`` (it is mutation-input only) and
+        ``WorkloadEntity.collection`` now requires a ``name: String!`` arg.
+        Entities belonging to the workload are retrieved via the generic
+        ``CollectionEntity.collection(name: "WORKLOAD")`` path and flattened
+        back to the ``[{guid, name, type}, ...]`` shape the transformer
+        expects.
+        """
         query = """
         query($guid: EntityGuid!) {
             actor {
@@ -756,13 +793,18 @@ class NewRelicClient:
                     ... on WorkloadEntity {
                         guid
                         name
-                        collection {
-                            guid
-                            name
-                            type
-                        }
-                        entitySearchQueries {
-                            query
+                    }
+                    ... on CollectionEntity {
+                        collection(name: "WORKLOAD") {
+                            members {
+                                results {
+                                    entities {
+                                        guid
+                                        name
+                                        entityType
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -784,6 +826,14 @@ class NewRelicClient:
             nr_export_logger.warning("detail fetch: actor.entity is null",
                                      entity_type="WORKLOAD", guid=guid, raw_data=response.data)
             return None
+
+        nested = (((entity.get("collection") or {}).get("members") or {})
+                  .get("results") or {}).get("entities") or []
+        entity["collection"] = [
+            {"guid": e.get("guid"), "name": e.get("name"), "type": e.get("entityType")}
+            for e in nested
+        ]
+        entity.setdefault("entitySearchQueries", [])
         return entity
 
     # =========================================================================
