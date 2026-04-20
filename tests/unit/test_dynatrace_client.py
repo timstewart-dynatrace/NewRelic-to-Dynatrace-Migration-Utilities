@@ -516,3 +516,167 @@ class TestGen3SettingsPathAndBearerAuth:
 
         assert gen3.base.endswith("/platform/classic/environment-api/v2")
         assert classic.base.endswith("/api/v2")
+
+
+# ---------------------------------------------------------------------------
+# Wire-level regressions — inspect what actually goes out on the network.
+# PR #20 landed multipart code, but a live Gen3 tenant still returned 415
+# because `HttpTransport.__init__` sets `Content-Type: application/json` as a
+# session default, and that default wins over `requests`' auto-computed
+# multipart boundary. These tests capture outgoing request headers + body
+# at the Session.send layer so future regressions show up at unit-test time
+# instead of only against a real tenant.
+# ---------------------------------------------------------------------------
+
+
+class TestMultipartContentTypeWire:
+    """Capture what HttpTransport actually sends over the wire."""
+
+    def _capture(self, transport, caller):
+        """Run `caller(transport)` against a session.send stub; return the
+        PreparedRequest captured during the call.
+        """
+        captured = {}
+
+        def fake_send(req, **kwargs):
+            captured["headers"] = dict(req.headers)
+            captured["body"] = req.body
+            captured["url"] = req.url
+            import requests
+            r = requests.Response()
+            r.status_code = 200
+            r._content = b'{"id": "new-doc-id"}'
+            return r
+
+        with patch.object(transport.session, "send", side_effect=fake_send):
+            caller(transport)
+        return captured
+
+    def test_multipart_dashboard_send_uses_multipart_content_type(self):
+        """Regression: previously the session-default
+        `Content-Type: application/json` leaked onto multipart requests,
+        producing a multipart body with a JSON content-type header →
+        Gen3 tenants returned 415 Unsupported Media Type.
+        """
+        transport = HttpTransport(api_token="dt0s16.test")
+        client = DocumentClient(ENV, transport)
+
+        captured = self._capture(
+            transport, lambda t: client.create_dashboard({"name": "wire-test"})
+        )
+
+        content_type = captured["headers"].get("Content-Type", "")
+        assert content_type.startswith("multipart/form-data"), (
+            f"Outgoing Content-Type must be multipart/form-data; got: "
+            f"{content_type!r}. This regressed in PR #20 — session default "
+            f"`application/json` was winning over auto-multipart."
+        )
+        assert "application/json" not in content_type
+        # Body must be multipart wire-format (not a bare JSON object).
+        body_bytes = captured["body"]
+        if isinstance(body_bytes, str):
+            body_bytes = body_bytes.encode()
+        assert body_bytes.startswith(b"--"), (
+            "Body must begin with a multipart boundary marker."
+        )
+        assert b'name="content"' in body_bytes
+        assert b'name="type"' in body_bytes
+
+    def test_json_post_still_sends_application_json(self):
+        """Make sure the multipart fix didn't accidentally break regular
+        JSON POSTs (Settings 2.0, Automation API, etc.).
+        """
+        transport = HttpTransport(api_token="dt0s16.test")
+        captured = self._capture(
+            transport, lambda t: t.post("https://x/api/v2/settings/objects",
+                                        {"schemaId": "x", "value": {}})
+        )
+        assert captured["headers"].get("Content-Type") == "application/json"
+
+
+class TestAnomalyDetectorWirePayload:
+    """Capture outgoing Settings 2.0 POST body and verify it matches the
+    current builtin:davis.anomaly-detectors schema shape.
+
+    Would have caught the PR #20 miss on transformers/alert_transformer.py —
+    the transformer was still emitting {name, strategy, eventTemplate.title,
+    ...} that the tenant rejected with 400.
+    """
+
+    def _capture_post(self, transport, url, body):
+        import requests
+        captured = {}
+        def fake_send(req, **kwargs):
+            captured["body"] = req.body
+            r = requests.Response(); r.status_code = 200
+            r._content = b'[{"objectId": "obj-1"}]'
+            return r
+        with patch.object(transport.session, "send", side_effect=fake_send):
+            transport.post(url, body)
+        return captured
+
+    def test_alert_transformer_detector_matches_current_schema(self):
+        """Round-trip: AlertTransformer → SettingsV2Client.create_envelope →
+        captured Session.send body should NOT contain the old
+        `strategy`/`eventTemplate.title` keys and SHOULD contain the new
+        `analyzer`/`executionSettings` keys.
+        """
+        import json
+
+        from transformers.alert_transformer import AlertTransformer
+
+        r = AlertTransformer().transform({
+            "name": "Golden Signals",
+            "id": "pol-1",
+            "conditions": [{
+                "conditionType": "NRQL",
+                "name": "latency",
+                "nrql": {"query": "SELECT average(duration) FROM Transaction"},
+                "terms": [{"threshold": 500, "priority": "critical",
+                           "operator": "ABOVE"}],
+            }],
+            "notifications": [],
+        })
+        assert r.success
+        # The transformer result carries a list of envelope dicts under
+        # `anomaly_detectors`; pick the first.
+        envelope = r.anomaly_detectors[0]
+        # Ship it through the real SettingsV2Client POST path.
+        transport = HttpTransport(api_token="dt0s16.test")
+        client = SettingsV2Client(ENV, transport)
+        captured = self._capture_post(
+            transport, client.base + "/settings/objects", [envelope]
+        )
+        body = json.loads(captured["body"])
+        assert isinstance(body, list) and len(body) == 1
+        value = body[0]["value"]
+        # Required by current schema.
+        for req_field in ("title", "source", "analyzer", "executionSettings"):
+            assert req_field in value, (
+                f"Required field `{req_field}` missing from outgoing payload: "
+                f"{sorted(value)}"
+            )
+        # Forbidden by current schema.
+        for forbidden in ("name", "strategy"):
+            assert forbidden not in value, (
+                f"Outgoing payload still contains `{forbidden}` — the "
+                "v1.0.14 schema validators reject it with 400. This is the "
+                "regression that PR #20 missed on alert_transformer.py."
+            )
+        # source is text, not an object.
+        assert isinstance(value["source"], str)
+        # eventTemplate has only `properties`.
+        assert set(value["eventTemplate"]) == {"properties"}, (
+            f"eventTemplate keys must be only {{'properties'}}; got: "
+            f"{sorted(value['eventTemplate'])}"
+        )
+        # analyzer is well-formed.
+        assert value["analyzer"]["name"].startswith(
+            "dt.statistics.ui.anomaly_detection."
+        )
+        assert all(
+            set(item) == {"key", "value"}
+            and isinstance(item["key"], str)
+            and isinstance(item["value"], str)
+            for item in value["analyzer"]["input"]
+        )

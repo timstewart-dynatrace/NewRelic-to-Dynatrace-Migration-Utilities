@@ -168,11 +168,18 @@ class HttpTransport:
             merged_headers.update(headers)
 
         # multipart/form-data requests must NOT send Content-Type: application/json.
-        # `requests` auto-sets multipart boundary when `files=` is passed; strip
-        # the session default + any caller-supplied json content-type to avoid
-        # conflicts.
+        # `requests` auto-computes `Content-Type: multipart/form-data; boundary=...`
+        # when `files=` is passed, BUT the session default header set at
+        # construction time (`{"Content-Type": "application/json"}`) gets merged
+        # into the prepared request and WINS over the auto-computed value —
+        # resulting in a multipart body with the wrong Content-Type header, which
+        # Gen3 tenants reject with 415 Unsupported Media Type.
+        #
+        # Passing ``Content-Type=None`` in the call-level headers tells requests
+        # to drop the session default, letting its multipart-boundary
+        # computation set the correct header.
         if files is not None:
-            merged_headers.pop("Content-Type", None)
+            merged_headers["Content-Type"] = None
 
         try:
             request_kwargs: Dict[str, Any] = {
