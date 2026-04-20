@@ -274,10 +274,21 @@ class NewRelicClient:
         }
         """
 
+        nr_export_logger.debug("detail fetch query", entity_type="DASHBOARD", guid=guid, query=query)
         response = self.execute_query(query, {"guid": guid})
-        if response.is_success and response.data:
-            return response.data["actor"]["entity"]
-        return None
+        if response.errors:
+            nr_export_logger.warning("detail fetch GraphQL errors", entity_type="DASHBOARD",
+                                     guid=guid, errors=response.errors)
+        if not response.data:
+            nr_export_logger.warning("detail fetch: response.data is None",
+                                     entity_type="DASHBOARD", guid=guid)
+            return None
+        entity = (response.data.get("actor") or {}).get("entity")
+        if entity is None:
+            nr_export_logger.warning("detail fetch: actor.entity is null",
+                                     entity_type="DASHBOARD", guid=guid, raw_data=response.data)
+            return None
+        return entity
 
     # =========================================================================
     # Alert Export Methods
@@ -554,10 +565,21 @@ class NewRelicClient:
         }
         """
 
+        nr_export_logger.debug("detail fetch query", entity_type="SYNTHETIC_MONITOR", guid=guid, query=query)
         response = self.execute_query(query, {"guid": guid})
-        if response.is_success and response.data:
-            return response.data["actor"]["entity"]
-        return None
+        if response.errors:
+            nr_export_logger.warning("detail fetch GraphQL errors", entity_type="SYNTHETIC_MONITOR",
+                                     guid=guid, errors=response.errors)
+        if not response.data:
+            nr_export_logger.warning("detail fetch: response.data is None",
+                                     entity_type="SYNTHETIC_MONITOR", guid=guid)
+            return None
+        entity = (response.data.get("actor") or {}).get("entity")
+        if entity is None:
+            nr_export_logger.warning("detail fetch: actor.entity is null",
+                                     entity_type="SYNTHETIC_MONITOR", guid=guid, raw_data=response.data)
+            return None
+        return entity
 
     def get_synthetic_monitor_script(self, monitor_guid: str) -> Optional[str]:
         """Get script for scripted synthetic monitors."""
@@ -748,10 +770,21 @@ class NewRelicClient:
         }
         """
 
+        nr_export_logger.debug("detail fetch query", entity_type="WORKLOAD", guid=guid, query=query)
         response = self.execute_query(query, {"guid": guid})
-        if response.is_success and response.data:
-            return response.data["actor"]["entity"]
-        return None
+        if response.errors:
+            nr_export_logger.warning("detail fetch GraphQL errors", entity_type="WORKLOAD",
+                                     guid=guid, errors=response.errors)
+        if not response.data:
+            nr_export_logger.warning("detail fetch: response.data is None",
+                                     entity_type="WORKLOAD", guid=guid)
+            return None
+        entity = (response.data.get("actor") or {}).get("entity")
+        if entity is None:
+            nr_export_logger.warning("detail fetch: actor.entity is null",
+                                     entity_type="WORKLOAD", guid=guid, raw_data=response.data)
+            return None
+        return entity
 
     # =========================================================================
     # Full Export Method
