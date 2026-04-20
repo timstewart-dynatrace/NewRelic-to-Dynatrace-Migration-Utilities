@@ -129,17 +129,28 @@ Edit `.env` with your credentials:
 ```
 NEW_RELIC_API_KEY=NRAK-xxxxxxxxxxxxxxxxxxxx
 NEW_RELIC_ACCOUNT_ID=1234567
-DYNATRACE_API_TOKEN=dt0c01.xxxxxxxx.xxxxxxxx
+# Gen3 default — Platform Token (dt0s16.*). Use dt0c01.* only with --legacy.
+DYNATRACE_API_TOKEN=dt0s16.XXXXX.YYYYY
 DYNATRACE_ENVIRONMENT_URL=https://xxxxx.live.dynatrace.com
 ```
 
 **New Relic API Key**: Generate at [one.newrelic.com/api-keys](https://one.newrelic.com/api-keys) (User key type).
 
-**Dynatrace API Token**: Create at `Settings > Integration > Dynatrace API` with these scopes:
-- `Read configuration` / `Write configuration`
-- `Read settings` / `Write settings`
-- `Create and read synthetic monitors`
-- `Read SLO` / `Write SLO`
+**Dynatrace token scopes**: The full minimum/recommended scope reference is in
+[`token-scopes.md`](./token-scopes.md). For the default Gen3 path, a Platform
+Token (`dt0s16.*`) with these scopes is sufficient:
+
+- `settings:schemas:read`, `settings:objects:read`, `settings:objects:write`
+- `document:documents:read`, `document:documents:write`
+- `automation:workflows:read`, `automation:workflows:write`, `automation:workflows:run`
+- `storage:logs:read`, `storage:events:read`, `storage:metrics:read`,
+  `storage:spans:read`, `storage:entities:read`, `storage:buckets:read`
+
+Run `python3 migrate.py preflight` after provisioning the token — it will
+tell you exactly which scopes are still missing and how to add them.
+
+For `--legacy` runs against Classic tenants you need a `dt0c01.*` token with
+`ReadConfig` + `WriteConfig` (full list in `token-scopes.md`).
 
 ### Preview What Would Be Migrated
 

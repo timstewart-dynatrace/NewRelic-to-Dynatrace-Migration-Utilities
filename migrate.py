@@ -1748,8 +1748,11 @@ def export_terraform(input_dir: str, output_dir: str, legacy: bool):
 def preflight():
     """Probe the target Dynatrace tenant for Gen3 API availability.
 
-    Reports Settings 2.0, Document API, and Automation API reachability.
-    Suggests `--legacy` if any Gen3 surface is missing.
+    Reports Settings 2.0, Document API, and Automation API reachability. For
+    each API that is NOT reachable, prints the endpoint probed, the HTTP
+    status, the minimum token scopes the probe needed, and step-by-step
+    remediation. Ends with a recommended-scope summary for a full migrate run.
+    Suggests ``--legacy`` if any Gen3 surface is missing after remediation.
     """
     try:
         settings = get_settings()
@@ -1761,23 +1764,128 @@ def preflight():
         environment_url=settings.dynatrace.environment_url,
         api_token=settings.dynatrace.api_token,
     )
-    report = client.preflight_gen3()
+    from clients.dynatrace_client import GRAIL_SCOPES_FULL_RUN, PreflightCheck
+
+    raw = client.preflight_gen3()
+    # Back-compat: legacy tests patch `preflight_gen3` to return
+    # {name: bool}. Normalize to a list of PreflightCheck so the renderer
+    # has one code path.
+    checks: List[PreflightCheck] = _normalize_preflight_report(raw)
 
     table = Table(title="Dynatrace Gen3 Preflight")
     table.add_column("API", style="cyan")
     table.add_column("Reachable", justify="center")
-    for name in ("settings_v2", "document_api", "automation_api"):
-        ok = report.get(name, False)
-        table.add_row(name, "[green]yes[/green]" if ok else "[red]no[/red]")
+    table.add_column("Status", justify="center")
+    table.add_column("Minimum scopes", style="dim")
+    for check in checks:
+        status_cell = str(check.status_code) if check.status_code else "-"
+        reachable_cell = (
+            "[green]yes[/green]" if check.reachable else "[red]no[/red]"
+        )
+        table.add_row(
+            check.api,
+            reachable_cell,
+            status_cell,
+            ", ".join(check.scopes_min),
+        )
     console.print(table)
 
-    if not all(report.values()):
+    for check in checks:
+        header = (
+            f"[green]✓ {check.api}[/green]"
+            if check.reachable
+            else f"[red]✗ {check.api}[/red]"
+        )
+        console.print(f"\n{header} — {check.endpoint}")
+        console.print(f"  [dim]Diagnosis:[/dim] {check.diagnosis}")
         console.print(
-            "\n[yellow]One or more Gen3 APIs are not reachable. "
-            "Consider running with `--legacy` until the tenant is upgraded.[/yellow]"
+            f"  [dim]Minimum scopes (this probe):[/dim] "
+            f"{', '.join(check.scopes_min)}"
+        )
+        console.print(
+            f"  [dim]Recommended scopes (full migrate):[/dim] "
+            f"{', '.join(check.scopes_recommended)}"
+        )
+        if not check.reachable and check.remediation:
+            console.print("  [yellow]Remediation:[/yellow]")
+            for i, step in enumerate(check.remediation, start=1):
+                console.print(f"    {i}. {step}")
+
+    console.print("\n[bold]Recommended token scopes for a full migrate run[/bold]")
+    console.print(
+        "[dim]Add every scope below to your Platform Token "
+        "(format: dt0s16.*) before running `python3 migrate.py migrate`.[/dim]\n"
+    )
+    summary = Table(show_header=True, header_style="bold")
+    summary.add_column("Surface")
+    summary.add_column("Scopes")
+    for check in checks:
+        summary.add_row(check.api, ", ".join(check.scopes_recommended))
+    summary.add_row("grail_read", ", ".join(GRAIL_SCOPES_FULL_RUN))
+    console.print(summary)
+    console.print(
+        "\n[dim]See docs/token-scopes.md for the full scope reference, "
+        "tenant UI navigation, and a verify `curl` snippet per API.[/dim]"
+    )
+
+    if not all(c.reachable for c in checks):
+        console.print(
+            "\n[yellow]One or more Gen3 APIs are not reachable. Fix the "
+            "remediation items above, or rerun with `--legacy` until the "
+            "tenant is upgraded.[/yellow]"
         )
         sys.exit(1)
-    console.print("\n[green]Gen3 APIs reachable — default mode is safe to use.[/green]")
+    console.print(
+        "\n[green]Gen3 APIs reachable — default mode is safe to use.[/green]"
+    )
+
+
+def _normalize_preflight_report(raw):
+    """Accept either the new `List[PreflightCheck]` or a legacy `Dict[str, bool]`.
+
+    Legacy callers (including the original unit tests) passed a bool-per-API
+    dict. Convert that into skeletal PreflightCheck rows so the render path is
+    a single code path.
+    """
+    from clients.dynatrace_client import (
+        _AUTOMATION_SCOPES_MIN,
+        _AUTOMATION_SCOPES_RECOMMENDED,
+        _DOCUMENT_SCOPES_MIN,
+        _DOCUMENT_SCOPES_RECOMMENDED,
+        _SETTINGS_SCOPES_MIN,
+        _SETTINGS_SCOPES_RECOMMENDED,
+        PreflightCheck,
+    )
+
+    if isinstance(raw, list):
+        return raw
+
+    mapping = {
+        "settings_v2": (_SETTINGS_SCOPES_MIN, _SETTINGS_SCOPES_RECOMMENDED),
+        "document_api": (_DOCUMENT_SCOPES_MIN, _DOCUMENT_SCOPES_RECOMMENDED),
+        "automation_api": (_AUTOMATION_SCOPES_MIN, _AUTOMATION_SCOPES_RECOMMENDED),
+    }
+    checks: List[PreflightCheck] = []
+    for name, (scopes_min, scopes_rec) in mapping.items():
+        reachable = bool(raw.get(name, False))
+        checks.append(
+            PreflightCheck(
+                api=name,
+                endpoint="(not probed — legacy report shape)",
+                reachable=reachable,
+                status_code=200 if reachable else 0,
+                error=None,
+                scopes_min=scopes_min,
+                scopes_recommended=scopes_rec,
+                diagnosis=(
+                    "OK" if reachable else "Not reachable (no status captured)."
+                ),
+                remediation=[] if reachable else [
+                    f"Add minimum scopes to the token: {', '.join(scopes_min)}"
+                ],
+            )
+        )
+    return checks
 
 
 # Register subcommands

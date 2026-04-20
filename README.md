@@ -105,6 +105,11 @@ python migrate.py migrate --full     # Execute migration
 
 For a detailed walkthrough with sample data, see [docs/quickstart.md](docs/quickstart.md).
 
+Before running `migrate`, provision a Dynatrace Platform Token (`dt0s16.*`)
+with the scopes documented in [docs/token-scopes.md](docs/token-scopes.md),
+then run `python migrate.py preflight` — it reports which scopes are
+missing and how to fix them.
+
 ### CLI Reference
 
 | Command                                            | Description                                      |

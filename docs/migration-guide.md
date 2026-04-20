@@ -94,21 +94,41 @@ python migrate.py --version
 
 #### Dynatrace API Token
 
-1. Go to **Settings > Integration > Dynatrace API** (or **Access Tokens** in newer environments)
-2. Click **Generate new token**
-3. Enable these scopes:
+The default `migrate` path targets **Gen3 Platform APIs** and requires a
+**Platform Token** (prefix `dt0s16.`). The `--legacy` path targets Classic
+Config v1 and requires a classic token (prefix `dt0c01.`). See
+[`token-scopes.md`](./token-scopes.md) for the full scope reference.
+
+**Gen3 (default) — Platform Token (`dt0s16.*`):**
+
+1. Go to **Access Tokens** in your Dynatrace tenant
+2. Click **Generate new token** (name it e.g. `nrdt-migrate`)
+3. Add these scopes:
 
 | Scope | Used For |
 |-------|----------|
-| `Read configuration` | Reading existing dashboards, monitors |
-| `Write configuration` | Creating dashboards, metric events |
-| `Read settings` | Reading alerting profiles, management zones |
-| `Write settings` | Creating alerting profiles, management zones, auto-tags |
-| `Create and read synthetic monitors, locations, and nodes` | Importing synthetic monitors |
-| `Read SLO` | Checking existing SLOs |
-| `Write SLO` | Creating SLOs |
+| `settings:schemas:read` | Listing Settings 2.0 schemas (preflight) |
+| `settings:objects:read` | Reading existing alerting, segments, SLOs, synthetic tests |
+| `settings:objects:write` | Creating Gen3 settings objects |
+| `document:documents:read` | Reading existing Grail dashboards |
+| `document:documents:write` | Creating Grail dashboards |
+| `automation:workflows:read` | Reading existing workflows |
+| `automation:workflows:write` | Creating workflows from alert policies |
+| `automation:workflows:run` | Test-running a workflow after import |
+| `storage:logs:read`, `storage:events:read`, `storage:metrics:read`, `storage:spans:read`, `storage:entities:read`, `storage:buckets:read` | Grail reads during transform + validation |
 
-4. The token will start with `dt0c01.`
+4. The token will start with `dt0s16.`
+5. Verify: `python3 migrate.py preflight` — reports missing scopes and how to fix.
+
+**Legacy (`--legacy`) — Classic Token (`dt0c01.*`):**
+
+| Scope | Used For |
+|-------|----------|
+| `ReadConfig` / `WriteConfig` | Classic alerting profiles, metric events, management zones, auto-tags |
+| `Create and read synthetic monitors, locations, and nodes` | Classic synthetic monitors |
+| `Read SLO` / `Write SLO` | Classic SLOs |
+
+4. The classic token will start with `dt0c01.`
 
 ### 2.3 Configure environment
 
@@ -125,7 +145,8 @@ NEW_RELIC_ACCOUNT_ID=1234567
 NEW_RELIC_REGION=US                    # US or EU
 
 # Required -- Dynatrace
-DYNATRACE_API_TOKEN=dt0c01.XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
+# Gen3 default: Platform Token (dt0s16.*). Use dt0c01.* with --legacy.
+DYNATRACE_API_TOKEN=dt0s16.XXXXX.YYYYY
 DYNATRACE_ENVIRONMENT_URL=https://abc12345.live.dynatrace.com
 
 # Optional -- Migration settings
@@ -759,7 +780,8 @@ python migrate.py --version
 | Problem | Cause | Solution |
 |---------|-------|----------|
 | `Configuration error: Invalid NR API key` | Key doesn't start with `NRAK-` | Regenerate at one.newrelic.com/api-keys |
-| `Configuration error: Invalid DT token` | Token doesn't start with `dt0c01.` | Regenerate in Dynatrace Settings |
+| `Configuration error: Invalid DT token` | Token prefix unrecognized — Gen3 expects `dt0s16.`, `--legacy` expects `dt0c01.` | Regenerate in Dynatrace Access Tokens |
+| Preflight shows 401/403 on one API | Token reached tenant but lacks a scope for that API | Run `python3 migrate.py preflight`; it prints the missing scopes and UI path. See [`token-scopes.md`](./token-scopes.md) |
 | `Configuration error: Invalid environment URL` | URL format wrong | Must be `https://<id>.live.dynatrace.com` |
 | `ModuleNotFoundError` | Virtual env not activated | `source .venv/bin/activate` |
 

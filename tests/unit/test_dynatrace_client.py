@@ -254,3 +254,111 @@ class TestBackupAll:
         assert "management_zones" not in backup
         for key in ("dashboards", "workflows", "anomaly_detectors", "segments"):
             assert key in backup
+
+
+# ---------------------------------------------------------------------------
+# Preflight diagnostics
+# ---------------------------------------------------------------------------
+
+
+class TestPreflightGen3:
+    """preflight_gen3 must capture per-API status + scope metadata so the CLI
+    can tell the operator exactly which scope is missing and how to fix it.
+    """
+
+    def _client_with_responses(self, responses_by_url):
+        """Build a DynatraceClient whose transport.get returns canned
+        DynatraceResponse objects keyed by endpoint URL substring.
+        """
+        c = DynatraceClient(environment_url=ENV, api_token="t")
+
+        def fake_get(url, **kwargs):
+            for key, resp in responses_by_url.items():
+                if key in url:
+                    return resp
+            return DynatraceResponse(data=None, status_code=0, error="no stub")
+
+        c.transport.get = MagicMock(side_effect=fake_get)
+        return c
+
+    def test_all_reachable_returns_ok_checks(self):
+        c = self._client_with_responses({
+            "/api/v2/settings/schemas": DynatraceResponse(data={}, status_code=200),
+            "/platform/document/v1/documents": DynatraceResponse(data={}, status_code=200),
+            "/platform/automation/v1/workflows": DynatraceResponse(data={}, status_code=200),
+        })
+        checks = c.preflight_gen3()
+        assert [ch.api for ch in checks] == [
+            "settings_v2", "document_api", "automation_api"
+        ]
+        assert all(ch.reachable for ch in checks)
+        assert all(ch.status_code == 200 for ch in checks)
+        assert all(ch.remediation == [] for ch in checks)
+
+    def test_403_produces_scope_specific_remediation(self):
+        """A 403 on document_api must surface the document:documents:read
+        scope name and include remediation steps pointing at the UI.
+        """
+        c = self._client_with_responses({
+            "/api/v2/settings/schemas": DynatraceResponse(data={}, status_code=200),
+            "/platform/document/v1/documents": DynatraceResponse(
+                data=None, status_code=403, error="Forbidden"
+            ),
+            "/platform/automation/v1/workflows": DynatraceResponse(data={}, status_code=200),
+        })
+        checks = {ch.api: ch for ch in c.preflight_gen3()}
+        doc = checks["document_api"]
+        assert doc.reachable is False
+        assert doc.status_code == 403
+        assert "document:documents:read" in doc.scopes_min
+        assert "HTTP 403" in doc.diagnosis
+        # Remediation mentions the UI path and a re-run command.
+        assert any("Access Tokens" in s for s in doc.remediation)
+        assert any("preflight" in s for s in doc.remediation)
+
+    def test_404_suggests_legacy_mode(self):
+        """A 404 on an automation endpoint indicates a Classic tenant and
+        must nudge the operator toward --legacy."""
+        c = self._client_with_responses({
+            "/api/v2/settings/schemas": DynatraceResponse(data={}, status_code=200),
+            "/platform/document/v1/documents": DynatraceResponse(data={}, status_code=200),
+            "/platform/automation/v1/workflows": DynatraceResponse(
+                data=None, status_code=404, error="Not Found"
+            ),
+        })
+        checks = {ch.api: ch for ch in c.preflight_gen3()}
+        auto = checks["automation_api"]
+        assert auto.reachable is False
+        assert auto.status_code == 404
+        assert "--legacy" in " ".join(auto.remediation)
+
+    def test_network_failure_status_code_zero(self):
+        """Status 0 (DNS/TLS/network) produces a distinct diagnosis."""
+        c = self._client_with_responses({
+            "/api/v2/settings/schemas": DynatraceResponse(
+                data=None, status_code=0, error="Connection refused"
+            ),
+            "/platform/document/v1/documents": DynatraceResponse(data={}, status_code=200),
+            "/platform/automation/v1/workflows": DynatraceResponse(data={}, status_code=200),
+        })
+        checks = {ch.api: ch for ch in c.preflight_gen3()}
+        sv = checks["settings_v2"]
+        assert sv.reachable is False
+        assert sv.status_code == 0
+        assert "network" in sv.diagnosis.lower() or "DNS" in sv.diagnosis
+        # Remediation should point at DYNATRACE_ENVIRONMENT_URL.
+        assert any("DYNATRACE_ENVIRONMENT_URL" in s for s in sv.remediation)
+
+    def test_recommended_scopes_include_write(self):
+        """Recommended scopes must include the write variants even when the
+        minimum (read-only) probe succeeds."""
+        c = self._client_with_responses({
+            "/api/v2/settings/schemas": DynatraceResponse(data={}, status_code=200),
+            "/platform/document/v1/documents": DynatraceResponse(data={}, status_code=200),
+            "/platform/automation/v1/workflows": DynatraceResponse(data={}, status_code=200),
+        })
+        checks = {ch.api: ch for ch in c.preflight_gen3()}
+        assert "settings:objects:write" in checks["settings_v2"].scopes_recommended
+        assert "document:documents:write" in checks["document_api"].scopes_recommended
+        assert "automation:workflows:write" in checks["automation_api"].scopes_recommended
+        assert "automation:workflows:run" in checks["automation_api"].scopes_recommended
