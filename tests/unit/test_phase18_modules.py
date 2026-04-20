@@ -1,7 +1,6 @@
 """Tests for Phase 18 modules: Cloud (AWS/Azure/GCP), Kubernetes, AIOps,
 Vulnerability Mgmt, NPM, AI Monitoring, Prometheus."""
 
-import pytest
 
 from transformers import (
     AIMonitoringTransformer,
@@ -12,7 +11,6 @@ from transformers import (
     PrometheusTransformer,
     VulnerabilityTransformer,
 )
-
 
 # ---------------------------------------------------------------------------
 # CloudIntegrationTransformer

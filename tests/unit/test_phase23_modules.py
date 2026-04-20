@@ -18,8 +18,7 @@ from transformers import (
     StatsDTransformer,
 )
 from transformers.metric_transform import MetricTransformRegistry
-from transformers.nrql_converter import _sync_confidence_score, ConversionResult
-
+from transformers.nrql_converter import ConversionResult, _sync_confidence_score
 
 # ---------------------------------------------------------------------------
 # KeyTransactionTransformer
@@ -262,11 +261,11 @@ class TestConfidenceScoreSync:
 class TestMappingSubmodules:
     def test_per_concern_imports(self):
         # Each submodule must expose exactly the one table it promises.
-        from transformers.mappings.metrics import METRIC_MAP
-        from transformers.mappings.attributes import ATTR_MAP
         from transformers.mappings.aggregations import AGG_MAP
+        from transformers.mappings.attributes import ATTR_MAP
         from transformers.mappings.event_types import EVENT_TYPE_MAP
         from transformers.mappings.metric_transforms import METRIC_TRANSFORMS
+        from transformers.mappings.metrics import METRIC_MAP
         from transformers.mappings.visualizations import VIZ_MAP
         assert isinstance(METRIC_MAP, dict)
         assert isinstance(ATTR_MAP, dict)

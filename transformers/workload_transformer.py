@@ -16,9 +16,9 @@ Legacy (Management Zone) behavior is preserved in
 `--legacy`.
 """
 
+import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
-import re
 
 import structlog
 

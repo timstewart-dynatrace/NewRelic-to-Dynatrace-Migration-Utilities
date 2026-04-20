@@ -5,7 +5,6 @@ from unittest.mock import patch
 from click.testing import CliRunner
 
 import migrate as migrate_mod
-from clients.legacy import LegacyDynatraceV1Client
 from clients.dynatrace_client import DynatraceClient
 from transformers.legacy import LegacyAlertTransformer
 

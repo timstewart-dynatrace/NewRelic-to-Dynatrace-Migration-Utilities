@@ -19,8 +19,8 @@ queries or dashboard tiles.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 import json
+from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 import structlog

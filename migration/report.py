@@ -67,7 +67,7 @@ class ConversionReport:
         ]
         if not scored:
             return None
-        return sum(scored) / len(scored)
+        return float(sum(scored) / len(scored))
 
     def summary(self) -> Dict:
         """Return aggregate statistics about conversion results."""

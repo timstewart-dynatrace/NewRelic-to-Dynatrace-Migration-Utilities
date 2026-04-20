@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import Callable, Iterable, List, Optional, Tuple, TypeVar
+from typing import Callable, List, Optional, Tuple, TypeVar
 
 T = TypeVar("T")
 

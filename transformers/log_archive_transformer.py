@@ -104,7 +104,7 @@ class LogArchiveTransformer:
                     }
                     if filter_nrql:
                         warnings.append(
-                            f"Log-archive filter NRQL carried through as a TODO "
+                            "Log-archive filter NRQL carried through as a TODO "
                             "comment — verify the DPL matcher after import."
                         )
 

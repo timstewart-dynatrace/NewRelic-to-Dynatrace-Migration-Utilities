@@ -219,7 +219,7 @@ def _payload_equal(baseline_item: Dict[str, Any], live_item: Dict[str, Any]) -> 
     """
     b = baseline_item.get("value", baseline_item)
     l = live_item.get("value", live_item)
-    return _normalize(b) == _normalize(l)
+    return bool(_normalize(b) == _normalize(l))
 
 
 def _normalize(payload: Any) -> Any:

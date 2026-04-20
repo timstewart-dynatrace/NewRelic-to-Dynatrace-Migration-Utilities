@@ -11,7 +11,6 @@ from transformers import (
     SyntheticSpecializedTransformer,
 )
 
-
 # ---------------------------------------------------------------------------
 # DatabaseMonitoringTransformer
 # ---------------------------------------------------------------------------

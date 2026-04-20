@@ -20,7 +20,7 @@ authoritative — DT maintains its own causal timeline.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 import structlog
 

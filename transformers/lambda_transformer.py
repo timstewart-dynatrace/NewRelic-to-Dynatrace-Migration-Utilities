@@ -122,7 +122,7 @@ class LambdaTransformer:
                     "authenticationData": {
                         # operator fills after import
                         "type": "ROLE",
-                        "roleArn": f"arn:aws:iam::<account>:role/dynatrace-monitoring",
+                        "roleArn": "arn:aws:iam::<account>:role/dynatrace-monitoring",
                     },
                     "taggingStrategy": "TO_BE_MONITORED",
                     "tagsToMonitor": [{"name": "dt-managed", "value": "true"}],

@@ -12,7 +12,6 @@ from transformers.legacy.alert_transformer_v1 import (
     AlertTransformer,
     AlertTransformResult,
     NotificationTransformer,
-    NotificationTransformResult,
 )
 from transformers.legacy.dashboard_transformer_v1 import DashboardTransformer, DashboardTransformResult
 from transformers.legacy.slo_transformer_v1 import SLOTransformer, SLOTransformResult
