@@ -160,21 +160,35 @@ class HttpTransport:
         params: Optional[Dict[str, Any]] = None,
         prefer_oauth: bool = False,
         headers: Optional[Dict[str, str]] = None,
+        files: Optional[Dict[str, Any]] = None,
     ) -> DynatraceResponse:
         self._rate_limit_wait()
         merged_headers = {"Authorization": self._auth_header(prefer_oauth)}
         if headers:
             merged_headers.update(headers)
 
+        # multipart/form-data requests must NOT send Content-Type: application/json.
+        # `requests` auto-sets multipart boundary when `files=` is passed; strip
+        # the session default + any caller-supplied json content-type to avoid
+        # conflicts.
+        if files is not None:
+            merged_headers.pop("Content-Type", None)
+
         try:
-            response = self.session.request(
-                method=method,
-                url=url,
-                json=data,
-                params=params,
-                headers=merged_headers,
-                timeout=60,
-            )
+            request_kwargs: Dict[str, Any] = {
+                "method": method,
+                "url": url,
+                "params": params,
+                "headers": merged_headers,
+                "timeout": 60,
+            }
+            if files is not None:
+                # Session default Content-Type is application/json; pass files
+                # positional so `requests` computes the multipart boundary.
+                request_kwargs["files"] = files
+            else:
+                request_kwargs["json"] = data
+            response = self.session.request(**request_kwargs)
             response_data: Optional[Any] = None
             if response.content:
                 try:
@@ -207,6 +221,27 @@ class HttpTransport:
         self, url: str, data: Dict[str, Any], **kwargs: Any
     ) -> DynatraceResponse:
         return self.request("POST", url, data=data, **kwargs)
+
+    def post_multipart(
+        self,
+        url: str,
+        files: Dict[str, Any],
+        *,
+        prefer_oauth: bool = False,
+    ) -> DynatraceResponse:
+        """POST multipart/form-data — for Gen3 Document API uploads.
+
+        ``files`` follows the ``requests`` library convention:
+          - ``{"field": (None, "value")}`` → plain form field
+          - ``{"field": ("name.ext", body, "mime/type")}`` → file part
+
+        Content-Type header is auto-computed by ``requests`` with the
+        correct boundary; any caller/session default ``application/json``
+        is stripped because Gen3 tenants 415 on the wrong media type.
+        """
+        return self.request(
+            "POST", url, files=files, prefer_oauth=prefer_oauth
+        )
 
     def put(
         self, url: str, data: Dict[str, Any], **kwargs: Any

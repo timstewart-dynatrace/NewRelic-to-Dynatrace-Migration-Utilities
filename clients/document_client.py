@@ -50,15 +50,24 @@ class DocumentClient:
         return self.http.get(f"{self.base}/{doc_id}", prefer_oauth=True)
 
     def create_dashboard(self, dashboard_content: Dict[str, Any]) -> ImportResult:
-        """Create a Gen3 Grail dashboard (type='dashboard')."""
+        """Create a Gen3 Grail dashboard (type='dashboard').
+
+        The Gen3 Document API (``/platform/document/v1/documents``) rejects
+        ``application/json`` bodies with **415 Unsupported Media Type** and
+        expects ``multipart/form-data`` with separate parts for the metadata
+        (``name``, ``type``, ``isPrivate``) and the dashboard payload
+        (``content``). Mirrors the shape the official
+        ``@dynatrace-sdk/client-document`` SDK sends on the wire.
+        """
         name = dashboard_content.get("name", "Untitled Dashboard")
-        body = {
-            "name": name,
-            "type": "dashboard",
-            "content": json.dumps(dashboard_content),
-            "isPrivate": False,
+        content_json = json.dumps(dashboard_content)
+        files = {
+            "name": (None, name),
+            "type": (None, "dashboard"),
+            "isPrivate": (None, "false"),
+            "content": ("content.json", content_json, "application/json"),
         }
-        response = self.http.post(self.base, body, prefer_oauth=True)
+        response = self.http.post_multipart(self.base, files, prefer_oauth=True)
         if response.is_success and isinstance(response.data, dict):
             return ImportResult(
                 entity_type="dashboard",

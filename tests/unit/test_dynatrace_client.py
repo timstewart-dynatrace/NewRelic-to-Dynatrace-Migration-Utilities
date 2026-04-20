@@ -204,16 +204,34 @@ class TestDocumentClient:
         assert second_params["pageKey"] == "pk-2"
         assert "nextPageKey" not in second_params
 
-    def test_create_dashboard_posts_document_payload(self):
+    def test_create_dashboard_posts_multipart_form_data(self):
+        # Gen3 Document API rejects application/json with 415. Must send
+        # multipart/form-data with separate `name`, `type`, `isPrivate`, and
+        # `content` parts — mirrors the `@dynatrace-sdk/client-document` wire
+        # format.
         transport = MagicMock(spec=HttpTransport)
-        transport.post.return_value = _ok({"id": "doc-1"})
+        transport.post_multipart.return_value = _ok({"id": "doc-1"})
         client = DocumentClient(ENV, transport)
         result = client.create_dashboard({"name": "svc", "tiles": {}})
         assert result.success
         assert result.dynatrace_id == "doc-1"
-        posted = transport.post.call_args.args[1]
-        assert posted["type"] == "dashboard"
-        assert "content" in posted
+
+        # The old .post(json=body) path must NOT be used anymore.
+        assert not transport.post.called, (
+            "create_dashboard must not fall back to application/json POST — "
+            "Gen3 Document API returns 415 for that."
+        )
+        # Verify multipart shape.
+        files = transport.post_multipart.call_args.kwargs.get(
+            "files"
+        ) or transport.post_multipart.call_args.args[1]
+        assert files["name"] == (None, "svc")
+        assert files["type"] == (None, "dashboard")
+        assert files["isPrivate"] == (None, "false")
+        content_part = files["content"]
+        assert content_part[0] == "content.json"
+        assert '"tiles"' in content_part[1]
+        assert content_part[2] == "application/json"
 
     def test_should_target_apps_subdomain(self):
         transport = MagicMock(spec=HttpTransport)
