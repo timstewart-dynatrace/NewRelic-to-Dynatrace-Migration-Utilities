@@ -259,3 +259,31 @@ class TestCliMetricMapWiring:
             os.unlink(csv_path)
             if os.path.exists(out_path):
                 os.unlink(out_path)
+
+
+# ---------------------------------------------------------------------------
+# Regression for gh import-phase issues #4/#5/#6 — synthetic/segment/IAM
+# must be SKIPPED (not import-failed) because the Gen3 endpoints for these
+# aren't wired into this tool. Source-inspection tests pin the skip wiring
+# so a future refactor can't silently re-enable failing imports.
+# ---------------------------------------------------------------------------
+
+
+class TestImportPhaseSkips:
+    def _import_phase_src(self):
+        import inspect
+
+        import migrate
+        return inspect.getsource(migrate.MigrationOrchestrator._import_phase)
+
+    def test_synthetic_tests_are_skipped_not_imported(self):
+        src = self._import_phase_src()
+        # _skip(...) must be invoked with the synthetic label; _push must NOT.
+        assert '_skip(' in src
+        assert 'type_name="synthetic_test"' in src
+        assert 'per-facet settings objects' in src
+        # The old failing path (create_synthetic_test via _push) must be gone.
+        assert 'self.dt_client.create_synthetic_test' not in src, (
+            "create_synthetic_test is still being called from the import "
+            "phase — the fix for gh #4 requires _skip(), not _push()."
+        )

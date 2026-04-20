@@ -756,6 +756,33 @@ class MigrationOrchestrator:
                             _import_one(entity, type_name)
                 progress.update(task, completed=1)
 
+            def _skip(items, label, type_name, reason):
+                """Skip entity type entirely — Gen3 endpoint not supported here.
+
+                Adds one entry per item to import_results["skipped"] so the
+                summary's Skipped column reflects the right count. These
+                entries are NOT counted as failures.
+                """
+                if not items:
+                    return
+                console.print(
+                    f"  [yellow]↷ Skipping {len(items)} {label}[/yellow] "
+                    f"[dim]({reason})[/dim]"
+                )
+                for entity in items:
+                    name = "Unnamed"
+                    if isinstance(entity, dict):
+                        name = (
+                            entity.get("value", {}).get("name")
+                            or entity.get("value", {}).get("title")
+                            or entity.get("name", "Unnamed")
+                        )
+                    import_results["skipped"].append({
+                        "type": type_name,
+                        "name": name,
+                        "reason": reason,
+                    })
+
             if "alerts" in components:
                 _push(
                     transformed_data.get("anomaly_detectors", []),
@@ -771,11 +798,20 @@ class MigrationOrchestrator:
                 )
 
             if "synthetics" in components:
-                _push(
+                # Gen3 synthetic monitors require per-facet settings objects
+                # (builtin:synthetic.http.*, .browser.*, .multiprotocol.*)
+                # instead of a single builtin:synthetic_test envelope. That
+                # multi-envelope emission is a separate project; for now we
+                # mark synthetic imports as cleanly SKIPPED so the migration
+                # summary is honest rather than reporting import failures.
+                _skip(
                     transformed_data.get("synthetic_tests", []),
-                    "synthetic tests",
-                    self.dt_client.create_synthetic_test,
-                    "synthetic_test",
+                    label="synthetic tests",
+                    type_name="synthetic_test",
+                    reason=(
+                        "Gen3 synthetic emission requires per-facet settings "
+                        "objects; separate project"
+                    ),
                 )
 
             if "slos" in components:
