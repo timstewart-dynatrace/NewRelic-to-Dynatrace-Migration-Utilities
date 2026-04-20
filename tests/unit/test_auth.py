@@ -11,7 +11,18 @@ from utils.auth import get_auth_header, get_dt_oauth_token, ms_to_dql_duration, 
 
 class TestGetAuthHeader:
     def test_should_return_api_token_for_dt0c01(self):
+        # Classic Api-Token.
         assert get_auth_header("dt0c01.ABCDEF") == "Api-Token dt0c01.ABCDEF"
+
+    def test_should_return_bearer_for_dt0s01_platform_oauth_token(self):
+        # OAuth2-issued platform token.
+        assert get_auth_header("dt0s01.PLATFORM_OAUTH") == "Bearer dt0s01.PLATFORM_OAUTH"
+
+    def test_should_return_bearer_for_dt0s16_platform_static_token(self):
+        # Static Platform Token — regression for the lab repro where Gen3
+        # tenants reject `Api-Token` with 401 "Unsupported authorization
+        # scheme".
+        assert get_auth_header("dt0s16.PLATFORM_STATIC") == "Bearer dt0s16.PLATFORM_STATIC"
 
     def test_should_return_bearer_for_other_tokens(self):
         assert get_auth_header("eyJhbGciOi...") == "Bearer eyJhbGciOi..."

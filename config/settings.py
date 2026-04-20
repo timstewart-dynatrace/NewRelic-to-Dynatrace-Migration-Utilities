@@ -68,8 +68,16 @@ class DynatraceConfig(BaseSettings):
 
     @property
     def settings_api(self) -> str:
-        """Get the Settings 2.0 API URL."""
-        return f"{self.environment_url}/api/v2/settings"
+        """Get the Settings 2.0 API URL.
+
+        Gen3 SaaS (.apps.*) tenants expose Settings 2.0 under
+        `/platform/classic/environment-api/v2/settings`; Classic SaaS
+        (.live.*) and Managed keep the legacy `/api/v2/settings` path.
+        """
+        base = self.environment_url.rstrip("/")
+        if ".apps." in base:
+            return f"{base}/platform/classic/environment-api/v2/settings"
+        return f"{base}/api/v2/settings"
 
     class Config:
         env_file = ".env"
