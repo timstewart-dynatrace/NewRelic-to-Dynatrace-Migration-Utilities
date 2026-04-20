@@ -837,11 +837,20 @@ class MigrationOrchestrator:
                         "not wired into this tool"
                     ),
                 )
-                _push(
+                # Gen3 IAM policies live under the Account Management API
+                # (/iam/v1/repo/...), NOT Settings 2.0. The existing
+                # `builtin:iam.policy` POST path returns 404 on any Gen3
+                # tenant. The Account Management client isn't wired into
+                # this tool; mark IAM SKIPPED with a clear reason.
+                _skip(
                     transformed_data.get("iam_policies", []),
-                    "IAM policies",
-                    self.dt_client.create_iam_policy,
-                    "iam_policy",
+                    label="IAM policies",
+                    type_name="iam_policy",
+                    reason=(
+                        "Gen3 IAM policies live under the Account "
+                        "Management API, not Settings 2.0; Gen3 IAM not "
+                        "supported by this tool"
+                    ),
                 )
 
             if "openpipeline" in components or "tags" in components or "logs" in components:
@@ -916,50 +925,88 @@ class MigrationOrchestrator:
         table.add_column("Transformed", justify="right")
         table.add_column("Failed", justify="right", style="red")
         table.add_column("Imported", justify="right", style="green")
+        table.add_column("Skipped", justify="right", style="yellow")
 
+        skip_reasons: List[str] = []
         if "export_data" in results:
             export_data = results["export_data"]
             transformed = results.get("transformed_data", {})
             failed_counts = transformed.get("failed", {}) or {}
-            imported = results.get("import_results", {"successful": []})
+            imported = results.get("import_results", {"successful": [], "skipped": []})
+            skipped_entries = imported.get("skipped", []) or []
+
+            def _skipped_count(type_name):
+                return sum(1 for s in skipped_entries if s.get("type") == type_name)
 
             components_data = [
                 ("Dashboards", len(export_data.get("dashboards", [])),
                  len(transformed.get("dashboards", [])),
                  failed_counts.get("dashboard", 0),
-                 sum(1 for i in imported.get("successful", []) if i["type"] == "dashboard")),
+                 sum(1 for i in imported.get("successful", []) if i["type"] == "dashboard"),
+                 _skipped_count("dashboard")),
                 ("Alert Policies → Workflows", len(export_data.get("alert_policies", [])),
                  len(transformed.get("workflows", [])),
                  failed_counts.get("alert", 0),
-                 sum(1 for i in imported.get("successful", []) if i["type"] == "workflow")),
+                 sum(1 for i in imported.get("successful", []) if i["type"] == "workflow"),
+                 _skipped_count("workflow")),
                 ("Davis Anomaly Detectors", "-",
                  len(transformed.get("anomaly_detectors", [])),
                  "-",
-                 sum(1 for i in imported.get("successful", []) if i["type"] == "anomaly_detector")),
+                 sum(1 for i in imported.get("successful", []) if i["type"] == "anomaly_detector"),
+                 _skipped_count("anomaly_detector")),
                 ("Synthetic Tests", len(export_data.get("synthetic_monitors", [])),
                  len(transformed.get("synthetic_tests", [])),
                  failed_counts.get("synthetic", 0),
-                 sum(1 for i in imported.get("successful", []) if i["type"] == "synthetic_test")),
+                 sum(1 for i in imported.get("successful", []) if i["type"] == "synthetic_test"),
+                 _skipped_count("synthetic_test")),
                 ("SLOs", len(export_data.get("slos", [])),
                  len(transformed.get("slos", [])),
                  failed_counts.get("slo", 0),
-                 sum(1 for i in imported.get("successful", []) if i["type"] == "slo")),
+                 sum(1 for i in imported.get("successful", []) if i["type"] == "slo"),
+                 _skipped_count("slo")),
                 ("Workloads → Segments", len(export_data.get("workloads", [])),
                  len(transformed.get("segments", [])),
                  failed_counts.get("workload", 0),
-                 sum(1 for i in imported.get("successful", []) if i["type"] == "segment")),
+                 sum(1 for i in imported.get("successful", []) if i["type"] == "segment"),
+                 _skipped_count("segment")),
+                ("IAM Policies", "-",
+                 len(transformed.get("iam_policies", [])),
+                 "-",
+                 sum(1 for i in imported.get("successful", []) if i["type"] == "iam_policy"),
+                 _skipped_count("iam_policy")),
             ]
 
-            for name, exported, transformed_count, failed_count, imported_count in components_data:
+            for (
+                name, exported, transformed_count, failed_count,
+                imported_count, skipped_count,
+            ) in components_data:
                 table.add_row(
                     name,
                     str(exported),
                     str(transformed_count),
                     str(failed_count),
                     str(imported_count),
+                    str(skipped_count),
                 )
 
+            # Collect unique skip reasons per type — rendered below the table.
+            seen_reasons = set()
+            for s in skipped_entries:
+                reason = s.get("reason")
+                type_name = s.get("type")
+                if not reason or not type_name:
+                    continue
+                key = (type_name, reason)
+                if key in seen_reasons:
+                    continue
+                seen_reasons.add(key)
+                skip_reasons.append(f"[yellow]{type_name}[/yellow]: {reason}")
+
         console.print(table)
+        if skip_reasons:
+            console.print("\n[bold]Skipped reasons:[/bold]")
+            for line in skip_reasons:
+                console.print(f"  ↷ {line}")
 
 
 # =============================================================================

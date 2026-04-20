@@ -297,3 +297,25 @@ class TestImportPhaseSkips:
         assert 'self.dt_client.create_segment' not in src, (
             "create_segment is still being called — gh #5 requires _skip()."
         )
+
+    def test_iam_policies_are_skipped_not_imported(self):
+        # Gen3 IAM is under Account Management API, not Settings 2.0.
+        src = self._import_phase_src()
+        assert 'type_name="iam_policy"' in src
+        assert 'Account Management API' in src
+        assert 'self.dt_client.create_iam_policy' not in src, (
+            "create_iam_policy is still being called — gh #6 requires _skip()."
+        )
+
+    def test_summary_table_includes_skipped_column(self):
+        import inspect
+
+        import migrate
+        src = inspect.getsource(migrate.MigrationOrchestrator._generate_report)
+        # The Skipped column must be explicitly added to the Rich table.
+        assert 'add_column("Skipped"' in src, (
+            "Migration Summary must include a Skipped column so SKIPPED "
+            "entity types (synthetic/segment/IAM) are visible, not hidden."
+        )
+        # And the table must read skipped counts from import_results.
+        assert 'import_results' in src or 'imported.get("skipped"' in src
