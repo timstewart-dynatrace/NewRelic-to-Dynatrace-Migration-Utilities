@@ -8,7 +8,8 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 
-from clients.legacy.config_v1_client import LegacyDynatraceV1Client as DynatraceClient, DynatraceResponse, ImportResult
+from clients.legacy.config_v1_client import DynatraceResponse, ImportResult
+from clients.legacy.config_v1_client import LegacyDynatraceV1Client as DynatraceClient
 
 
 @pytest.fixture

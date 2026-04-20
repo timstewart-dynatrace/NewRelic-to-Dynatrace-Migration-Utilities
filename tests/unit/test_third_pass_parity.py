@@ -23,7 +23,6 @@ from transformers.legacy import (
     LegacyRequestNamingTransformer,
 )
 
-
 # ---------------------------------------------------------------------------
 # OTelCollectorTransformer
 # ---------------------------------------------------------------------------

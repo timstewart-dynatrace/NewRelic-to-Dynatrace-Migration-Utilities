@@ -1,6 +1,5 @@
 """Tests for the Gen3 Monaco exporter."""
 
-from pathlib import Path
 
 import pytest
 import yaml

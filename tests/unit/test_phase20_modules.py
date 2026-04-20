@@ -2,10 +2,8 @@
 enhanced report."""
 
 import json
-from pathlib import Path
 from unittest.mock import MagicMock
 
-import pytest
 from click.testing import CliRunner
 
 from clients._http import DynatraceResponse
@@ -22,7 +20,6 @@ from migration.canary import (
     default_approval_gate,
 )
 from migration.report import ConversionReport
-
 
 # ---------------------------------------------------------------------------
 # CanaryPlan

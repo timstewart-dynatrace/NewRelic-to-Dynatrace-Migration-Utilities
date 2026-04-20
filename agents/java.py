@@ -18,7 +18,7 @@ class JavaAgent(AgentOrchestrator):
             "remove-javaagent-arg",
             f"Remove `-javaagent:{agent_jar}` from JAVA_TOOL_OPTIONS / startup scripts",
             f"sed -i.bak 's|-javaagent:{agent_jar}||g' /etc/default/*-service",
-            rollback=f"mv /etc/default/*-service.bak /etc/default/*-service",
+            rollback="mv /etc/default/*-service.bak /etc/default/*-service",
         )
         self._action(
             plan,

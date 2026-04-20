@@ -19,7 +19,6 @@ from compiler.emitter import DQLEmitter
 from compiler.shorthands import expand_nr_shorthands
 from validators.dql_fixer import DQLValidator as DQLFixer  # class renamed in this codebase
 
-
 # ---------------------------------------------------------------------------
 # 1. Shorthand expansion
 # ---------------------------------------------------------------------------

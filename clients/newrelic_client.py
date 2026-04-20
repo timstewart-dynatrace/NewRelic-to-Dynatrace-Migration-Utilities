@@ -160,11 +160,15 @@ class NewRelicClient:
 
     def get_all_dashboards(self) -> List[Dict[str, Any]]:
         """Export all dashboards from the account."""
+        # NerdGraph does not substitute GraphQL variables inside the
+        # `entitySearch.query` string literal, so `accountId` must be
+        # interpolated at the Python level.
+        account_id = int(self.account_id)
         query = """
-        query($accountId: Int!, $cursor: String) {
+        query($cursor: String) {
             actor {
                 entitySearch(
-                    query: "accountId = $accountId AND type = 'DASHBOARD'"
+                    query: "accountId = %d AND type = 'DASHBOARD'"
                     options: { limit: 200 }
                 ) {
                     results(cursor: $cursor) {
@@ -180,14 +184,13 @@ class NewRelicClient:
                 }
             }
         }
-        """
+        """ % account_id
 
         dashboards = []
         cursor = None
 
         while True:
             response = self.execute_query(query, {
-                "accountId": int(self.account_id),
                 "cursor": cursor
             })
 
@@ -453,11 +456,15 @@ class NewRelicClient:
 
     def get_all_synthetic_monitors(self) -> List[Dict[str, Any]]:
         """Export all synthetic monitors."""
+        # NerdGraph does not substitute GraphQL variables inside the
+        # `entitySearch.query` string literal, so `accountId` must be
+        # interpolated at the Python level.
+        account_id = int(self.account_id)
         query = """
-        query($accountId: Int!, $cursor: String) {
+        query($cursor: String) {
             actor {
                 entitySearch(
-                    query: "accountId = $accountId AND type = 'SYNTHETIC_MONITOR'"
+                    query: "accountId = %d AND type = 'SYNTHETIC_MONITOR'"
                     options: { limit: 200 }
                 ) {
                     results(cursor: $cursor) {
@@ -475,14 +482,13 @@ class NewRelicClient:
                 }
             }
         }
-        """
+        """ % account_id
 
         monitors = []
         cursor = None
 
         while True:
             response = self.execute_query(query, {
-                "accountId": int(self.account_id),
                 "cursor": cursor
             })
 
@@ -640,11 +646,15 @@ class NewRelicClient:
 
     def get_all_workloads(self) -> List[Dict[str, Any]]:
         """Export all workloads."""
+        # NerdGraph does not substitute GraphQL variables inside the
+        # `entitySearch.query` string literal, so `accountId` must be
+        # interpolated at the Python level.
+        account_id = int(self.account_id)
         query = """
-        query($accountId: Int!, $cursor: String) {
+        query($cursor: String) {
             actor {
                 entitySearch(
-                    query: "accountId = $accountId AND type = 'WORKLOAD'"
+                    query: "accountId = %d AND type = 'WORKLOAD'"
                     options: { limit: 200 }
                 ) {
                     results(cursor: $cursor) {
@@ -662,14 +672,13 @@ class NewRelicClient:
                 }
             }
         }
-        """
+        """ % account_id
 
         workloads = []
         cursor = None
 
         while True:
             response = self.execute_query(query, {
-                "accountId": int(self.account_id),
                 "cursor": cursor
             })
 

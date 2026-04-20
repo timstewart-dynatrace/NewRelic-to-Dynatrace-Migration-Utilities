@@ -11,10 +11,11 @@ These run in the regular `pytest tests/unit/` suite — no env-var gate.
 from __future__ import annotations
 
 import json
-from typing import Any, Callable, Dict, List
+from typing import Any, Dict
 
 import pytest
-from hypothesis import HealthCheck, given, settings, strategies as st
+from hypothesis import HealthCheck, given, settings
+from hypothesis import strategies as st
 
 # ---------------------------------------------------------------------------
 # Import every transformer class we want to fuzz.

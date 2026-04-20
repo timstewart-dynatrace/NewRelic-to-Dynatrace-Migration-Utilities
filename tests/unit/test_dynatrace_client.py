@@ -23,7 +23,6 @@ from clients.document_client import DocumentClient
 from clients.dynatrace_client import DynatraceClient
 from clients.settings_v2_client import SettingsV2Client
 
-
 ENV = "https://abc12345.live.dynatrace.com"
 
 

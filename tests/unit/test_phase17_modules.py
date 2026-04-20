@@ -3,9 +3,6 @@ lookup tables, maintenance windows, change tracking, custom event ingest,
 identity, log obfuscation, NRDB archive tool."""
 
 import json
-from unittest.mock import MagicMock
-
-import pytest
 
 from tools.nrdb_archive import NRDBArchive
 from transformers import (
@@ -18,7 +15,6 @@ from transformers import (
     MaintenanceWindowTransformer,
     NonNRQLAlertTransformer,
 )
-
 
 # ---------------------------------------------------------------------------
 # NonNRQLAlertTransformer

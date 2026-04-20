@@ -2,11 +2,10 @@
 
 from transformers.dashboard_transformer import DashboardTransformer
 from transformers.nrql_converter import (
+    ConversionResult,
     NRQLtoDQLConverter,
     _apply_phase19_uplift,
 )
-from transformers.nrql_converter import ConversionResult
-
 
 # ---------------------------------------------------------------------------
 # Widget-parity tests
