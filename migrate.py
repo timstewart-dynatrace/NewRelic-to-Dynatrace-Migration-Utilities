@@ -823,11 +823,19 @@ class MigrationOrchestrator:
                 )
 
             if "workloads" in components:
-                _push(
+                # Gen3 Grail segments live under a Platform API surface
+                # (/platform/segment/v1/...) that isn't wired into this tool;
+                # `builtin:segment` is NOT a Settings 2.0 schema on current
+                # tenants (verified 2026-04-20: settings/schemas returns no
+                # match for `segment`). Mark SKIPPED so the summary is honest.
+                _skip(
                     transformed_data.get("segments", []),
-                    "segments",
-                    self.dt_client.create_segment,
-                    "segment",
+                    label="segments",
+                    type_name="segment",
+                    reason=(
+                        "Grail segments live under a Gen3 Platform API "
+                        "not wired into this tool"
+                    ),
                 )
                 _push(
                     transformed_data.get("iam_policies", []),

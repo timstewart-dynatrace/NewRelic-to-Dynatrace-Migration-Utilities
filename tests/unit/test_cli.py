@@ -287,3 +287,13 @@ class TestImportPhaseSkips:
             "create_synthetic_test is still being called from the import "
             "phase — the fix for gh #4 requires _skip(), not _push()."
         )
+
+    def test_segments_are_skipped_not_imported(self):
+        # Grail segments aren't a Settings 2.0 schema on Gen3; they live
+        # under a Platform API this tool doesn't target.
+        src = self._import_phase_src()
+        assert 'type_name="segment"' in src
+        assert 'Platform API' in src
+        assert 'self.dt_client.create_segment' not in src, (
+            "create_segment is still being called — gh #5 requires _skip()."
+        )
