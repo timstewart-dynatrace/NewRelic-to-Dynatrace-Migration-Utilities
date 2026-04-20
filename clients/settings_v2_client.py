@@ -12,14 +12,16 @@ from typing import Any, Dict, List, Optional
 
 import structlog
 
-from ._http import DynatraceResponse, HttpTransport, ImportResult
+from ._http import DynatraceResponse, HttpTransport, ImportResult, settings_v2_base
 
 logger = structlog.get_logger()
 
 
 class SettingsV2Client:
     def __init__(self, environment_url: str, transport: HttpTransport) -> None:
-        self.base = f"{environment_url.rstrip('/')}/api/v2"
+        # Gen3 SaaS (.apps.*) exposes Settings 2.0 at
+        # `/platform/classic/environment-api/v2`; Classic/Managed keep `/api/v2`.
+        self.base = settings_v2_base(environment_url)
         self.http = transport
 
     # ------------------------------------------------------------------

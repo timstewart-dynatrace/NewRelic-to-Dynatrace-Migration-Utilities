@@ -142,7 +142,7 @@ class HttpTransport:
         if prefer_oauth and self._oauth is not None:
             return self._oauth.bearer_header()
         if self._api_token:
-            return f"Api-Token {self._api_token}"
+            return token_auth_header(self._api_token)
         if self._oauth is not None:
             return self._oauth.bearer_header()
         raise RuntimeError(
@@ -227,3 +227,44 @@ def platform_url(environment_url: str) -> str:
     tenants; managed/classic tenants expose the same hostname.
     """
     return environment_url.replace(".live.", ".apps.").rstrip("/")
+
+
+def settings_v2_base(environment_url: str) -> str:
+    """Return the Settings 2.0 base URL appropriate for the tenant generation.
+
+    Gen3 SaaS tenants (hostname contains ``.apps.``, e.g.
+    ``abc.apps.dynatrace.com`` or ``abc.apps.dynatracelabs.com``) expose
+    Settings 2.0 under ``/platform/classic/environment-api/v2`` and reject
+    requests to the Classic ``/api/v2`` path with 404. Classic SaaS
+    (``.live.``) and Managed tenants keep ``/api/v2``.
+
+    Returns the full base URL including ``/api/v2`` or
+    ``/platform/classic/environment-api/v2`` — callers append
+    ``/settings/schemas``, ``/settings/objects``, etc.
+    """
+    base = environment_url.rstrip("/")
+    if ".apps." in base:
+        return f"{base}/platform/classic/environment-api/v2"
+    return f"{base}/api/v2"
+
+
+def token_auth_header(token: str) -> str:
+    """Pick ``Authorization`` header scheme based on Dynatrace token prefix.
+
+    Dynatrace ships two distinct token families:
+
+    * ``dt0c01.*``  — Classic Api-Token  → ``Authorization: Api-Token <t>``
+    * ``dt0s01.*``  — Platform OAuth2-issued token
+    * ``dt0s16.*``  — Platform Token (static)
+
+    Both ``dt0s01.*`` and ``dt0s16.*`` authenticate against Gen3 APIs
+    (Document, Automation, Settings-on-apps) as Bearer tokens. Sending a
+    Platform Token with the ``Api-Token`` scheme against an ``.apps.``
+    tenant produces::
+
+        401 "Unsupported authorization scheme 'Api-Token'. Dynatrace
+        platform accepts Bearer authentication only."
+    """
+    if token.startswith("dt0c01."):
+        return f"Api-Token {token}"
+    return f"Bearer {token}"

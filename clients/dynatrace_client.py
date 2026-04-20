@@ -27,6 +27,7 @@ from ._http import (
     ImportResult,
     OAuth2PlatformTokenProvider,
     platform_url,
+    settings_v2_base,
 )
 from .automation_client import AutomationClient
 from .document_client import DocumentClient
@@ -345,7 +346,7 @@ class DynatraceClient:
     def validate_connection(self) -> bool:
         """Lightweight health check — hits Settings 2.0 schemas endpoint."""
         response = self.transport.get(
-            f"{self.environment_url}/api/v2/settings/schemas",
+            f"{settings_v2_base(self.environment_url)}/settings/schemas",
             params={"pageSize": 1},
         )
         return response.is_success
@@ -361,7 +362,7 @@ class DynatraceClient:
         checks: List[PreflightCheck] = [
             self._probe(
                 api="settings_v2",
-                endpoint=f"{self.environment_url}/api/v2/settings/schemas",
+                endpoint=f"{settings_v2_base(self.environment_url)}/settings/schemas",
                 params={"pageSize": 1},
                 prefer_oauth=False,
                 scopes_min=_SETTINGS_SCOPES_MIN,

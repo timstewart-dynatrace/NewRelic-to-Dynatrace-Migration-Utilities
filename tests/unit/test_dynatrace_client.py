@@ -55,14 +55,26 @@ class TestDynatraceClientComposition:
 
 
 class TestHttpTransportAuth:
-    def test_should_use_api_token_by_default(self):
-        t = HttpTransport(api_token="abc")
-        assert t._auth_header(prefer_oauth=False) == "Api-Token abc"
+    def test_should_use_api_token_for_classic_dt0c01_prefix(self):
+        # Classic Api-Token prefix — must use the legacy scheme.
+        t = HttpTransport(api_token="dt0c01.CLASSIC")
+        assert t._auth_header(prefer_oauth=False) == "Api-Token dt0c01.CLASSIC"
+
+    def test_should_use_bearer_for_platform_token_dt0s16_prefix(self):
+        # Regression for #17 lab repro — Platform Tokens stored in
+        # DYNATRACE_API_TOKEN were being sent as `Api-Token`, which the
+        # tenant rejects with 401 "Unsupported authorization scheme".
+        t = HttpTransport(api_token="dt0s16.PLATFORM")
+        assert t._auth_header(prefer_oauth=False) == "Bearer dt0s16.PLATFORM"
+
+    def test_should_use_bearer_for_platform_oauth_dt0s01_prefix(self):
+        t = HttpTransport(api_token="dt0s01.PLATFORM_OAUTH")
+        assert t._auth_header(prefer_oauth=False) == "Bearer dt0s01.PLATFORM_OAUTH"
 
     def test_should_prefer_oauth_when_requested(self):
         oauth = MagicMock(spec=OAuth2PlatformTokenProvider)
         oauth.bearer_header.return_value = "Bearer xyz"
-        t = HttpTransport(api_token="abc", oauth=oauth)
+        t = HttpTransport(api_token="dt0c01.abc", oauth=oauth)
         assert t._auth_header(prefer_oauth=True) == "Bearer xyz"
         oauth.bearer_header.assert_called_once()
 
@@ -362,3 +374,127 @@ class TestPreflightGen3:
         assert "document:documents:write" in checks["document_api"].scopes_recommended
         assert "automation:workflows:write" in checks["automation_api"].scopes_recommended
         assert "automation:workflows:run" in checks["automation_api"].scopes_recommended
+
+
+# ---------------------------------------------------------------------------
+# Gen3 Platform Token + settings path regressions (lab repro against
+# apps.dynatracelabs.com sprint tenant, 2026-04-20)
+# ---------------------------------------------------------------------------
+
+
+GEN3_APPS_ENV = "https://sprint.apps.dynatracelabs.com"
+
+
+class TestGen3SettingsPathAndBearerAuth:
+    """Pin the fix for:
+
+    1. Platform Tokens (dt0s16.* / dt0s01.*) were being sent with
+       ``Api-Token`` scheme → tenant returns 401
+       "Unsupported authorization scheme 'Api-Token'".
+    2. ``/api/v2/settings/schemas`` returns 404 on ``.apps.*`` Gen3
+       tenants; the working path is
+       ``/platform/classic/environment-api/v2/settings/schemas``.
+    """
+
+    def test_settings_v2_base_returns_platform_classic_path_on_apps(self):
+        from clients._http import settings_v2_base
+        assert settings_v2_base("https://foo.apps.dynatrace.com") == (
+            "https://foo.apps.dynatrace.com/platform/classic/environment-api/v2"
+        )
+        assert settings_v2_base("https://bar.apps.dynatracelabs.com") == (
+            "https://bar.apps.dynatracelabs.com/platform/classic/environment-api/v2"
+        )
+
+    def test_settings_v2_base_returns_api_v2_on_classic_saas(self):
+        from clients._http import settings_v2_base
+        assert settings_v2_base("https://foo.live.dynatrace.com") == (
+            "https://foo.live.dynatrace.com/api/v2"
+        )
+
+    def test_settings_v2_base_returns_api_v2_on_managed(self):
+        from clients._http import settings_v2_base
+        # Managed tenants don't carry `.apps.` in the hostname.
+        assert settings_v2_base("https://dynatrace.customer-managed.example") == (
+            "https://dynatrace.customer-managed.example/api/v2"
+        )
+
+    def test_settings_v2_base_strips_trailing_slash(self):
+        from clients._http import settings_v2_base
+        assert settings_v2_base("https://foo.apps.dynatrace.com/").endswith(
+            "/platform/classic/environment-api/v2"
+        )
+
+    def test_token_auth_header_routes_by_prefix(self):
+        from clients._http import token_auth_header
+        assert token_auth_header("dt0c01.CLASSIC") == "Api-Token dt0c01.CLASSIC"
+        assert token_auth_header("dt0s01.OAUTH_ISSUED") == "Bearer dt0s01.OAUTH_ISSUED"
+        assert token_auth_header("dt0s16.PLATFORM_STATIC") == "Bearer dt0s16.PLATFORM_STATIC"
+
+    def test_preflight_hits_platform_classic_path_on_gen3_tenant(self):
+        """Preflight against a .apps. tenant must probe
+        /platform/classic/environment-api/v2/settings/schemas — NOT the
+        Classic /api/v2/settings/schemas path (which 404s there).
+        """
+        c = DynatraceClient(environment_url=GEN3_APPS_ENV, api_token="dt0s16.PLAT")
+        calls: list[str] = []
+
+        def record_get(url, **kwargs):
+            calls.append(url)
+            return DynatraceResponse(data={}, status_code=200)
+
+        c.transport.get = MagicMock(side_effect=record_get)
+        checks = {ch.api: ch for ch in c.preflight_gen3()}
+
+        # settings_v2 endpoint was probed via the Gen3-native path.
+        settings_url = next(u for u in calls if "settings/schemas" in u)
+        assert "/platform/classic/environment-api/v2/settings/schemas" in settings_url
+        assert "/api/v2/settings/schemas" not in settings_url
+        assert checks["settings_v2"].reachable is True
+
+    def test_preflight_uses_api_v2_path_on_classic_tenant(self):
+        """Classic .live. tenants must continue to probe /api/v2/settings/schemas."""
+        c = DynatraceClient(environment_url=ENV, api_token="dt0c01.CLASSIC")
+        calls: list[str] = []
+
+        def record_get(url, **kwargs):
+            calls.append(url)
+            return DynatraceResponse(data={}, status_code=200)
+
+        c.transport.get = MagicMock(side_effect=record_get)
+        c.preflight_gen3()
+
+        settings_url = next(u for u in calls if "settings/schemas" in u)
+        assert "/api/v2/settings/schemas" in settings_url
+        assert "/platform/classic/" not in settings_url
+
+    def test_platform_token_is_sent_as_bearer_on_real_request(self):
+        """End-to-end through request(): dt0s16.* api_token must produce a
+        Bearer Authorization header, not Api-Token.
+        """
+        from clients._http import HttpTransport
+        t = HttpTransport(api_token="dt0s16.PLAT")
+        captured: dict[str, str] = {}
+
+        def fake_request(**kwargs):
+            captured.update(kwargs["headers"])
+            class R:
+                status_code = 200
+                content = b"{}"
+                def json(self): return {}
+            return R()
+
+        t.session.request = fake_request  # type: ignore[assignment]
+        t.get("https://foo.apps.dynatrace.com/platform/classic/environment-api/v2/settings/schemas")
+        assert captured["Authorization"] == "Bearer dt0s16.PLAT"
+
+    def test_settings_v2_client_base_is_gen3_aware(self):
+        """SettingsV2Client.base must reflect the tenant generation so
+        list_objects/create_envelope hit the right URL."""
+        from clients._http import HttpTransport
+        from clients.settings_v2_client import SettingsV2Client
+
+        gen3 = SettingsV2Client(GEN3_APPS_ENV, transport=HttpTransport(api_token="dt0s16.x"))
+        classic = SettingsV2Client(ENV, transport=HttpTransport(api_token="dt0c01.x"))
+
+        assert gen3.base.endswith("/platform/classic/environment-api/v2")
+        assert classic.base.endswith("/api/v2")

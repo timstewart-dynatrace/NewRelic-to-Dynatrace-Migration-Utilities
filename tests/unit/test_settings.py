@@ -78,6 +78,17 @@ class TestDynatraceConfig:
         )
         assert c.settings_api == "https://abc.live.dynatrace.com/api/v2/settings"
 
+    def test_should_set_gen3_settings_api_on_apps_host(self):
+        # Gen3 SaaS tenants expose Settings 2.0 under
+        # /platform/classic/environment-api/v2, NOT /api/v2.
+        c = DynatraceConfig(
+            DYNATRACE_API_TOKEN="dt0s16.PLATFORM",
+            DYNATRACE_ENVIRONMENT_URL="https://abc.apps.dynatrace.com",
+        )
+        assert c.settings_api == (
+            "https://abc.apps.dynatrace.com/platform/classic/environment-api/v2/settings"
+        )
+
     def test_should_strip_trailing_slash(self):
         c = DynatraceConfig(
             DYNATRACE_API_TOKEN="dt0c01.TEST",
