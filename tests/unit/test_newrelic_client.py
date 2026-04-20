@@ -370,6 +370,31 @@ class TestSchemaDriftRegressions:
         assert mock.call_count == 2  # outline + one detail fetch, no fallback
         assert len(monitors) == 1
 
+    def test_synthetic_detail_query_omits_bare_status_field(self, client):
+        # NR retired `status` as a readable scalar on SyntheticMonitorEntity
+        # (error: `Cannot query field "status"... Did you mean "tags"?`).
+        # Enabled/disabled state now lives in tags; the transformer falls back
+        # to a default when status is absent, so dropping it is sufficient.
+        data = {"actor": {"entity": {
+            "guid": "m1", "name": "Health Check", "monitorType": "SIMPLE",
+            "monitorSummary": {"status": "SUCCESS", "successRate": 100.0},
+            "tags": [{"key": "monitorStatus", "values": ["ENABLED"]}],
+        }}}
+        with patch.object(client.session, 'post') as mock:
+            mock.return_value = _mock_response(data)
+            result = client.get_synthetic_monitor_details("m1")
+
+        query = _sent_query(mock)
+        # Verify no bare `status` selection directly under SyntheticMonitorEntity.
+        # `monitorSummary { status }` is a different (nested) field and is fine.
+        assert "\n                        status\n" not in query, (
+            "Bare `status` selection on SyntheticMonitorEntity triggers "
+            "'Cannot query field \"status\"' in current NerdGraph schema."
+        )
+        # The nested summary status remains queryable.
+        assert "monitorSummary {" in query and "status" in query
+        assert result["name"] == "Health Check"
+
     def test_synthetic_outline_falls_back_to_legacy_when_modern_empty(self, client):
         empty = {"actor": {"entitySearch": {"results": {"entities": [], "nextCursor": None}}}}
         legacy_hit = {"actor": {"entitySearch": {"results": {

@@ -578,7 +578,6 @@ class NewRelicClient:
                         monitorType
                         monitoredUrl
                         period
-                        status
                         monitorSummary {
                             status
                             successRate
