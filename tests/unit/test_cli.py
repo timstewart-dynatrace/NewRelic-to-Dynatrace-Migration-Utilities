@@ -197,3 +197,65 @@ class TestCompileExampleQueries:
         result = runner.invoke(cli, ["compile", "--file", examples_path])
         assert result.exit_code == 0
         assert "succeeded" in result.output
+
+
+class TestCliMetricMapWiring:
+    """Regression tests for gh #14.
+
+    The `compile` and `batch` CLI subcommands previously constructed a bare
+    `NRQLCompiler()`, so the 230-entry METRIC_MAP never reached the CLI path
+    and every metric lookup warned "Unknown metric — no METRIC_MAP entry".
+    These tests confirm CLI-compiled queries now resolve to real DT metric
+    keys and cover the three host-metric dotted-prefix additions.
+    """
+
+    def test_compile_resolves_apm_service_error_count(self, runner):
+        result = runner.invoke(
+            cli, ["compile", "SELECT sum(`apm.service.error.count`) FROM Metric"]
+        )
+        assert result.exit_code == 0
+        assert "dt.service.request.failure_count" in result.output
+        assert "no METRIC_MAP entry" not in result.output
+
+    def test_compile_resolves_host_cpu_percent(self, runner):
+        result = runner.invoke(
+            cli, ["compile", "SELECT average(host.cpuPercent) FROM SystemSample"]
+        )
+        assert result.exit_code == 0
+        assert "dt.host.cpu.usage" in result.output
+        assert "no METRIC_MAP entry" not in result.output
+
+    def test_compile_resolves_host_memory_used_percent(self, runner):
+        result = runner.invoke(
+            cli, ["compile", "SELECT average(host.memoryUsedPercent) FROM SystemSample"]
+        )
+        assert result.exit_code == 0
+        assert "dt.host.memory.usage" in result.output
+        assert "no METRIC_MAP entry" not in result.output
+
+    def test_compile_resolves_host_disk_used_percent(self, runner):
+        result = runner.invoke(
+            cli, ["compile", "SELECT average(host.diskUsedPercent) FROM SystemSample"]
+        )
+        assert result.exit_code == 0
+        assert "dt.host.disk.used.percent" in result.output
+        assert "no METRIC_MAP entry" not in result.output
+
+    def test_batch_compile_resolves_metrics(self, runner):
+        # Same wiring path as `compile`; verify batch also picks up METRIC_MAP.
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False) as f:
+            f.write("nrql\n")
+            f.write("SELECT average(host.cpuPercent) FROM SystemSample\n")
+            csv_path = f.name
+        try:
+            with tempfile.NamedTemporaryFile(mode="r", suffix=".csv", delete=False) as out:
+                out_path = out.name
+            result = runner.invoke(cli, ["batch", "--file", csv_path, "--output", out_path])
+            assert result.exit_code == 0
+            with open(out_path) as f:
+                output = f.read()
+            assert "dt.host.cpu.usage" in output
+        finally:
+            os.unlink(csv_path)
+            if os.path.exists(out_path):
+                os.unlink(out_path)

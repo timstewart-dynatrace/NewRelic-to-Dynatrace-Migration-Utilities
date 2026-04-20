@@ -18,17 +18,21 @@ import re
 from typing import List, Tuple
 
 # Each entry: (regex pattern, canonical-NRQL replacement).
-# `\b...\b` word boundaries prevent partial-word matches inside identifiers.
+# `(?<![.\w])...\b` prevents expansion when the shorthand appears as a suffix
+# of a dotted identifier (e.g., `newrelic.goldenmetrics.apm.application.throughput`
+# — the trailing `throughput` must stay verbatim, not be replaced with
+# `rate(count(*), 1 minute)`). A plain `\b` would match there because `.` is
+# a non-word character. The trailing `\b` still guards the right edge.
 _SHORTHAND_PATTERNS: List[Tuple[re.Pattern, str]] = [
-    (re.compile(r"\baverage[Dd]uration\b"), "average(duration)"),
-    (re.compile(r"\baverage[Rr]esponse[Tt]ime\b"), "average(duration)"),
-    (re.compile(r"\bmax[Dd]uration\b"), "max(duration)"),
-    (re.compile(r"\bmin[Dd]uration\b"), "min(duration)"),
-    (re.compile(r"\bmedian[Dd]uration\b"), "median(duration)"),
-    (re.compile(r"\bapdex[Ss]core\b"), "apdex(duration)"),
-    (re.compile(r"\bapdex[Pp]erf[Zz]one\b"), "apdex(duration)"),
-    (re.compile(r"\berror[Rr]ate\b"), "percentage(count(*), WHERE error IS TRUE)"),
-    (re.compile(r"\bthroughput\b"), "rate(count(*), 1 minute)"),
+    (re.compile(r"(?<![.\w])average[Dd]uration\b"), "average(duration)"),
+    (re.compile(r"(?<![.\w])average[Rr]esponse[Tt]ime\b"), "average(duration)"),
+    (re.compile(r"(?<![.\w])max[Dd]uration\b"), "max(duration)"),
+    (re.compile(r"(?<![.\w])min[Dd]uration\b"), "min(duration)"),
+    (re.compile(r"(?<![.\w])median[Dd]uration\b"), "median(duration)"),
+    (re.compile(r"(?<![.\w])apdex[Ss]core\b"), "apdex(duration)"),
+    (re.compile(r"(?<![.\w])apdex[Pp]erf[Zz]one\b"), "apdex(duration)"),
+    (re.compile(r"(?<![.\w])error[Rr]ate\b"), "percentage(count(*), WHERE error IS TRUE)"),
+    (re.compile(r"(?<![.\w])throughput\b"), "rate(count(*), 1 minute)"),
 ]
 
 

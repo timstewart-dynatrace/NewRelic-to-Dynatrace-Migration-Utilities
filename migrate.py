@@ -1240,6 +1240,7 @@ def compile_nrql(nrql: Optional[str], interactive: bool, input_file: Optional[st
       python migrate.py compile --validate "SELECT count(*) FROM Transaction"
     """
     from compiler import NRQLCompiler
+    from transformers.nrql_mapping_rules import ATTR_MAP, METRIC_MAP
 
     if not nrql and not interactive and not input_file:
         ctx = click.get_current_context()
@@ -1254,7 +1255,11 @@ def compile_nrql(nrql: Optional[str], interactive: bool, input_file: Optional[st
             console.print("[yellow]Warning: Could not create registry for live validation. "
                           "Set DYNATRACE_ENVIRONMENT_URL and DYNATRACE_API_TOKEN in .env[/yellow]")
 
-    compiler = NRQLCompiler()
+    # Wire METRIC_MAP + ATTR_MAP so CLI-compiled queries pick up the same
+    # mappings as the dashboard migration path (see
+    # transformers/nrql_converter.py). Without this, every metric lookup in
+    # the compile subcommand returns "Unknown metric — no METRIC_MAP entry".
+    compiler = NRQLCompiler(field_map=ATTR_MAP, metric_map=METRIC_MAP)
 
     # Interactive REPL mode
     if interactive:
@@ -1504,8 +1509,10 @@ def batch_compile(input_file: str, output_file: Optional[str], nrql_column: str)
     import csv
 
     from compiler import NRQLCompiler
+    from transformers.nrql_mapping_rules import ATTR_MAP, METRIC_MAP
 
-    compiler = NRQLCompiler()
+    # Wire METRIC_MAP + ATTR_MAP — see `compile` command above for rationale.
+    compiler = NRQLCompiler(field_map=ATTR_MAP, metric_map=METRIC_MAP)
     input_path = Path(input_file)
     rows = []
 
