@@ -52,37 +52,121 @@ class TestLegacyModeOrchestrator:
 
 
 class TestPreflightCommand:
+    """Exercise the structured-diagnostic preflight command.
+
+    The command accepts either the new ``List[PreflightCheck]`` return type
+    or the legacy ``Dict[str, bool]`` shape (normalized internally). Both
+    paths are covered here.
+    """
+
+    ENV = {
+        "NEW_RELIC_API_KEY": "NRAK-XX",
+        "NEW_RELIC_ACCOUNT_ID": "1",
+        "DYNATRACE_API_TOKEN": "dt0s16.X.Y",
+        "DYNATRACE_ENVIRONMENT_URL": "https://abc.live.dynatrace.com",
+    }
+
+    @staticmethod
+    def _ok_check(api, scopes_min, scopes_rec):
+        from clients.dynatrace_client import PreflightCheck
+        return PreflightCheck(
+            api=api,
+            endpoint=f"https://abc.live.dynatrace.com/{api}",
+            reachable=True,
+            status_code=200,
+            error=None,
+            scopes_min=scopes_min,
+            scopes_recommended=scopes_rec,
+            diagnosis="OK",
+            remediation=[],
+        )
+
+    @staticmethod
+    def _fail_check(api, status, scopes_min, scopes_rec):
+        from clients.dynatrace_client import PreflightCheck
+        return PreflightCheck(
+            api=api,
+            endpoint=f"https://abc.live.dynatrace.com/{api}",
+            reachable=False,
+            status_code=status,
+            error="Forbidden",
+            scopes_min=scopes_min,
+            scopes_recommended=scopes_rec,
+            diagnosis=f"HTTP {status} — missing scope(s): {', '.join(scopes_min)}",
+            remediation=[
+                "Add scopes in Dynatrace Access Tokens UI.",
+                "Re-run: python3 migrate.py preflight",
+            ],
+        )
+
     def test_reports_all_green_exit_zero(self):
         runner = CliRunner()
-        env = {
-            "NEW_RELIC_API_KEY": "NRAK-XX",
-            "NEW_RELIC_ACCOUNT_ID": "1",
-            "DYNATRACE_API_TOKEN": "dt0c01.X",
-            "DYNATRACE_ENVIRONMENT_URL": "https://abc.live.dynatrace.com",
-        }
-        with patch.object(
-            DynatraceClient, "preflight_gen3",
-            return_value={"settings_v2": True, "document_api": True, "automation_api": True},
-        ):
-            result = runner.invoke(migrate_mod.preflight, [], env=env)
+        from clients.dynatrace_client import (
+            _AUTOMATION_SCOPES_MIN,
+            _AUTOMATION_SCOPES_RECOMMENDED,
+            _DOCUMENT_SCOPES_MIN,
+            _DOCUMENT_SCOPES_RECOMMENDED,
+            _SETTINGS_SCOPES_MIN,
+            _SETTINGS_SCOPES_RECOMMENDED,
+        )
+        checks = [
+            self._ok_check("settings_v2", _SETTINGS_SCOPES_MIN, _SETTINGS_SCOPES_RECOMMENDED),
+            self._ok_check("document_api", _DOCUMENT_SCOPES_MIN, _DOCUMENT_SCOPES_RECOMMENDED),
+            self._ok_check("automation_api", _AUTOMATION_SCOPES_MIN, _AUTOMATION_SCOPES_RECOMMENDED),
+        ]
+        with patch.object(DynatraceClient, "preflight_gen3", return_value=checks):
+            result = runner.invoke(migrate_mod.preflight, [], env=self.ENV)
         assert result.exit_code == 0, result.output
         assert "Gen3 APIs reachable" in result.output
+        # Recommended-scope summary always appears.
+        assert "Recommended token scopes for a full migrate run" in result.output
+        assert "storage:logs:read" in result.output
 
-    def test_reports_missing_api_exit_nonzero(self):
+    def test_reports_missing_api_exit_nonzero_with_diagnostic(self):
+        """When an API is not reachable the output must contain:
+        the missing scope names, a remediation step, and the legacy-mode tip.
+        """
         runner = CliRunner()
-        env = {
-            "NEW_RELIC_API_KEY": "NRAK-XX",
-            "NEW_RELIC_ACCOUNT_ID": "1",
-            "DYNATRACE_API_TOKEN": "dt0c01.X",
-            "DYNATRACE_ENVIRONMENT_URL": "https://abc.live.dynatrace.com",
-        }
-        with patch.object(
-            DynatraceClient, "preflight_gen3",
-            return_value={"settings_v2": True, "document_api": False, "automation_api": False},
-        ):
-            result = runner.invoke(migrate_mod.preflight, [], env=env)
+        from clients.dynatrace_client import (
+            _AUTOMATION_SCOPES_MIN,
+            _AUTOMATION_SCOPES_RECOMMENDED,
+            _DOCUMENT_SCOPES_MIN,
+            _DOCUMENT_SCOPES_RECOMMENDED,
+            _SETTINGS_SCOPES_MIN,
+            _SETTINGS_SCOPES_RECOMMENDED,
+        )
+        checks = [
+            self._ok_check("settings_v2", _SETTINGS_SCOPES_MIN, _SETTINGS_SCOPES_RECOMMENDED),
+            self._fail_check("document_api", 403, _DOCUMENT_SCOPES_MIN, _DOCUMENT_SCOPES_RECOMMENDED),
+            self._fail_check("automation_api", 403, _AUTOMATION_SCOPES_MIN, _AUTOMATION_SCOPES_RECOMMENDED),
+        ]
+        with patch.object(DynatraceClient, "preflight_gen3", return_value=checks):
+            result = runner.invoke(migrate_mod.preflight, [], env=self.ENV)
         assert result.exit_code == 1
         assert "--legacy" in result.output
+        # Scope names must appear so the operator knows what to add.
+        assert "document:documents:read" in result.output
+        assert "automation:workflows:read" in result.output
+        # Remediation block must appear.
+        assert "Remediation" in result.output
+        # The 403 diagnosis wording must make clear WHY it failed.
+        assert "HTTP 403" in result.output
+
+    def test_accepts_legacy_bool_dict_report_shape(self):
+        """Pre-existing callers that patched `preflight_gen3` with a
+        `{name: bool}` dict still work — the CLI normalizes that shape.
+        """
+        runner = CliRunner()
+        with patch.object(
+            DynatraceClient,
+            "preflight_gen3",
+            return_value={"settings_v2": True, "document_api": False, "automation_api": False},
+        ):
+            result = runner.invoke(migrate_mod.preflight, [], env=self.ENV)
+        assert result.exit_code == 1
+        assert "--legacy" in result.output
+        # Normalized entries still surface the scope names.
+        assert "document:documents:read" in result.output
 
 
 class TestLegacyExporterRouting:

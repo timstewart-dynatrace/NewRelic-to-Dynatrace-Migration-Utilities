@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- `migrate.py preflight` now reports WHY each Gen3 API check fails and HOW
+  to fix it. Each API row shows the endpoint probed, HTTP status, minimum
+  scopes (for the probe) and recommended scopes (for a full migrate run).
+  401/403 results surface the exact missing scope names and a UI
+  remediation path. 404 results nudge the operator toward `--legacy`.
+  Network (status 0) results point at `DYNATRACE_ENVIRONMENT_URL`. Output
+  ends with a recommended-scope table covering Settings 2.0, Document API,
+  Automation API, and Grail reads.
+- `DynatraceClient.preflight_gen3()` now returns `List[PreflightCheck]`
+  (was `Dict[str, bool]`). The CLI still accepts the legacy bool-dict
+  shape so existing mocks keep working.
+
+### Added
+- `docs/token-scopes.md` — canonical Platform Token / Classic Token scope
+  reference with minimum vs recommended tables, tenant UI steps, and a
+  verify-curl snippet per API.
+
+### Fixed
+- `docs/quickstart.md` and `docs/migration-guide.md` previously showed
+  Classic tokens (`dt0c01.*`) as the Gen3 default; now correctly describe
+  Platform Tokens (`dt0s16.*`) with scope tables matching the tool.
+
 ## [2.0.0] - 2026-04-16
 
 > Phases 11–26 + 19b + 3rd-pass + Phase 25. Gen3-default migration
