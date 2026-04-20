@@ -259,3 +259,63 @@ class TestCliMetricMapWiring:
             os.unlink(csv_path)
             if os.path.exists(out_path):
                 os.unlink(out_path)
+
+
+# ---------------------------------------------------------------------------
+# Regression for gh import-phase issues #4/#5/#6 — synthetic/segment/IAM
+# must be SKIPPED (not import-failed) because the Gen3 endpoints for these
+# aren't wired into this tool. Source-inspection tests pin the skip wiring
+# so a future refactor can't silently re-enable failing imports.
+# ---------------------------------------------------------------------------
+
+
+class TestImportPhaseSkips:
+    def _import_phase_src(self):
+        import inspect
+
+        import migrate
+        return inspect.getsource(migrate.MigrationOrchestrator._import_phase)
+
+    def test_synthetic_tests_are_skipped_not_imported(self):
+        src = self._import_phase_src()
+        # _skip(...) must be invoked with the synthetic label; _push must NOT.
+        assert '_skip(' in src
+        assert 'type_name="synthetic_test"' in src
+        assert 'per-facet settings objects' in src
+        # The old failing path (create_synthetic_test via _push) must be gone.
+        assert 'self.dt_client.create_synthetic_test' not in src, (
+            "create_synthetic_test is still being called from the import "
+            "phase — the fix for gh #4 requires _skip(), not _push()."
+        )
+
+    def test_segments_are_skipped_not_imported(self):
+        # Grail segments aren't a Settings 2.0 schema on Gen3; they live
+        # under a Platform API this tool doesn't target.
+        src = self._import_phase_src()
+        assert 'type_name="segment"' in src
+        assert 'Platform API' in src
+        assert 'self.dt_client.create_segment' not in src, (
+            "create_segment is still being called — gh #5 requires _skip()."
+        )
+
+    def test_iam_policies_are_skipped_not_imported(self):
+        # Gen3 IAM is under Account Management API, not Settings 2.0.
+        src = self._import_phase_src()
+        assert 'type_name="iam_policy"' in src
+        assert 'Account Management API' in src
+        assert 'self.dt_client.create_iam_policy' not in src, (
+            "create_iam_policy is still being called — gh #6 requires _skip()."
+        )
+
+    def test_summary_table_includes_skipped_column(self):
+        import inspect
+
+        import migrate
+        src = inspect.getsource(migrate.MigrationOrchestrator._generate_report)
+        # The Skipped column must be explicitly added to the Rich table.
+        assert 'add_column("Skipped"' in src, (
+            "Migration Summary must include a Skipped column so SKIPPED "
+            "entity types (synthetic/segment/IAM) are visible, not hidden."
+        )
+        # And the table must read skipped counts from import_results.
+        assert 'import_results' in src or 'imported.get("skipped"' in src

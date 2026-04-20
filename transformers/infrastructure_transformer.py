@@ -21,6 +21,8 @@ from typing import Any, Dict, List
 
 import structlog
 
+from ._workflow_utils import tasks_list_to_dict
+
 logger = structlog.get_logger()
 
 
@@ -108,34 +110,41 @@ class InfrastructureTransformer:
     ) -> Dict[str, Any]:
         detector_id = f"davis-infra-{name}".lower()
         detector_id = "".join(c if c.isalnum() or c == "-" else "-" for c in detector_id)[:180]
+        # New builtin:davis.anomaly-detectors schema (v1.0.14, 2026-04-20):
+        # top level is {enabled,title,description,source,executionSettings,
+        # analyzer{name,input[{key,value}]},eventTemplate{properties}}.
+        alert_on_missing = "true" if (
+            alert_condition == "BELOW" and threshold <= 1
+        ) else "false"
         return {
             "schemaId": "builtin:davis.anomaly-detectors",
             "scope": "environment",
             "detectorId": detector_id,
             "value": {
-                "name": f"[Migrated] {name}",
-                "description": f"Migrated from New Relic infrastructure condition: {name}",
                 "enabled": enabled,
-                "source": {
-                    "type": "METRIC_KEY",
-                    "metricKey": metric_key,
-                    "aggregation": "AVG",
-                },
-                "strategy": {
-                    "type": "STATIC_THRESHOLD",
-                    "threshold": threshold,
-                    "alertCondition": alert_condition,
-                    "samples": samples,
-                    "violatingSamples": samples,
-                    "dealingWithGapsStrategy": "DROP_DATA",
-                    "alertOnNoData": alert_condition == "BELOW" and threshold <= 1,
+                "title": f"[Migrated] {name}",
+                "description": f"Migrated from New Relic infrastructure condition: {name}",
+                "source": "newrelic-migration",
+                "executionSettings": {"actor": None, "queryOffset": None},
+                "analyzer": {
+                    "name": (
+                        "dt.statistics.ui.anomaly_detection"
+                        ".StaticThresholdAnomalyDetectionAnalyzer"
+                    ),
+                    "input": [
+                        {"key": "query", "value": f"timeseries avg({metric_key})"},
+                        {"key": "threshold", "value": str(threshold)},
+                        {"key": "alertCondition", "value": alert_condition},
+                        {"key": "alertOnMissingData", "value": alert_on_missing},
+                        {"key": "violatingSamples", "value": str(samples)},
+                        {"key": "slidingWindow", "value": str(samples)},
+                        {"key": "dealertingSamples", "value": "5"},
+                    ],
                 },
                 "eventTemplate": {
-                    "title": f"[Migrated] {name}",
-                    "description": name,
-                    "eventType": "RESOURCE_CONTENTION",
-                    "davisMerge": True,
                     "properties": [
+                        {"key": "event.type", "value": "RESOURCE_CONTENTION"},
+                        {"key": "event.name", "value": f"[Migrated] {name}"},
                         {"key": "source.condition", "value": name},
                         {"key": "migrated.from", "value": "newrelic"},
                     ],
@@ -234,7 +243,8 @@ class InfrastructureTransformer:
                     },
                 }
             },
-            "tasks": [
+            # Gen3 Automation API requires `tasks` as a dict keyed by task id.
+            "tasks": tasks_list_to_dict([
                 {
                     "name": "placeholder_action",
                     "action": "dynatrace.automations:run-javascript",
@@ -243,7 +253,7 @@ class InfrastructureTransformer:
                     "input": {"script": "export default () => ({ ok: true });"},
                     "position": {"x": 0, "y": 1},
                 }
-            ],
+            ]),
         }
 
     def transform_all(

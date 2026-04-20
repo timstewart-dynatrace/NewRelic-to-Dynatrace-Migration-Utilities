@@ -23,6 +23,7 @@ from typing import Any, Dict, List, Optional
 
 import structlog
 
+from ._workflow_utils import tasks_list_to_dict
 from .mapping_rules import OPERATOR_MAP, EntityMapper
 
 logger = structlog.get_logger()
@@ -337,7 +338,8 @@ class AlertTransformer:
                     "config": {"davis_event": trigger_config},
                 }
             },
-            "tasks": tasks,
+            # Gen3 Automation API requires `tasks` as a dict keyed by task id.
+            "tasks": tasks_list_to_dict(tasks),
         }
 
     def _build_notification_tasks(

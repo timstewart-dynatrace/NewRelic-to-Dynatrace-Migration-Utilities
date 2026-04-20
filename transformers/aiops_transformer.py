@@ -30,6 +30,8 @@ from typing import Any, Dict, List
 
 import structlog
 
+from ._workflow_utils import tasks_list_to_dict
+
 logger = structlog.get_logger()
 
 
@@ -160,39 +162,63 @@ class AIOpsTransformer:
                     },
                 }
             },
-            "tasks": tasks,
+            # Gen3 Automation API requires `tasks` as a dict keyed by task id.
+            "tasks": tasks_list_to_dict(tasks),
         }
 
     def _anomaly_detector(self, setting: Dict[str, Any]) -> Dict[str, Any]:
+        """Emit a `builtin:davis.anomaly-detectors` settings envelope.
+
+        Schema (v1.0.14, verified 2026-04-20 against sprint tenant):
+          value.{enabled,title,description,source,executionSettings,
+                 analyzer{name,input[{key,value}]},
+                 eventTemplate{properties[{key,value}]}}
+
+        `analyzer.name` picks an auto-adaptive analyzer since the NR AIOps
+        anomaly-detection settings we migrate are always adaptive (they use
+        sensitivity/stddev thresholds, not fixed values). The DQL query is
+        synthesized from the NR metricKey + aggregation.
+        """
         name = setting.get("name", "anomaly-setting")
         detector_id = "".join(
             c if c.isalnum() or c == "-" else "-"
             for c in f"davis-aiops-{name}".lower()
         )[:180]
+        metric_key = setting.get("metricKey", "builtin:host.cpu.usage")
+        agg = setting.get("aggregation", "AVG").lower()
+        sensitivity = float(setting.get("sensitivity", 3.0))
+        dql_query = f"timeseries {agg}({metric_key})"
+
         return {
             "schemaId": "builtin:davis.anomaly-detectors",
             "scope": "environment",
             "detectorId": detector_id,
             "value": {
-                "name": f"[NR AIOps] {name}",
-                "description": "Migrated anomaly-detection setting.",
                 "enabled": bool(setting.get("enabled", True)),
-                "source": {
-                    "type": "METRIC_KEY",
-                    "metricKey": setting.get("metricKey", "builtin:host.cpu.usage"),
-                    "aggregation": setting.get("aggregation", "AVG"),
-                },
-                "strategy": {
-                    "type": "AUTO_ADAPTIVE_BASELINE",
-                    "alertCondition": "OUTSIDE_BOUNDS",
-                    "sensitivity": float(setting.get("sensitivity", 3.0)),
+                "title": f"[NR AIOps] {name}",
+                "description": "Migrated anomaly-detection setting.",
+                "source": "newrelic-migration",
+                "executionSettings": {"actor": None, "queryOffset": None},
+                "analyzer": {
+                    "name": (
+                        "dt.statistics.ui.anomaly_detection"
+                        ".AutoAdaptiveAnomalyDetectionAnalyzer"
+                    ),
+                    "input": [
+                        {"key": "query", "value": dql_query},
+                        {"key": "numberOfSignalFluctuations",
+                         "value": str(sensitivity)},
+                        {"key": "alertCondition", "value": "ABOVE"},
+                        {"key": "alertOnMissingData", "value": "false"},
+                        {"key": "violatingSamples", "value": "3"},
+                        {"key": "slidingWindow", "value": "5"},
+                        {"key": "dealertingSamples", "value": "5"},
+                    ],
                 },
                 "eventTemplate": {
-                    "title": f"[NR AIOps] {name}",
-                    "description": name,
-                    "eventType": "CUSTOM_ALERT",
-                    "davisMerge": True,
                     "properties": [
+                        {"key": "event.type", "value": "CUSTOM_ALERT"},
+                        {"key": "event.name", "value": f"[NR AIOps] {name}"},
                         {"key": "migrated.from", "value": "newrelic-aiops"},
                     ],
                 },

@@ -23,6 +23,8 @@ from typing import Any, Dict, List
 
 import structlog
 
+from ._workflow_utils import tasks_list_to_dict
+
 logger = structlog.get_logger()
 
 
@@ -102,17 +104,25 @@ class NonNRQLAlertTransformer:
                 duration_seconds = int(critical.get("thresholdDuration", 300))
                 samples = max(1, duration_seconds // 60)
 
-            strategy = {
-                "type": "STATIC_THRESHOLD",
-                "threshold": threshold,
-                "alertCondition": alert_cond,
-                "samples": samples,
-                "violatingSamples": samples,
-                "dealingWithGapsStrategy": "DROP_DATA",
-            }
+            # New builtin:davis.anomaly-detectors schema (v1.0.14, 2026-04-20):
+            # top level is {enabled,title,description,source,executionSettings,
+            # analyzer{name,input[{key,value}]},eventTemplate{properties}}.
+            # All thresholds/conditions/samples go into analyzer.input as
+            # stringified key/value pairs.
+            analyzer_input = [
+                {"key": "query", "value": f"timeseries avg({metric_key})"},
+                {"key": "threshold", "value": str(threshold)},
+                {"key": "alertCondition", "value": alert_cond},
+                {"key": "alertOnMissingData", "value": "false"},
+                {"key": "violatingSamples", "value": str(samples)},
+                {"key": "slidingWindow", "value": str(samples)},
+                {"key": "dealertingSamples", "value": "5"},
+            ]
             if ctype == "multi_location_synthetic":
                 required = int(nr_condition.get("locationsRequired", 3))
-                strategy["minLocationsFailing"] = required
+                analyzer_input.append(
+                    {"key": "minLocationsFailing", "value": str(required)}
+                )
                 warnings.append(
                     f"Multi-location synthetic '{name}' requires "
                     f"{required} locations failing — verify DT detector "
@@ -128,21 +138,22 @@ class NonNRQLAlertTransformer:
                 "scope": "environment",
                 "detectorId": detector_id,
                 "value": {
-                    "name": f"[Migrated] {name}",
-                    "description": f"{note} Migrated from NR '{ctype}' condition.",
                     "enabled": bool(nr_condition.get("enabled", True)),
-                    "source": {
-                        "type": "METRIC_KEY",
-                        "metricKey": metric_key,
-                        "aggregation": "AVG",
+                    "title": f"[Migrated] {name}",
+                    "description": f"{note} Migrated from NR '{ctype}' condition.",
+                    "source": "newrelic-migration",
+                    "executionSettings": {"actor": None, "queryOffset": None},
+                    "analyzer": {
+                        "name": (
+                            "dt.statistics.ui.anomaly_detection"
+                            ".StaticThresholdAnomalyDetectionAnalyzer"
+                        ),
+                        "input": analyzer_input,
                     },
-                    "strategy": strategy,
                     "eventTemplate": {
-                        "title": f"[Migrated] {name}",
-                        "description": name,
-                        "eventType": "CUSTOM_ALERT",
-                        "davisMerge": True,
                         "properties": [
+                            {"key": "event.type", "value": "CUSTOM_ALERT"},
+                            {"key": "event.name", "value": f"[Migrated] {name}"},
                             {"key": "source.condition", "value": name},
                             {"key": "source.type", "value": ctype},
                             {"key": "migrated.from", "value": "newrelic"},
@@ -167,7 +178,8 @@ class NonNRQLAlertTransformer:
                         },
                     }
                 },
-                "tasks": [
+                # Gen3 Automation API requires `tasks` as a dict keyed by task id.
+                "tasks": tasks_list_to_dict([
                     {
                         "name": "placeholder_action",
                         "action": "dynatrace.automations:run-javascript",
@@ -176,7 +188,7 @@ class NonNRQLAlertTransformer:
                         "input": {"script": "export default () => ({ ok: true });"},
                         "position": {"x": 0, "y": 1},
                     }
-                ],
+                ]),
             }
 
             logger.info(

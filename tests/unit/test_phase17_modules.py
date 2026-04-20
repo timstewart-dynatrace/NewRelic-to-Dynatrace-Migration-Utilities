@@ -21,6 +21,13 @@ from transformers import (
 # ---------------------------------------------------------------------------
 
 
+def _non_nrql_input_map(detector):
+    return {
+        item["key"]: item["value"]
+        for item in detector["value"]["analyzer"]["input"]
+    }
+
+
 class TestNonNRQLAlert:
     def test_synthetic_condition_maps_to_detector(self):
         r = NonNRQLAlertTransformer().transform({
@@ -30,7 +37,8 @@ class TestNonNRQLAlert:
         assert r.success
         det = r.anomaly_detectors[0]
         assert det["schemaId"] == "builtin:davis.anomaly-detectors"
-        assert det["value"]["strategy"]["alertCondition"] == "BELOW"
+        inputs = _non_nrql_input_map(det)
+        assert inputs["alertCondition"] == "BELOW"
 
     def test_browser_condition_flags_manual_review(self):
         r = NonNRQLAlertTransformer().transform({
@@ -46,7 +54,8 @@ class TestNonNRQLAlert:
             "locationsRequired": 2,
             "terms": [{"threshold": 1}],
         })
-        assert r.anomaly_detectors[0]["value"]["strategy"]["minLocationsFailing"] == 2
+        inputs = _non_nrql_input_map(r.anomaly_detectors[0])
+        assert inputs["minLocationsFailing"] == "2"
         assert any("Multi-location" in w for w in r.warnings)
 
     def test_unknown_type_errors_gracefully(self):
@@ -68,8 +77,16 @@ class TestNonNRQLAlert:
 # ---------------------------------------------------------------------------
 
 
+def _input_map(detector):
+    """Helper — collapse analyzer.input list to {key: value}."""
+    return {
+        item["key"]: item["value"]
+        for item in detector["value"]["analyzer"]["input"]
+    }
+
+
 class TestBaselineAlert:
-    def test_baseline_condition_auto_adaptive_strategy(self):
+    def test_baseline_condition_emits_auto_adaptive_analyzer(self):
         r = BaselineAlertTransformer().transform({
             "name": "response-time-baseline",
             "conditionType": "baseline",
@@ -78,25 +95,29 @@ class TestBaselineAlert:
             "nrql": {"query": "SELECT average(duration) FROM Transaction"},
         })
         assert r.success
-        strat = r.anomaly_detectors[0]["value"]["strategy"]
-        assert strat["type"] == "AUTO_ADAPTIVE_BASELINE"
-        assert strat["alertCondition"] == "ABOVE_UPPER_BOUND"
-        assert strat["sensitivity"] == 4.0
+        value = r.anomaly_detectors[0]["value"]
+        assert value["analyzer"]["name"] == (
+            "dt.statistics.ui.anomaly_detection"
+            ".AutoAdaptiveAnomalyDetectionAnalyzer"
+        )
+        inputs = _input_map(r.anomaly_detectors[0])
+        assert inputs["alertCondition"] == "ABOVE"
+        assert inputs["numberOfSignalFluctuations"] == "4.0"
 
     def test_outlier_without_facet_warns_and_defaults(self):
         r = BaselineAlertTransformer().transform({
             "name": "svc-outliers", "conditionType": "outlier",
         })
-        strat = r.anomaly_detectors[0]["value"]["strategy"]
-        assert strat["type"] == "AUTO_ADAPTIVE_OUTLIER"
-        assert strat["byDimensions"] == ["dt.entity.service"]
+        inputs = _input_map(r.anomaly_detectors[0])
+        assert inputs["dimensions"] == "dt.entity.service"
         assert any("no facet" in w for w in r.warnings)
 
     def test_direction_both_maps_to_outside_bounds(self):
         r = BaselineAlertTransformer().transform({
             "name": "x", "baselineDirection": "both",
         })
-        assert r.anomaly_detectors[0]["value"]["strategy"]["alertCondition"] == "OUTSIDE_BOUNDS"
+        inputs = _input_map(r.anomaly_detectors[0])
+        assert inputs["alertCondition"] == "OUTSIDE_BOUNDS"
 
 
 # ---------------------------------------------------------------------------
@@ -388,3 +409,90 @@ class TestNRDBArchive:
         arch = NRDBArchive(run_query=fake_run_query, account_id="acct-1")
         arch.archive(since="1h ago", output_dir=str(tmp_path), event_types=["Transaction"])
         assert "resume-xyz" in seen_cursors
+
+
+# ---------------------------------------------------------------------------
+# Regression for gh import-phase issue #2 — builtin:davis.anomaly-detectors
+# schema drift. Live schema v1.0.14 (sprint tenant, 2026-04-20) requires
+# {analyzer, title, executionSettings} at top level; the old shape with
+# {name, strategy, source{type,query}, eventTemplate{title,davisMerge}} is
+# rejected by 10 validators.
+# ---------------------------------------------------------------------------
+
+
+class TestAnomalyDetectorGen3Schema:
+    """Pin the exact top-level shape required by the current
+    builtin:davis.anomaly-detectors schema on Gen3 tenants."""
+
+    # Fields the CURRENT schema validators reject if present.
+    _FORBIDDEN_TOP_LEVEL = {"name", "strategy"}
+    _FORBIDDEN_EVENTTEMPLATE = {"title", "description", "eventType", "davisMerge"}
+    # Fields the CURRENT schema validators require.
+    _REQUIRED_TOP_LEVEL = {"title", "source", "analyzer", "executionSettings"}
+
+    def _detector(self):
+        r = BaselineAlertTransformer().transform({
+            "name": "test-baseline",
+            "conditionType": "baseline",
+            "baselineDirection": "upper_only",
+            "deviations": 3.0,
+            "nrql": {"query": "SELECT average(duration) FROM Transaction"},
+        })
+        assert r.success
+        return r.anomaly_detectors[0]
+
+    def test_top_level_has_required_fields(self):
+        value = self._detector()["value"]
+        missing = self._REQUIRED_TOP_LEVEL - set(value)
+        assert not missing, f"Missing required fields: {missing}"
+
+    def test_top_level_has_no_forbidden_fields(self):
+        value = self._detector()["value"]
+        present = self._FORBIDDEN_TOP_LEVEL & set(value)
+        assert not present, (
+            f"Schema-forbidden fields still emitted: {present} — "
+            "the old transformer shape triggers 10 validator errors."
+        )
+
+    def test_source_is_text_not_object(self):
+        # Schema says `source` is `type: text`, not an object with
+        # `{type, metricKey, query, originalNRQL}`.
+        source = self._detector()["value"]["source"]
+        assert isinstance(source, str)
+        assert source == "newrelic-migration"
+
+    def test_eventTemplate_has_only_properties(self):
+        event_template = self._detector()["value"]["eventTemplate"]
+        assert set(event_template) == {"properties"}, (
+            "eventTemplate must contain only `properties` — title/"
+            "description/eventType/davisMerge all get rejected."
+        )
+        # Each property matches the EventProperty type.
+        for prop in event_template["properties"]:
+            assert set(prop) == {"key", "value"}
+            assert prop["value"], "EventProperty.value has minLength=1"
+
+    def test_analyzer_name_and_input_shape(self):
+        analyzer = self._detector()["value"]["analyzer"]
+        assert analyzer["name"].startswith("dt.statistics.ui.anomaly_detection.")
+        # input is a list of {key, value} pairs, all strings.
+        for item in analyzer["input"]:
+            assert set(item) == {"key", "value"}
+            assert isinstance(item["key"], str) and isinstance(item["value"], str)
+            # value.minLength=1 (schema constraint) — no empty strings.
+            assert item["value"], f"analyzer.input[{item['key']}].value is empty"
+
+    def test_aiops_transformer_emits_same_shape(self):
+        from transformers.aiops_transformer import AIOpsTransformer
+        r = AIOpsTransformer().transform({
+            "anomalyDetectionSettings": [
+                {"name": "aiops-test", "metricKey": "dt.host.cpu.usage",
+                 "sensitivity": 3.0},
+            ],
+        })
+        value = r.anomaly_detectors[0]["value"]
+        # Same top-level guarantees.
+        assert self._REQUIRED_TOP_LEVEL.issubset(set(value))
+        assert not (self._FORBIDDEN_TOP_LEVEL & set(value))
+        assert isinstance(value["source"], str)
+        assert set(value["eventTemplate"]) == {"properties"}
