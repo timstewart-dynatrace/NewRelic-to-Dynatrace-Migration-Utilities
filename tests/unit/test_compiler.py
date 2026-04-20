@@ -11,6 +11,8 @@ Import target is ``nrql_migrator.compiler``; a fallback to the monolith
 
 
 
+import re
+
 # Re-use helpers from conftest
 from tests.conftest import assert_valid_dql, code_lines
 
@@ -2237,3 +2239,89 @@ class TestWindowFunctions:
             "SELECT windowSum(duration, 5 MINUTES) FROM Transaction TIMESERIES"
         )
         assert_valid_dql(result)
+
+
+# ---------------------------------------------------------------------------
+# Issue #13: golden-metric alias expansion bug
+# ---------------------------------------------------------------------------
+class TestShorthandLookbehindRegression:
+    """Regression tests for gh #13.
+
+    Pre-lex shorthand expansion used `\\b<name>\\b`, which matched `throughput`
+    (and other shorthands) at the end of dotted identifiers like
+    `newrelic.goldenmetrics.apm.application.throughput` because `\\b` treats
+    `.` → `t` as a word boundary. The fix uses `(?<![.\\w])<name>\\b` to
+    reject a preceding `.` or word character.
+    """
+
+    _METRIC_NAME_RE = re.compile(r"^[a-zA-Z][\w.]*$")
+
+    def test_dotted_goldenmetric_throughput_is_preserved(self, compiler):
+        # The exact repro from gh #13.
+        result = compiler.compile(
+            "SELECT average(`newrelic.goldenmetrics.apm.application.throughput`) "
+            "FROM Metric FACET entity.guid, appName"
+        )
+        assert result.success
+        # Shorthand body must NOT leak into the metric identifier.
+        assert "rate(count(*), 1 minute)" not in result.dql
+        assert "count(*)" not in result.dql
+        # The original metric name is preserved verbatim.
+        assert "newrelic.goldenmetrics.apm.application.throughput" in result.dql
+
+    def test_dotted_errorRate_is_preserved(self, compiler):
+        result = compiler.compile(
+            "SELECT average(`newrelic.goldenmetrics.apm.application.errorRate`) "
+            "FROM Metric"
+        )
+        assert result.success
+        assert "percentage(count(*)" not in result.dql
+        assert "newrelic.goldenmetrics.apm.application.errorRate" in result.dql
+
+    def test_dotted_apdexScore_is_preserved(self, compiler):
+        result = compiler.compile(
+            "SELECT latest(`some.vendor.apdexScore`) FROM Metric"
+        )
+        assert result.success
+        assert "apdex(duration)" not in result.dql
+        assert "some.vendor.apdexScore" in result.dql
+
+    def test_bare_throughput_still_expands(self, compiler):
+        # Ensure the fix didn't over-constrain: a bare shorthand token must
+        # still be rewritten. We check the EXPANDED form reached the lexer by
+        # inspecting that the compiler's output represents rate-of-count, not
+        # a literal `throughput` identifier.
+        result = compiler.compile("SELECT throughput FROM Transaction")
+        assert result.success
+        assert "throughput" not in result.dql, (
+            "Bare `throughput` should have been expanded before lex."
+        )
+
+    def test_bare_errorRate_still_expands(self, compiler):
+        result = compiler.compile("SELECT errorRate FROM Transaction")
+        assert result.success
+        assert "errorRate" not in result.dql
+
+    def test_bare_apdexScore_still_expands(self, compiler):
+        result = compiler.compile("SELECT apdexScore FROM Transaction")
+        assert result.success
+        assert "apdexScore" not in result.dql
+
+    def test_emitted_metric_identifiers_are_well_formed(self, compiler):
+        """Structural guard suggested in gh #13: the metric-name portion of
+        any emitted `timeseries` aggregation must be a plain dotted
+        identifier, not a mangled string carrying function calls.
+        """
+        result = compiler.compile(
+            "SELECT average(`newrelic.goldenmetrics.apm.application.throughput`) "
+            "FROM Metric"
+        )
+        assert result.success
+        # Extract `avg(<metric>)` and verify the inner identifier is well-formed.
+        m = re.search(r"avg\(([^)]+)\)", result.dql)
+        assert m is not None, f"Expected `avg(...)` in DQL: {result.dql!r}"
+        metric_ident = m.group(1).strip()
+        assert self._METRIC_NAME_RE.match(metric_ident), (
+            f"Metric identifier {metric_ident!r} is not a plain dotted name; "
+            "a shorthand expansion likely leaked into it."
+        )
