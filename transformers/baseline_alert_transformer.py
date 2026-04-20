@@ -16,6 +16,8 @@ from typing import Any, Dict, List
 
 import structlog
 
+from ._detector_utils import nrql_to_analyzer_query
+
 logger = structlog.get_logger()
 
 
@@ -72,10 +74,13 @@ class BaselineAlertTransformer:
                     f"Baseline condition '{name}' has no NRQL source — "
                     "the detector will reference a placeholder DQL."
                 )
-            # `analyzer.input[].value` has minLength=1 in the current schema,
-            # so we always need a non-empty query. If NRQL is missing, emit a
-            # harmless `timeseries count()` as a best-effort placeholder.
-            dql_query = nrql if nrql else "timeseries count()"
+            # `analyzer.input[].value` is server-validated as DQL syntax;
+            # passing raw NRQL produces "Invalid DQL query. `FROM` isn't
+            # allowed here." Route through NRQLtoDQLConverter; fall back to
+            # a `// UNCONVERTED NRQL` comment + placeholder when the query
+            # can't be confidently translated. minLength=1 is satisfied
+            # either way.
+            dql_query = nrql_to_analyzer_query(nrql, warnings=warnings)
 
             detector_id = f"davis-baseline-{name}".lower()
             detector_id = "".join(
