@@ -15,6 +15,7 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
 logger = structlog.get_logger()
+nr_export_logger = structlog.get_logger("nr_export")
 
 
 @dataclass
@@ -194,18 +195,26 @@ class NewRelicClient:
                 "cursor": cursor
             })
 
+            if response.errors:
+                nr_export_logger.warning("entitySearch errors", entity_type="DASHBOARD", errors=response.errors)
             if not response.is_success:
                 logger.error("Failed to fetch dashboards", errors=response.errors)
                 break
 
             results = response.data["actor"]["entitySearch"]["results"]
             entities = results.get("entities", [])
+            nr_export_logger.info("entitySearch outlines", entity_type="DASHBOARD",
+                                  count=len(entities),
+                                  entities=[(e.get("guid"), e.get("name")) for e in entities])
 
             for entity in entities:
                 # Get full dashboard definition
                 full_dashboard = self.get_dashboard_definition(entity["guid"])
                 if full_dashboard:
                     dashboards.append(full_dashboard)
+                else:
+                    nr_export_logger.warning("detail fetch returned None", entity_type="DASHBOARD",
+                                             guid=entity.get("guid"), name=entity.get("name"))
 
             cursor = results.get("nextCursor")
             if not cursor:
@@ -492,16 +501,24 @@ class NewRelicClient:
                 "cursor": cursor
             })
 
+            if response.errors:
+                nr_export_logger.warning("entitySearch errors", entity_type="SYNTHETIC_MONITOR", errors=response.errors)
             if not response.is_success:
                 break
 
             results = response.data["actor"]["entitySearch"]["results"]
             entities = results.get("entities", [])
+            nr_export_logger.info("entitySearch outlines", entity_type="SYNTHETIC_MONITOR",
+                                  count=len(entities),
+                                  entities=[(e.get("guid"), e.get("name")) for e in entities])
 
             for entity in entities:
                 full_monitor = self.get_synthetic_monitor_details(entity["guid"])
                 if full_monitor:
                     monitors.append(full_monitor)
+                else:
+                    nr_export_logger.warning("detail fetch returned None", entity_type="SYNTHETIC_MONITOR",
+                                             guid=entity.get("guid"), name=entity.get("name"))
 
             cursor = results.get("nextCursor")
             if not cursor:
@@ -682,16 +699,24 @@ class NewRelicClient:
                 "cursor": cursor
             })
 
+            if response.errors:
+                nr_export_logger.warning("entitySearch errors", entity_type="WORKLOAD", errors=response.errors)
             if not response.is_success:
                 break
 
             results = response.data["actor"]["entitySearch"]["results"]
             entities = results.get("entities", [])
+            nr_export_logger.info("entitySearch outlines", entity_type="WORKLOAD",
+                                  count=len(entities),
+                                  entities=[(e.get("guid"), e.get("name")) for e in entities])
 
             for entity in entities:
                 full_workload = self.get_workload_details(entity["guid"])
                 if full_workload:
                     workloads.append(full_workload)
+                else:
+                    nr_export_logger.warning("detail fetch returned None", entity_type="WORKLOAD",
+                                             guid=entity.get("guid"), name=entity.get("name"))
 
             cursor = results.get("nextCursor")
             if not cursor:
