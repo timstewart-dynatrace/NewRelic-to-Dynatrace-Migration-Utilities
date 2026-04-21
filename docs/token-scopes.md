@@ -108,30 +108,53 @@ Platform Tokens are revocable at any time and do not expire automatically
 
 ---
 
+## Authorization Scheme — `Bearer` vs `Api-Token`
+
+The HTTP `Authorization` header scheme depends on the **token prefix**, not
+the API being called. Using the wrong scheme yields `401 Unsupported
+authorization scheme` even when the token has every scope.
+
+| Token prefix | Token type | Scheme |
+|--------------|-----------|--------|
+| `dt0s16.` | Platform Token | `Bearer` |
+| `dt0s01.` | Platform OAuth token | `Bearer` |
+| `dt0c01.` | Classic API Token | `Api-Token` |
+
+`migrate.py` auto-selects the correct scheme from the prefix on every
+outgoing request — you don't need to configure it. The curl examples below
+use `Bearer` because the default Gen3 path uses a Platform Token. If you
+are probing a Classic tenant (`--legacy`) with a `dt0c01.*` token, replace
+`Bearer` with `Api-Token` in every example.
+
+---
+
 ## Verifying a Single Scope with `curl`
 
 If preflight reports a 401/403 on one specific API, you can isolate the
 failure with a raw HTTP call. Replace `$DT_URL` and `$DT_TOKEN` with your
-values.
+values. Examples assume a Platform Token (`dt0s16.*`). For a Classic token
+(`dt0c01.*`), substitute `Api-Token` for `Bearer`.
 
 ```bash
 # settings_v2 — requires settings:schemas:read
-curl -sS -H "Authorization: Api-Token $DT_TOKEN" \
+curl -sS -H "Authorization: Bearer $DT_TOKEN" \
   "$DT_URL/api/v2/settings/schemas?pageSize=1"
 
 # document_api — requires document:documents:read
 # (note: Document API lives on the apps. subdomain)
 APPS_URL=$(echo "$DT_URL" | sed 's/\.live\./.apps./')
-curl -sS -H "Authorization: Api-Token $DT_TOKEN" \
+curl -sS -H "Authorization: Bearer $DT_TOKEN" \
   "$APPS_URL/platform/document/v1/documents?pageSize=1"
 
 # automation_api — requires automation:workflows:read
-curl -sS -H "Authorization: Api-Token $DT_TOKEN" \
+curl -sS -H "Authorization: Bearer $DT_TOKEN" \
   "$APPS_URL/platform/automation/v1/workflows?pageSize=1"
 ```
 
 - **200** → scope is present and the API is reachable.
-- **401** → token is invalid or expired.
+- **401 "Unsupported authorization scheme"** → you used the wrong scheme for
+  the token prefix (see table above). Platform Tokens always use `Bearer`.
+- **401 (other)** → token is invalid or expired.
 - **403** → token is valid but lacks the scope — add it in the UI.
 - **404** → the tenant does not expose this Gen3 surface. Run `migrate` with
   `--legacy` until the tenant is upgraded.
@@ -146,5 +169,6 @@ curl -sS -H "Authorization: Api-Token $DT_TOKEN" \
 | `preflight` shows `document_api: no` (403) | Token missing `document:documents:read` | Add the scope |
 | `preflight` shows `automation_api: no` (404) | Tenant is Classic/Managed without Gen3 | Run `migrate --legacy` until the tenant is upgraded |
 | `preflight` shows all three `no` (0/network) | `DYNATRACE_ENVIRONMENT_URL` wrong or unreachable | Confirm the URL is the SaaS `.live.dynatrace.com` host and reachable from your machine |
+| 401 "Unsupported authorization scheme" in curl or logs | Used `Api-Token` with a `dt0s16.*` Platform Token (or `Bearer` with a `dt0c01.*` Classic token) | Match scheme to prefix — see "Authorization Scheme" table. `migrate.py` does this automatically; raw curl does not |
 | `migrate` fails mid-run with "403 on settings:objects:write" | Preflight scopes sufficient for read but not write | Add `settings:objects:write` to the token |
 | `migrate` fails querying Grail inside a workflow | Missing `storage:*:read` scopes | Add every scope from the Grail row above |
