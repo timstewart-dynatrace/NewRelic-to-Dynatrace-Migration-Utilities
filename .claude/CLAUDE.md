@@ -6,14 +6,14 @@
 
 Universal migration tool for converting New Relic monitoring configurations to Dynatrace. Migrates dashboards (with a real NRQL-to-DQL compiler), alerts, synthetic monitors, SLOs, and workloads. Three-phase pipeline: Export (NR NerdGraph) -> Transform -> Import (DT APIs). Supports config-as-code export (Monaco, Terraform).
 
-**Last Updated:** 2026-04-16
-**Version:** 2.0.0
+**Last Updated:** 2026-04-20
+**Version:** 2.0.0 (+ PRs #16–22 Gen3-tenant correctness fixes)
 **Phases Completed:** 0-26 + 19b + 3rd-pass + Phase 25 (all complete)
 
 ## Quick Reference
 
 ```bash
-# Run tests (894 unit + 8 integration across 28 files)
+# Run tests (1183 unit + 8 integration; 50+ files)
 pytest tests/ -v
 
 # Integration tests (requires .env with real credentials)
@@ -60,7 +60,7 @@ python migrate.py --version
 | CLI | Click + Rich | Subcommands with progress display |
 | Logging | structlog | Structured logging |
 | HTTP | requests | API clients |
-| Testing | pytest + hypothesis | 1237 unit (incl 36 property-based) + 8 integration tests |
+| Testing | pytest + hypothesis | 1183 unit (incl 36 property-based + wire-level Gen3 regressions) + 8 integration tests |
 
 ## Architecture
 
@@ -122,7 +122,7 @@ All transformers follow a consistent pattern:
 | `utils/` | Logging, auth (OAuth), validators, `error_taxonomy.py` (WarningCode/ErrorCode) |
 | `examples/` | Sample NRQL queries for batch testing |
 | `docs/` | `COVERAGE.md`, `migration-coverage.md`, `gen2-only-capabilities.md`, `out-of-scope.md`, `validation.md`, `architecture.md`, `nrql-engine-sync-audit.md` |
-| `tests/` | 1237 unit (incl 36 Hypothesis) + 8 integration tests; `tests/legacy/` for Gen2 paths; `tests/integration/` for schema/IaC validation (env-gated) |
+| `tests/` | 1183 unit (incl 36 Hypothesis + wire-level `TestAnomalyDetectorWirePayload` / `TestMultipartContentTypeWire` / `TestAnalyzerInputQueryIsDql`) + 8 integration tests; `tests/legacy/` for Gen2 paths; `tests/integration/` for schema/IaC validation (env-gated) |
 
 ## Rules
 
@@ -132,6 +132,7 @@ All transformers follow a consistent pattern:
 @.claude/rules/testing.md
 @.claude/rules/development.md
 @.claude/rules/deployment.md
+@.claude/rules/gen3-apis.md
 
 ## Skills (domain knowledge from VisualCode-AI-Template/SKILLS/)
 
@@ -166,3 +167,5 @@ All transformers follow a consistent pattern:
 - **DQL validation** — structurally valid DQL doesn't guarantee data returns. Field existence requires live validation against Grail API. See `docs/validation.md` for the 6-tier validation strategy.
 - **nrql-engine parity** — the TS sibling at `/Users/Shared/GitHub/PROJECTS/nrql-engine/` is kept at parity (53/53 transformer files covered). CI `nrql-engine-parity` job guards drift. See `docs/nrql-engine-sync-audit.md`.
 - **Phase gates** — Every phase must have complete tests, documentation, and memory updates before moving to the next phase. All phases (0–26 + 19b + 3rd-pass + 25 + 15) are complete as of v2.0.0.
+- **Gen3 API correctness** — Producing requests that Gen3 SaaS (`.apps.*`) tenants accept has several non-obvious rules (auth-by-token-prefix, `/platform/classic/environment-api/v2` settings path, multipart Document API, dict-shaped `tasks`, DQL in `analyzer.input`, v1.0.14 `builtin:davis.anomaly-detectors` shape). See `.claude/rules/gen3-apis.md` before writing new code that talks to a Gen3 tenant.
+- **Gen3 SKIPPED entities** — Synthetic monitors, Grail segments, and IAM policies are deliberately SKIPPED in `migrate.py::_import_phase` (per-facet emission / Platform API / Account Management API not wired). Envelopes still get built; only the POST step is skipped. Don't re-enable without building the right Gen3 client. See `.claude/rules/gen3-apis.md`.

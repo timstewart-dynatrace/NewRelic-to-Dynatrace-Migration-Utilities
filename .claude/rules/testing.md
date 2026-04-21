@@ -2,7 +2,7 @@
 
 ## Running Tests
 ```bash
-pytest tests/ -v                    # All 1237 unit + 8 integration tests
+pytest tests/ -v                    # All 1183 unit + 8 integration tests
 pytest tests/unit/test_compiler.py  # 292 compiler tests
 pytest tests/unit/test_invariants.py  # 36 Hypothesis property-based fuzz tests
 pytest tests/unit/test_cli.py       # CLI tests
@@ -21,7 +21,7 @@ RUN_IAC_VALIDATION=1 pytest tests/integration/test_iac_validates.py -v
 ```
 
 ## Test Structure
-- 1237 unit tests across 40+ test files in `tests/unit/`
+- 1183 unit tests across 50+ test files in `tests/unit/`
 - 36 Hypothesis property-based invariant tests in `test_invariants.py` (1080 randomized inputs per run)
 - 16 nrql-engine parity regression tests in `test_phase19b_engine_parity.py`
 - 8 integration tests across 5 files in `tests/integration/` (env-var gated)
@@ -48,3 +48,22 @@ class TestMetricQueries:
 - Mock external APIs (NR, DT) with `unittest.mock.patch`
 - Use `click.testing.CliRunner` for CLI tests
 - Use `tempfile` for file I/O tests
+
+## Wire-level tests for outbound HTTP
+For any code path that produces an HTTP request to a Dynatrace endpoint, prefer capturing at the `Session.send` layer over mocking `transport.post(...)` / `client.create_*(...)`. Mock-the-transport tests let serialization bugs slip through — PRs #20/#21 shipped multipart body + `application/json` Content-Type and `analyzer.input=<raw NRQL>` because nothing inspected what the `Session` would actually serialize.
+
+```python
+def test_outgoing_wire_shape(self):
+    transport = HttpTransport(api_token="dt0s16.test")
+    captured = {}
+    def fake_send(req, **kw):
+        captured["headers"] = dict(req.headers)
+        captured["body"] = req.body
+        r = requests.Response(); r.status_code = 200; r._content = b"{}"
+        return r
+    with patch.object(transport.session, "send", side_effect=fake_send):
+        client.do_thing(transport)
+    # Assert on captured["headers"] / captured["body"] — this is what the tenant sees.
+```
+
+Examples: `tests/unit/test_dynatrace_client.py::TestMultipartContentTypeWire`, `::TestAnomalyDetectorWirePayload`, `::TestAnalyzerInputQueryIsDql`. Test classes whose name ends in `Wire` or contains `WirePayload` are the right idiom in this repo.
