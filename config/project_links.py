@@ -23,8 +23,8 @@ class ProjectLinks:
     """
 
     # This repo.
-    dynatrace_newrelic_repo: str = (
-        "https://github.com/timstewart-dynatrace/Dynatrace-NewRelic"
+    repo_url: str = (
+        "https://github.com/timstewart-dynatrace/NewRelic-to-Dynatrace-Migration-Utilities"
     )
 
     # TypeScript sibling. Planned relocation: `timstewart-dynatrace` -> `dynatrace-dma`.

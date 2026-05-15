@@ -67,7 +67,7 @@ class TestWarnAndErrorHelpers:
 
 class TestProjectLinks:
     def test_links_singleton_fields(self):
-        assert "Dynatrace-NewRelic" in LINKS.dynatrace_newrelic_repo
+        assert "NewRelic-to-Dynatrace-Migration-Utilities" in LINKS.repo_url
         assert "nrql-engine" in LINKS.nrql_engine_repo
 
     def test_relocation_pending_flag(self):

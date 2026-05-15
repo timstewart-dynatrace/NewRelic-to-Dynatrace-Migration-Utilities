@@ -3,7 +3,7 @@
 ## Project Structure
 
 ```
-Dynatrace-NewRelic/
+NewRelic-to-Dynatrace-Migration-Utilities/
 ├── migrate.py                         # CLI entry point (migrate, compile, convert, reference, batch, audit-slos)
 ├── _version.py                        # Version (1.3.0)
 ├── pyproject.toml                     # Project config, pip install, pytest

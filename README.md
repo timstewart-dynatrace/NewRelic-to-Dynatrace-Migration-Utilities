@@ -1,4 +1,4 @@
-# Dynatrace-NewRelic
+# NewRelic-to-Dynatrace Migration Utilities
 
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
@@ -161,7 +161,7 @@ missing and how to fix them.
 ## Project Structure
 
 ```
-Dynatrace-NewRelic/
+NewRelic-to-Dynatrace-Migration-Utilities/
 ├── migrate.py                     # CLI entry point (migrate, compile, convert, reference, batch, export)
 ├── pyproject.toml                 # Project config + pip install
 ├── requirements.txt               # Python dependencies

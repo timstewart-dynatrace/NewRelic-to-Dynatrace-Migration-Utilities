@@ -10,8 +10,8 @@ This guide walks through a complete migration using the sample data included in 
 ## 1. Install
 
 ```bash
-git clone https://github.com/timstewart-dynatrace/Dynatrace-NewRelic.git
-cd Dynatrace-NewRelic
+git clone https://github.com/timstewart-dynatrace/NewRelic-to-Dynatrace-Migration-Utilities.git
+cd NewRelic-to-Dynatrace-Migration-Utilities
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 ```

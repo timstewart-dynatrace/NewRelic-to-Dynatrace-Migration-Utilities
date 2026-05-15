@@ -1,4 +1,4 @@
-# Copilot Instructions - Dynatrace-NewRelic Migration Tool
+# Copilot Instructions - NewRelic-to-Dynatrace Migration Utilities
 
 ## Project Overview
 

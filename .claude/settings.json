@@ -5,9 +5,9 @@
   "description": "Universal migration tool for converting New Relic monitoring configurations to Dynatrace. Migrates dashboards (with a real NRQL-to-DQL compiler), alerts, synthetic monitors, SLOs, and workloads.",
 
   "repository": {
-    "owner": "jtimothystewart",
-    "name": "Dynatrace-NewRelic",
-    "url": "https://github.com/jtimothystewart/Dynatrace-NewRelic"
+    "owner": "timstewart-dynatrace",
+    "name": "NewRelic-to-Dynatrace-Migration-Utilities",
+    "url": "https://github.com/timstewart-dynatrace/NewRelic-to-Dynatrace-Migration-Utilities"
   },
 
   "standards": {

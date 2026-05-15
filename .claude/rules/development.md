@@ -9,8 +9,8 @@
 
 ```bash
 # Clone repository
-git clone https://github.com/jtimothystewart/Dynatrace-NewRelic.git
-cd Dynatrace-NewRelic
+git clone https://github.com/timstewart-dynatrace/NewRelic-to-Dynatrace-Migration-Utilities.git
+cd NewRelic-to-Dynatrace-Migration-Utilities
 
 # Create virtual environment
 python3 -m venv .venv

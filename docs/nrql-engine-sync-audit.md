@@ -1,8 +1,8 @@
-# nrql-engine ↔ Dynatrace-NewRelic Sync Audit
+# nrql-engine ↔ NewRelic-to-Dynatrace Migration Utilities Sync Audit
 
 > **Audited:** 2026-04-15
 > **Sibling repo:** `/Users/Shared/GitHub/PROJECTS/nrql-engine/` (TypeScript)
-> **This repo:** `/Users/Shared/GitHub/PROJECTS/Dynatrace-NewRelic/` (Python)
+> **This repo:** `/Users/Shared/GitHub/PROJECTS/NewRelic-to-Dynatrace-Migration-Utilities/` (Python)
 
 The two projects are meant to stay feature-synced. This doc catalogs
 where they diverge and identifies concrete opportunities to port work

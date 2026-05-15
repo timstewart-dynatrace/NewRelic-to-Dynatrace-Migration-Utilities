@@ -72,8 +72,8 @@ The dual-run period is critical. You need Dynatrace collecting data before migra
 ### 2.1 Install the migration tool
 
 ```bash
-git clone https://github.com/timstewart-dynatrace/Dynatrace-NewRelic.git
-cd Dynatrace-NewRelic
+git clone https://github.com/timstewart-dynatrace/NewRelic-to-Dynatrace-Migration-Utilities.git
+cd NewRelic-to-Dynatrace-Migration-Utilities
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt

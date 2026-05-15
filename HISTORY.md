@@ -7,8 +7,8 @@ project and its siblings. New entries go at the top.
 
 The TypeScript sibling project `nrql-engine` (currently hosted under the
 `timstewart-dynatrace` GitHub org) is planned to relocate to a canonical
-`dynatrace-dma` org. This repo (`Dynatrace-NewRelic`) stays where it is
-for now.
+`dynatrace-dma` org. This repo (`NewRelic-to-Dynatrace-Migration-Utilities`,
+formerly `Dynatrace-NewRelic`) stays where it is for now.
 
 When the relocation lands:
 

@@ -1,4 +1,4 @@
-# Dynatrace-NewRelic Coverage Matrix
+# NewRelic-to-Dynatrace Migration Utilities Coverage Matrix
 
 > **Purpose:** Operational status dashboard — every New Relic surface, mapped to its Gen3 Dynatrace equivalent and the Python module responsible. Tracks what is convertible today, what is partial, what is a gap, and what is not convertible.
 >

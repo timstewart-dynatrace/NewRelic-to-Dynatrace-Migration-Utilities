@@ -10,7 +10,7 @@ permanent exclusions, read `docs/out-of-scope.md`.
 ## Top-level layout
 
 ```
-Dynatrace-NewRelic/
+NewRelic-to-Dynatrace-Migration-Utilities/
 ├── migrate.py                       # Click CLI entry point
 ├── compiler/                        # NRQL → DQL pipeline (lexer → parser → emitter)
 │   ├── compiler.py                  # NRQLCompiler orchestrator
