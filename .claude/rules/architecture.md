@@ -48,7 +48,7 @@ NewRelic-to-Dynatrace-Migration-Utilities/
 │
 ├── validators/
 │   ├── dql_validator.py               # Structural DQL syntax validator
-│   └── dql_fixer.py                   # Auto-fixer (24 fix rules, parity with nrql-engine)
+│   └── dql_fixer.py                   # Auto-fixer (25 fix rules, parity with nrql-engine)
 │
 ├── registry/
 │   ├── environment.py                 # DTEnvironmentRegistry (metrics, entities, segments, dashboards, locations)
@@ -79,7 +79,7 @@ NewRelic-to-Dynatrace-Migration-Utilities/
 │   └── error_taxonomy.py              # WarningCode / ErrorCode
 ├── examples/example_queries.nrql
 │
-└── tests/                             # 1355 collected: 1183 unit + 158 legacy + 14 env-gated integration
+└── tests/                             # 1366 collected: 1194 unit + 158 legacy + 14 env-gated integration
     ├── conftest.py                    # Session-scoped `compiler` fixture
     ├── unit/                          # 35 files (compiler, CLI, clients incl. wire-level, per-phase, invariants)
     ├── legacy/                        # 8 files — Gen2 *_v1 regressions

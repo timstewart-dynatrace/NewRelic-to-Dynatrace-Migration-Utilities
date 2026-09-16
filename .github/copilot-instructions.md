@@ -15,7 +15,7 @@ NRQL Compiler: NRQL string → Shorthands → Lexer → Parser → AST → DQLEm
 **Key modules:**
 - `compiler/` — AST-based NRQL→DQL compiler (lexer, parser, emitter)
 - `transformers/` — 40 Gen3 entity transformers (see `docs/COVERAGE.md`); Gen2 `*_v1` under `transformers/legacy/` (`--legacy` only)
-- `validators/` — DQL syntax validator + 24-rule auto-fixer
+- `validators/` — DQL syntax validator + 25-rule auto-fixer
 - `registry/` — DTEnvironmentRegistry for live validation + SLOAuditor
 - `migration/` — Rollback, checkpointing, incremental state, conversion reports, retry, diff, canary, audit
 - `clients/` — NR NerdGraph + DT Gen3 facade (Settings 2.0, Document API v1 multipart, Automation API v1); Config v1 under `clients/legacy/`. Gen3 request rules: `.claude/rules/gen3-apis.md`
@@ -65,7 +65,7 @@ python migrate.py --version                                    # Show version
 ## Testing
 
 ```bash
-pytest tests/ -v                    # 1183 unit + 158 legacy + 14 gated integration
+pytest tests/ -v                    # 1194 unit + 158 legacy + 14 gated integration
 pytest tests/unit/test_compiler.py  # 309 compiler tests
 pytest -x --tb=short               # Stop on first failure
 ```

@@ -16,7 +16,7 @@
 
 ## Overall capability (this repo, as of Phase 14)
 
-- 10 transformers, 292 compiler patterns, 920+ NRQL→DQL tests *(Phase 14 snapshot — current: 40 transformers, 309 compiler tests, 1183 unit tests; see `docs/COVERAGE.md`)*
+- 10 transformers, 292 compiler patterns, 920+ NRQL→DQL tests *(Phase 14 snapshot — current: 40 transformers, 309 compiler tests, 1194 unit tests; see `docs/COVERAGE.md`)*
 - Gen3 default (`--legacy` flag preserves Config v1 path)
 - Settings 2.0 + Document API + Automation API clients
 - Monaco v2 and Terraform HCL exporters

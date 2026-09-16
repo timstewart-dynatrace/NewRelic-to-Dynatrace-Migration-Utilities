@@ -40,7 +40,7 @@ NewRelic-to-Dynatrace-Migration-Utilities/
 │   └── legacy/                      # Gen2 emitters (--legacy mode)
 ├── validators/
 │   ├── dql_validator.py             # Structural DQL validator
-│   └── dql_fixer.py                 # 24 fix rules (Phase 19b parity with TS)
+│   └── dql_fixer.py                 # 25 fix rules (Phase 19b parity with TS)
 ├── registry/
 │   ├── environment.py               # DT environment lookups (entities, metrics, segments)
 │   └── slo_auditor.py
@@ -64,7 +64,7 @@ NewRelic-to-Dynatrace-Migration-Utilities/
 │   ├── error_taxonomy.py            # Phase 22 — WarningCode/ErrorCode enums
 │   ├── auth.py / logger.py / validators.py
 └── tests/
-    ├── unit/                        # 1183 unit tests (35 files)
+    ├── unit/                        # 1194 unit tests (35 files)
     ├── integration/                 # 14 env-var-gated tests against real tenants
     └── legacy/                      # 158 tests for transformers/legacy/* under --legacy
 ```
@@ -134,7 +134,7 @@ Phase 20 audit subcommand diffs a saved baseline against the live tenant.
 
 ## Testing
 
-- **Unit:** `tests/unit/` — 1183 tests (compiler 309, transformers + clients + exporters + migration + per-phase)
+- **Unit:** `tests/unit/` — 1194 tests (compiler 309, transformers + clients + exporters + migration + per-phase)
 - **Integration:** `tests/integration/` — env-var-gated (`RUN_INTEGRATION_TESTS=1`)
 - **Legacy:** `tests/legacy/` — Gen2-path regressions
 - **Phase parity:** `tests/unit/test_phase19b_engine_parity.py` pins the Python compiler to TS `nrql-engine` and trips on either-side drift

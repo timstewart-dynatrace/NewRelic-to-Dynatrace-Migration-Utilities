@@ -13,7 +13,7 @@ Universal migration tool for converting New Relic monitoring configurations to D
 ## Quick Reference
 
 ```bash
-# Run tests (1183 unit + 158 legacy + 14 env-gated integration; 48 files)
+# Run tests (1194 unit + 158 legacy + 14 env-gated integration; 48 files)
 pytest tests/ -v
 
 # Probe target tenant for Gen3 API access + missing token scopes
@@ -63,7 +63,7 @@ python migrate.py --version
 | CLI | Click + Rich | Subcommands with progress display |
 | Logging | structlog | Structured logging |
 | HTTP | requests | API clients |
-| Testing | pytest + hypothesis | 1183 unit (incl 36 property-based + wire-level Gen3 regressions) + 158 legacy + 14 integration tests |
+| Testing | pytest + hypothesis | 1194 unit (incl 36 property-based + wire-level Gen3 regressions) + 158 legacy + 14 integration tests |
 
 ## Architecture
 
@@ -115,7 +115,7 @@ All transformers follow a consistent pattern:
 | `compiler/` | NRQL-to-DQL AST compiler (309 compiler tests) + `shorthands.py` |
 | `clients/` | Gen3 facade: Settings 2.0 + Document + Automation + OAuth2; legacy Config v1 under `clients/legacy/` |
 | `transformers/` | 40+ entity transformers (Gen3 default) + NRQL converter + mapping tables + `mappings/` submodules + `metric_transform.py` plugin hook; legacy Gen2 under `transformers/legacy/` |
-| `validators/` | DQL syntax validator + 24-rule auto-fixer (parity with nrql-engine) |
+| `validators/` | DQL syntax validator + 25-rule auto-fixer (parity with nrql-engine) |
 | `registry/` | DTEnvironmentRegistry (metrics, entities, segments, dashboards, locations) + SLOAuditor |
 | `migration/` | Rollback, checkpoint, incremental, reports, retry, diff, `canary.py` (Phase 20), `audit.py` (Phase 20) |
 | `agents/` | Per-language APM agent migration orchestrator (7 languages) |
@@ -126,7 +126,7 @@ All transformers follow a consistent pattern:
 | `utils/` | Logging, auth (OAuth), validators, `error_taxonomy.py` (WarningCode/ErrorCode) |
 | `examples/` | Sample NRQL queries for batch testing |
 | `docs/` | `COVERAGE.md`, `migration-coverage.md`, `gen2-only-capabilities.md`, `out-of-scope.md`, `validation.md`, `architecture.md`, `nrql-engine-sync-audit.md`, `token-scopes.md` (Platform/Classic token scopes), `quickstart.md`, `migration-guide.md` |
-| `tests/` | 1183 unit (incl 36 Hypothesis + wire-level `TestAnomalyDetectorWirePayload` / `TestMultipartContentTypeWire` / `TestAnalyzerInputQueryIsDql`) + 14 integration tests; `tests/legacy/` (158) for Gen2 paths; `tests/integration/` for schema/IaC validation (env-gated) |
+| `tests/` | 1194 unit (incl 36 Hypothesis + wire-level `TestAnomalyDetectorWirePayload` / `TestMultipartContentTypeWire` / `TestAnalyzerInputQueryIsDql`) + 14 integration tests; `tests/legacy/` (158) for Gen2 paths; `tests/integration/` for schema/IaC validation (env-gated) |
 
 ## Rules
 

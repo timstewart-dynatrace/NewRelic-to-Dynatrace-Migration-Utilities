@@ -8,6 +8,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- **Smartscape-first DQL emission.** Classic `dt.entity.*` is deprecated per
+  Dynatrace's `dt-dql-essentials` / `dt-migration` skills (see
+  `.claude/rules/gen3-apis.md` §7). Mirrored in nrql-engine.
+  - `entityName` / `entity.name` emit a raw dimension by context:
+    `service.name` (spans/logs), `host.name` (System/Process/Network/StorageSample),
+    `dt.service.name` (Metric), `k8s.workload.name` + warning (K8s samples).
+    Previously `dt.entity.name` (not a Grail field) or `entity.name`.
+  - `entityGuid` -> `dt.smartscape.service`.
+  - K8s `isReady` / `status` / `isScheduled` -> `smartscapeNodes` +
+    `parse k8s.object` (was `fetch dt.entity.cloud_application[_instance]`).
+  - Platform SLO `customSli.indicator` groups `by: {dt.smartscape.service}`
+    with `getNodeName()`.
+  - Resolved NR GUIDs filter on `host.name` / `service.name` (was `dt.entity.name`).
+  - Baseline outlier detectors default to `dt.smartscape.service`.
+- **Added** `DQLValidator._fix_classic_entity_references` (fixer rule #25) and
+  `validators/smartscape_map.py`: rewrites 1:1 classic references
+  (`dt.entity.X` -> `dt.smartscape.Y`, `fetch dt.entity.X` -> `smartscapeNodes`,
+  `entityName()` -> `getNodeName()`, classic IDs -> `toSmartscapeId()`);
+  annotates 1:N types, removed group types, `classicEntitySelector`, `entityAttr`.
 - `migrate.py preflight` now reports WHY each Gen3 API check fails and HOW
   to fix it. Each API row shows the endpoint probed, HTTP status, minimum
   scopes (for the probe) and recommended scopes (for a full migrate run).

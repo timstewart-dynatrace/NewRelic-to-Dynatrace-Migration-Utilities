@@ -109,6 +109,10 @@ Source: Dynatrace-maintained `dt-dql-essentials` and `dt-migration` skills (`dyn
 
 No classic mapping exists for host groups, process groups, or container groups — they are fields on `HOST` / `PROCESS` / `CONTAINER`. Classic entity IDs do not carry over. Full tables: `/Users/Shared/GitHub/PROJECTS/CLAUDE/dynatrace-for-ai/skills/dt-migration/references/type-mappings.md`, `dql-function-migration.md`, `special-cases.md`.
 
+**Status:** implemented in the compiler, converter, and fixer (`validators/smartscape_map.py`, `DQLValidator._fix_classic_entity_references`), mirrored in nrql-engine. NRQL `entityName` / `entity.name` emit a raw dimension by context: `service.name` (spans/logs), `host.name` (host samples), `dt.service.name` (Metric), `k8s.workload.name` (K8s, with warning).
+
+**Not DQL — still classic, decision pending:** `slo_transformer.py` metric-selector `metricExpression` (classic `builtin:monitoring.slo`) and `workload_transformer.py` segment filter statements (`dt.entity.type` / `dt.entity.id`). The audit grep below matches them; that is expected until they move to Gen3 targets.
+
 Any change here is a compiler-output change: mirror it in `/Users/Shared/GitHub/PROJECTS/NewRelic/nrql-engine` and extend `tests/unit/test_phase19b_engine_parity.py`.
 
 Audit command:
