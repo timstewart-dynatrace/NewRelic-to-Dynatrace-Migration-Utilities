@@ -138,28 +138,43 @@ All transformers follow a consistent pattern:
 @.claude/rules/deployment.md
 @.claude/rules/gen3-apis.md
 
-## Skills (domain knowledge from VisualCode-AI-Template/SKILLS/)
+## Skills
 
-### Always active — core compilation + export
-@/Users/Shared/GitHub/PROJECTS/VisualCode-AI-Template/SKILLS/dynatrace-dql/SKILL.md
-@/Users/Shared/GitHub/PROJECTS/VisualCode-AI-Template/SKILLS/nrql-to-dql/SKILL.md
-@/Users/Shared/GitHub/PROJECTS/VisualCode-AI-Template/SKILLS/dynatrace-apis/SKILL.md
-@/Users/Shared/GitHub/PROJECTS/VisualCode-AI-Template/SKILLS/dynatrace-document-api/SKILL.md
-@/Users/Shared/GitHub/PROJECTS/VisualCode-AI-Template/SKILLS/dynatrace-monaco/SKILL.md
-@/Users/Shared/GitHub/PROJECTS/VisualCode-AI-Template/SKILLS/dynatrace-terraform/SKILL.md
+Two sources. **Dynatrace-maintained** skills (`dynatrace-for-ai`, Apache-2.0, `github.com/Dynatrace/dynatrace-for-ai`) are authoritative for DQL syntax, Smartscape, dashboards/notebooks JSON, and alerting — prefer them when they disagree with the template skills. **Template** skills (`VisualCode-AI-Template`) cover NRQL translation, APIs, IaC, and IAM, which `dynatrace-for-ai` does not.
 
-### Always active — documentation + graphics
-@/Users/Shared/GitHub/PROJECTS/VisualCode-AI-Template/SKILLS/svg-graphics/SKILL.md
+### Always active — DQL, Smartscape, documents, alerting (dynatrace-for-ai)
+@/Users/Shared/GitHub/PROJECTS/CLAUDE/dynatrace-for-ai/skills/dt-dql-essentials/SKILL.md
+@/Users/Shared/GitHub/PROJECTS/CLAUDE/dynatrace-for-ai/skills/dt-migration/SKILL.md
+@/Users/Shared/GitHub/PROJECTS/CLAUDE/dynatrace-for-ai/skills/dt-app-dashboards/SKILL.md
+@/Users/Shared/GitHub/PROJECTS/CLAUDE/dynatrace-for-ai/skills/dt-app-notebooks/SKILL.md
+@/Users/Shared/GitHub/PROJECTS/CLAUDE/dynatrace-for-ai/skills/dt-alerting/SKILL.md
 
-### Always active — Gen3 transformer targets (Phase 11–24)
-@/Users/Shared/GitHub/PROJECTS/VisualCode-AI-Template/SKILLS/dynatrace-workflow/SKILL.md
-@/Users/Shared/GitHub/PROJECTS/VisualCode-AI-Template/SKILLS/dynatrace-alert-routing/SKILL.md
-@/Users/Shared/GitHub/PROJECTS/VisualCode-AI-Template/SKILLS/dynatrace-iam/SKILL.md
-@/Users/Shared/GitHub/PROJECTS/VisualCode-AI-Template/SKILLS/dynatrace-entity-tagging/SKILL.md
-@/Users/Shared/GitHub/PROJECTS/VisualCode-AI-Template/SKILLS/dynatrace-lookup-tables/SKILL.md
-@/Users/Shared/GitHub/PROJECTS/VisualCode-AI-Template/SKILLS/dynatrace-notebook-authoring/SKILL.md
-@/Users/Shared/GitHub/PROJECTS/VisualCode-AI-Template/SKILLS/k8s-dynatrace-operator/SKILL.md
-@/Users/Shared/GitHub/PROJECTS/VisualCode-AI-Template/SKILLS/dynatrace-account-management/SKILL.md
+### Always active — NRQL translation, APIs, config-as-code (template)
+@/Users/Shared/GitHub/PROJECTS/CLAUDE/VisualCode-AI-Template/SKILLS/nrql-to-dql/SKILL.md
+@/Users/Shared/GitHub/PROJECTS/CLAUDE/VisualCode-AI-Template/SKILLS/dynatrace-apis/SKILL.md
+@/Users/Shared/GitHub/PROJECTS/CLAUDE/VisualCode-AI-Template/SKILLS/dynatrace-document-api/SKILL.md
+@/Users/Shared/GitHub/PROJECTS/CLAUDE/VisualCode-AI-Template/SKILLS/dynatrace-monaco/SKILL.md
+@/Users/Shared/GitHub/PROJECTS/CLAUDE/VisualCode-AI-Template/SKILLS/dynatrace-terraform/SKILL.md
+
+### Always active — documentation + graphics (template)
+@/Users/Shared/GitHub/PROJECTS/CLAUDE/VisualCode-AI-Template/SKILLS/svg-graphics/SKILL.md
+
+### Always active — Gen3 transformer targets (template)
+@/Users/Shared/GitHub/PROJECTS/CLAUDE/VisualCode-AI-Template/SKILLS/dynatrace-workflow/SKILL.md
+@/Users/Shared/GitHub/PROJECTS/CLAUDE/VisualCode-AI-Template/SKILLS/dynatrace-iam/SKILL.md
+@/Users/Shared/GitHub/PROJECTS/CLAUDE/VisualCode-AI-Template/SKILLS/dynatrace-entity-tagging/SKILL.md
+@/Users/Shared/GitHub/PROJECTS/CLAUDE/VisualCode-AI-Template/SKILLS/dynatrace-lookup-tables/SKILL.md
+@/Users/Shared/GitHub/PROJECTS/CLAUDE/VisualCode-AI-Template/SKILLS/k8s-dynatrace-operator/SKILL.md
+@/Users/Shared/GitHub/PROJECTS/CLAUDE/VisualCode-AI-Template/SKILLS/dynatrace-account-management/SKILL.md
+
+Replaced by dynatrace-for-ai equivalents (do not re-add): `dynatrace-dql` → `dt-dql-essentials`, `dynatrace-notebook-authoring` → `dt-app-notebooks`, `dynatrace-alert-routing` → `dt-alerting`.
+
+### On demand — reference material (read when relevant, not imported)
+- `/Users/Shared/GitHub/PROJECTS/CLAUDE/dynatrace-for-ai/skills/dt-migration/references/` — full classic→Smartscape type table, `entityName`/`entityAttr`/`classicEntitySelector` rewrites, special cases (host/process/container groups)
+- `/Users/Shared/GitHub/PROJECTS/CLAUDE/dynatrace-for-ai/skills/dt-dql-essentials/references/dql/` — per-command and per-function DQL reference
+- `/Users/Shared/GitHub/PROJECTS/CLAUDE/dynatrace-for-ai/skills/dt-alerting/references/anomaly-detectors.md` — full static/adaptive/seasonal detector payloads
+- `/Users/Shared/GitHub/PROJECTS/CLAUDE/dynatrace-for-ai/skills/dt-alerting/references/workflow-notifications.md` — problem-trigger workflows, `dt.alert_group` routing
+- `/Users/Shared/GitHub/PROJECTS/CLAUDE/dynatrace-for-ai/skills/dt-app-dashboards/assets/` — `ExampleDashboard.json`, `visualization-settings.reference.jsonc`
 
 ## Key Constraints
 
@@ -169,7 +184,8 @@ All transformers follow a consistent pattern:
 - **Compiler vs Converter** — `compiler/` handles pure NRQL->DQL translation. `transformers/nrql_converter.py` wraps it with post-processing, auto-fixes, Phase 19 confidence uplift, Phase 23 `MetricTransform` plugin hook, and numeric confidence-score sync.
 - **Gen3 default vs `--legacy`** — All transformers, clients, and exporters emit Gen3 objects by default. Gen2 code lives under `*/legacy/` and is only reachable via `--legacy` CLI flag or `MIGRATION_LEGACY_MODE=true` env var. See `docs/gen2-only-capabilities.md` for the 8 capabilities only `--legacy` provides.
 - **DQL validation** — structurally valid DQL doesn't guarantee data returns. Field existence requires live validation against Grail API. See `docs/validation.md` for the 6-tier validation strategy.
-- **nrql-engine parity** — the TS sibling at `/Users/Shared/GitHub/PROJECTS/nrql-engine/` is kept at parity (53/53 transformer files covered). CI `nrql-engine-parity` job guards drift. See `docs/nrql-engine-sync-audit.md`.
+- **nrql-engine parity** — the TS sibling at `/Users/Shared/GitHub/PROJECTS/NewRelic/nrql-engine/` is kept at parity (53/53 transformer files covered). CI `nrql-engine-parity` job guards drift. See `docs/nrql-engine-sync-audit.md`.
 - **Phase gates** — Every phase must have complete tests, documentation, and memory updates before moving to the next phase. All phases (0–26 + 19b + 3rd-pass + 25 + 15) are complete as of v2.0.0.
+- **Emitted DQL must be Smartscape-first** — `dt.entity.*`, `entityName()`, `entityAttr()`, and `classicEntitySelector()` are deprecated. See `.claude/rules/gen3-apis.md` §7.
 - **Gen3 API correctness** — Producing requests that Gen3 SaaS (`.apps.*`) tenants accept has several non-obvious rules (auth-by-token-prefix, `/platform/classic/environment-api/v2` settings path, multipart Document API, dict-shaped `tasks`, DQL in `analyzer.input`, v1.0.14 `builtin:davis.anomaly-detectors` shape). See `.claude/rules/gen3-apis.md` before writing new code that talks to a Gen3 tenant.
 - **Gen3 SKIPPED entities** — Synthetic monitors, Grail segments, and IAM policies are deliberately SKIPPED in `migrate.py::_import_phase` (per-facet emission / Platform API / Account Management API not wired). Envelopes still get built; only the POST step is skipped. Don't re-enable without building the right Gen3 client. See `.claude/rules/gen3-apis.md`.

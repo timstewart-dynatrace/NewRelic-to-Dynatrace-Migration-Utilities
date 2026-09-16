@@ -1,7 +1,7 @@
 """Phase 19b — nrql-engine compiler-parity regression tests.
 
 These tests pin the Python compiler's behavior against nrql-engine
-(`/Users/Shared/GitHub/PROJECTS/nrql-engine/`) for three compiler items:
+(`/Users/Shared/GitHub/PROJECTS/NewRelic/nrql-engine/`) for three compiler items:
 
 1. NR shorthand expansion (`compiler/shorthands.py`, mirrors TS
    `NRQLCompiler.expandNrShorthands`).

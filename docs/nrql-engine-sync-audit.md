@@ -1,7 +1,7 @@
 # nrql-engine ↔ NewRelic-to-Dynatrace Migration Utilities Sync Audit
 
 > **Audited:** 2026-04-15
-> **Sibling repo:** `/Users/Shared/GitHub/PROJECTS/nrql-engine/` (TypeScript)
+> **Sibling repo:** `/Users/Shared/GitHub/PROJECTS/NewRelic/nrql-engine/` (TypeScript)
 > **This repo:** `/Users/Shared/GitHub/PROJECTS/NewRelic-to-Dynatrace-Migration-Utilities/` (Python)
 
 The two projects are meant to stay feature-synced. This doc catalogs
@@ -140,7 +140,7 @@ will be tracked in a new phase.
 
 ## Third-pass audit (2026-04-15, post-Phase-24)
 
-Full enumeration of `/Users/Shared/GitHub/PROJECTS/nrql-engine/src/transformers/*.transformer.ts`
+Full enumeration of `/Users/Shared/GitHub/PROJECTS/NewRelic/nrql-engine/src/transformers/*.transformer.ts`
 (53 files) diffed against Python `transformers/*_transformer.py` +
 `transformers/*_translator.py` (40 files after Phase 24).
 

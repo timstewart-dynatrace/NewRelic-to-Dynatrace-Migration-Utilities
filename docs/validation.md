@@ -76,7 +76,7 @@ def ts_compile():
     def _run(nrql):
         out = subprocess.run(
             ["npx", "tsx",
-             "/Users/Shared/GitHub/PROJECTS/nrql-engine/scripts/compile-one.ts"],
+             "/Users/Shared/GitHub/PROJECTS/NewRelic/nrql-engine/scripts/compile-one.ts"],
             input=nrql, capture_output=True, text=True, check=True,
         )
         return json.loads(out.stdout)

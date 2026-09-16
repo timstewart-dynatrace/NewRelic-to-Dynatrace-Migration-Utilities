@@ -90,6 +90,42 @@ grep -rn '"schemaId": "builtin:davis.anomaly-detectors"' transformers/
 
 All five sites must move in lockstep. PR #20 missed `alert_transformer.py` this way; PR #21 cleaned it up.
 
+`dt-alerting/references/anomaly-detectors.md` also documents `RecordAnomalyDetectionAnalyzer` (rows-returned = violations); no emitter uses it yet.
+
+## 7. Emitted DQL is Smartscape-first, not classic entity [MUST]
+
+Source: Dynatrace-maintained `dt-dql-essentials` and `dt-migration` skills (`dynatrace-for-ai` v8.0.0). `dt.entity.*` is deprecated for new queries. Anything the compiler, converter, fixer, or a transformer writes into a DQL string must follow:
+
+| Classic (do not emit) | Smartscape (emit) | Notes |
+|---|---|---|
+| `dt.entity.<type>` in `by:` / `filter` / `fieldsAdd` | `dt.smartscape.<type>` | e.g. `dt.entity.host` → `dt.smartscape.host`, `dt.entity.service` → `dt.smartscape.service`, `dt.entity.process_group_instance` → `dt.smartscape.process` |
+| `fetch dt.entity.<type>` (entity list) | `smartscapeNodes <NODE_TYPE>` | e.g. `smartscapeNodes HOST`; field `entity.name` → `name` |
+| `fetch dt.entity.cloud_application_instance` | `smartscapeNodes K8S_POD` | |
+| `fetch dt.entity.cloud_application` | K8s workload node types | 1:N — see `dt-migration/references/entity-cloud-application.md` |
+| `entityName(x)` | `getNodeName(x)` (signal/edge) or `name` (on nodes) | `getNodeName()` takes only an ID — no `type:` arg |
+| `entityAttr(x, "f")` | `getNodeField(x, "f")` or direct node field | |
+| `classicEntitySelector(...)` | raw-dimension filter first; `traverse` / `in [smartscapeNodes ...]` fallback | |
+| `affected_entity_ids` + `affected_entity_types` | `smartscape.affected_entities` | record array of `{id, type, name}` |
+
+No classic mapping exists for host groups, process groups, or container groups — they are fields on `HOST` / `PROCESS` / `CONTAINER`. Classic entity IDs do not carry over. Full tables: `/Users/Shared/GitHub/PROJECTS/CLAUDE/dynatrace-for-ai/skills/dt-migration/references/type-mappings.md`, `dql-function-migration.md`, `special-cases.md`.
+
+Any change here is a compiler-output change: mirror it in `/Users/Shared/GitHub/PROJECTS/NewRelic/nrql-engine` and extend `tests/unit/test_phase19b_engine_parity.py`.
+
+Audit command:
+
+```bash
+grep -rnE 'dt\.entity\.|entityName\(|entityAttr\(|classicEntitySelector' compiler/ transformers/ validators/ --include='*.py' | grep -v '/legacy/'
+```
+
+## 8. Alerting conventions from Dynatrace guidance [SHOULD — not yet implemented]
+
+Source: `dt-alerting` skill. Accepted by the API today in their current form, so these are improvements, not correctness fixes. Change them together and verify against a live Gen3 tenant first.
+
+- **Workflow triggers on problems, not Davis events.** The workflow emitters use `trigger.event.config.davis_event`; Dynatrace recommends a problem trigger (one notification per grouped incident). See `/Users/Shared/GitHub/PROJECTS/CLAUDE/dynatrace-for-ai/skills/dt-alerting/references/workflow-notifications.md`.
+- **Detector input key:** `query.expression` is preferred over `query` for new configs (both accepted).
+- **Routing/grouping:** set `dt.alert_group` (and `dt.source_entity` where known) in `eventTemplate.properties`.
+- **Dashboard content `version`:** `dashboard_transformer.py` emits `13`; current Dynatrace examples use `21`.
+
 ---
 
 ## Known-SKIPPED entity types [MUST NOT re-enable without building the right client]

@@ -73,7 +73,7 @@ jobs:
         run: mypy compiler/ migration/ validators/ config/
 
   # Phase 19b — regression guard for nrql-engine compiler parity.
-  # Keeps TS sibling (/Users/Shared/GitHub/PROJECTS/nrql-engine/) and this
+  # Keeps TS sibling (/Users/Shared/GitHub/PROJECTS/NewRelic/nrql-engine/) and this
   # Python project aligned on shorthand expansion, K8s metric overrides,
   # and DQL fixer method coverage. Fails if either side drifts.
   nrql-engine-parity:
