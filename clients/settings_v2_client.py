@@ -2,7 +2,7 @@
 
 Covers CRUD over `/api/v2/settings/objects` with nextPageKey pagination.
 All Gen3 schemas (`builtin:davis.anomaly-detectors`, `builtin:segment`,
-`builtin:openpipeline.*`, `builtin:synthetic_test`, `builtin:monitoring.slo`,
+`builtin:openpipeline.*`, `builtin:synthetic_test`,
 `builtin:iam.policy`) are addressed through this client.
 """
 
@@ -105,9 +105,6 @@ class SettingsV2Client:
 
     def create_synthetic_test(self, envelope: Dict[str, Any]) -> ImportResult:
         return self._import(envelope, entity_type="synthetic_test")
-
-    def create_slo(self, envelope: Dict[str, Any]) -> ImportResult:
-        return self._import(envelope, entity_type="slo")
 
     # ------------------------------------------------------------------
 

@@ -316,11 +316,15 @@ class TestPreflightGen3:
             "/api/v2/settings/schemas": DynatraceResponse(data={}, status_code=200),
             "/platform/document/v1/documents": DynatraceResponse(data={}, status_code=200),
             "/platform/automation/v1/workflows": DynatraceResponse(data={}, status_code=200),
+            "/platform/slo/v1/slos": DynatraceResponse(data={}, status_code=200),
         })
         checks = c.preflight_gen3()
         assert [ch.api for ch in checks] == [
-            "settings_v2", "document_api", "automation_api"
+            "settings_v2", "document_api", "automation_api", "slo_api"
         ]
+        slo = checks[-1]
+        assert slo.scopes_min == ["slo:slos:read"]
+        assert "slo:slos:write" in slo.scopes_recommended
         assert all(ch.reachable for ch in checks)
         assert all(ch.status_code == 200 for ch in checks)
         assert all(ch.remediation == [] for ch in checks)
@@ -792,3 +796,87 @@ class TestAnalyzerInputQueryIsDql:
         # Must still end with a valid DQL placeholder so the payload
         # server-validates.
         assert "timeseries count()" in out
+
+
+class TestPlatformSloWire:
+    """Platform SLO requests as the tenant sees them (`/platform/slo/v1/slos`)."""
+
+    def _run(self, transport, caller, responses):
+        import requests
+
+        sent = []
+
+        def fake_send(req, **kwargs):
+            sent.append({"method": req.method, "url": req.url,
+                         "headers": dict(req.headers), "body": req.body})
+            status, content = responses[len(sent) - 1]
+            r = requests.Response()
+            r.status_code = status
+            r._content = content
+            return r
+
+        with patch.object(transport.session, "send", side_effect=fake_send):
+            result = caller()
+        return sent, result
+
+    def _slo(self):
+        from transformers.slo_transformer import SLOTransformer
+
+        return SLOTransformer().transform({
+            "name": "checkout availability",
+            "guid": "MXxTRVJWSUNFX0xFVkVMfDE",
+            "objectives": [{"target": 99.5, "timeWindow": {"rolling": {"count": 7, "unit": "DAY"}}}],
+            "events": {"validEvents": {"from": "Transaction", "where": "appName = 'checkout'"},
+                       "goodEvents": {"from": "Transaction", "where": "appName = 'checkout' AND error IS FALSE"}},
+        }).slo
+
+    def test_create_posts_platform_slo_json_with_bearer(self):
+        import json
+
+        from clients.slo_client import SloClient
+
+        transport = HttpTransport(api_token="dt0s16.test")
+        client = SloClient("https://abc12345.apps.dynatrace.com", transport)
+        sent, result = self._run(
+            transport, lambda: client.create_slo(self._slo()),
+            [(201, b'{"id": "slo-1", "version": "v1"}')],
+        )
+        req = sent[0]
+        assert req["method"] == "POST"
+        assert req["url"] == "https://abc12345.apps.dynatrace.com/platform/slo/v1/slos"
+        assert req["headers"]["Authorization"] == "Bearer dt0s16.test"
+        assert req["headers"]["Content-Type"] == "application/json"
+        body = json.loads(req["body"])
+        assert "schemaId" not in body and "value" not in body
+        assert body["name"] == "[Migrated] checkout availability"
+        assert body["criteria"] == [{"target": 99.5, "warning": 99.75,
+                                     "timeframeFrom": "now-7d", "timeframeTo": "now"}]
+        indicator = body["customSli"]["indicator"]
+        assert "by: { dt.smartscape.service }" in indicator
+        assert 'contains(entityName, "checkout")' in indicator
+        assert "sli=" in indicator and "dt.entity" not in indicator
+        assert body["externalId"] == "nr-slo-MXxTRVJWSUNFX0xFVkVMfDE"
+        assert result.success and result.dynatrace_id == "slo-1"
+
+    def test_live_host_is_mapped_to_apps_platform_host(self):
+        from clients.slo_client import SloClient
+
+        client = SloClient(ENV, HttpTransport(api_token="dt0s16.test"))
+        assert client.base.endswith("/platform/slo/v1/slos")
+        assert ".live." not in client.base
+
+    def test_delete_looks_up_optimistic_locking_version(self):
+        from clients.slo_client import SloClient
+
+        transport = HttpTransport(api_token="dt0s16.test")
+        client = SloClient("https://abc12345.apps.dynatrace.com", transport)
+        sent, result = self._run(
+            transport, lambda: client.delete_slo("slo-1"),
+            [(200, b'{"id": "slo-1", "version": "v7"}'), (204, b"")],
+        )
+        assert [s["method"] for s in sent] == ["GET", "DELETE"]
+        assert sent[1]["url"] == (
+            "https://abc12345.apps.dynatrace.com/platform/slo/v1/slos/slo-1"
+            "?optimisticLockingVersion=v7"
+        )
+        assert result.is_success

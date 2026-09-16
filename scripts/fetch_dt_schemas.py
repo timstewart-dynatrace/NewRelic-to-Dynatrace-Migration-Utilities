@@ -26,7 +26,6 @@ SCHEMAS_WE_EMIT = [
     "builtin:davis.anomaly-detectors",
     "builtin:segment",
     "builtin:iam.policy",
-    "builtin:monitoring.slo",
     "builtin:synthetic_test",
     "builtin:openpipeline.logs.pipelines",
     "builtin:openpipeline.events.pipelines",

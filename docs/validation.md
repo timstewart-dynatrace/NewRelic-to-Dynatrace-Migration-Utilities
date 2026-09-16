@@ -3,7 +3,7 @@
 > **Last updated:** 2026-04-15 (post-Phase-24 + 3rd-pass parity)
 > **Companion:** `docs/COVERAGE.md`, `docs/architecture.md`
 
-This project ships **1194 unit + 158 legacy + 14 integration tests** that pin
+This project ships **1207 unit + 158 legacy + 13 integration tests** that pin
 *structural correctness* — every transformer's output matches a
 hand-authored expected shape. That proves the code emits what we
 believe is correct; it does **not** prove the emitted artifacts are

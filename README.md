@@ -22,7 +22,7 @@ A universal, comprehensive migration framework for converting New Relic monitori
 | **Dashboards**    | Dashboard (multi-page)         | →   | Document API dashboard (Grail DQL tiles)           | ✅ Full |
 | **Alerts**        | Alert Policy + NRQL Conditions | →   | Workflow + `builtin:davis.anomaly-detectors`       | ✅ Full |
 | **Synthetics**    | Ping/Browser/API Monitors      | →   | `builtin:synthetic_test`                           | ✅ Full |
-| **SLOs**          | Service Level Objectives       | →   | `builtin:monitoring.slo`                           | ✅ Full |
+| **SLOs**          | Service Level Objectives       | →   | Platform SLO API (DQL SLI)                         | ✅ Full |
 | **Workloads**     | Entity Groupings               | →   | `builtin:segment` + bucket-scoped IAM policy       | ✅ Full |
 | **Notifications** | Channels (Email, Slack, etc.)  | →   | Workflow action tasks                              | ✅ Full |
 | **Tags**          | Entity tags                    | →   | OpenPipeline enrichment (`builtin:openpipeline.*`) | ✅ Full |

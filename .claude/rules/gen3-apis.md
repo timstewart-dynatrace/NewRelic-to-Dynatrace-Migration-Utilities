@@ -111,7 +111,9 @@ No classic mapping exists for host groups, process groups, or container groups �
 
 **Status:** implemented in the compiler, converter, and fixer (`validators/smartscape_map.py`, `DQLValidator._fix_classic_entity_references`), mirrored in nrql-engine. NRQL `entityName` / `entity.name` emit a raw dimension by context: `service.name` (spans/logs), `host.name` (host samples), `dt.service.name` (Metric), `k8s.workload.name` (K8s, with warning).
 
-**Not DQL — still classic, decision pending:** `slo_transformer.py` metric-selector `metricExpression` (classic `builtin:monitoring.slo`) and `workload_transformer.py` segment filter statements (`dt.entity.type` / `dt.entity.id`). The audit grep below matches them; that is expected until they move to Gen3 targets.
+**Known exception — segment filters (not DQL):** `workload_transformer.py` emits segment filter statements keyed on `dt.entity.type` / `dt.entity.id`. The filter-segments `includes[].filter` tree has no public documentation and no documented Smartscape-node `dataObject`, so there is no verified Gen3 form to move to. Segment import is SKIPPED anyway. Leave as-is until Dynatrace documents it; the audit grep below matches these lines and that is expected.
+
+Events API v2 `entitySelector` strings (`entityId(...)` / `entityName(...)`) in change-event payloads are also not DQL and remain supported on Gen3 — not covered by this rule.
 
 Any change here is a compiler-output change: mirror it in `/Users/Shared/GitHub/PROJECTS/NewRelic/nrql-engine` and extend `tests/unit/test_phase19b_engine_parity.py`.
 
@@ -129,6 +131,26 @@ Source: `dt-alerting` skill. Accepted by the API today in their current form, so
 - **Detector input key:** `query.expression` is preferred over `query` for new configs (both accepted).
 - **Routing/grouping:** set `dt.alert_group` (and `dt.source_entity` where known) in `eventTemplate.properties`.
 - **Dashboard content `version`:** `dashboard_transformer.py` emits `13`; current Dynatrace examples use `21`.
+
+## 9. SLOs are Platform SLOs, not `builtin:monitoring.slo` [MUST]
+
+`SLOTransformer`, `KeyTransactionTransformer`, and the converter's auto-create path all emit the Platform SLO API body via `transformers/_slo_utils.py` and push it through `clients/slo_client.py`:
+
+```
+POST /platform/slo/v1/slos            # platform host (.apps.), Bearer, slo:slos:write
+{
+  name, description, tags[], externalId?,
+  criteria: [{target, warning, timeframeFrom: "now-7d", timeframeTo: "now"}],   # warning > target
+  customSli: {indicator: "<DQL producing an `sli` percent series>"}
+}
+```
+
+- The indicator is DQL and must follow §7 (`by: { dt.smartscape.service }`, `getNodeName()`).
+- DELETE (and PUT) need the current `optimisticLockingVersion`; `SloClient.delete_slo` GETs it first. The query-param name follows this repo's Document API convention and is not yet verified on a live tenant.
+- IaC: Monaco `type: slo-v2` (body is the template JSON); Terraform `dynatrace_platform_slo`.
+- Classic metric-selector SLOs (`metricExpression`, `entitySelector("type(service)")`) are not emitted anywhere in the Gen3 path.
+
+Test pattern: `tests/unit/test_dynatrace_client.py::TestPlatformSloWire`.
 
 ---
 

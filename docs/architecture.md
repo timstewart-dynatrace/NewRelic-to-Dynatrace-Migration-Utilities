@@ -64,7 +64,7 @@ NewRelic-to-Dynatrace-Migration-Utilities/
 │   ├── error_taxonomy.py            # Phase 22 — WarningCode/ErrorCode enums
 │   ├── auth.py / logger.py / validators.py
 └── tests/
-    ├── unit/                        # 1194 unit tests (35 files)
+    ├── unit/                        # 1207 unit tests (36 files)
     ├── integration/                 # 14 env-var-gated tests against real tenants
     └── legacy/                      # 158 tests for transformers/legacy/* under --legacy
 ```
@@ -88,7 +88,7 @@ NR NerdGraph (export)
      - segments                   (builtin:segment envelope — import SKIPPED; needs Platform segment API)
      - iam_policies               (builtin:iam.policy envelope — import SKIPPED; needs Account Mgmt API)
      - synthetic_tests            (builtin:synthetic_test envelope — import SKIPPED; Gen3 uses per-facet schemas)
-     - slos                       (Settings 2.0 builtin:monitoring.slo)
+     - slos                       (Platform SLO API /platform/slo/v1/slos, DQL SLI)
      - openpipeline_processors    (Settings 2.0 builtin:openpipeline.*)
      - dashboards                 (Document API dashboard content)
         │
@@ -134,7 +134,7 @@ Phase 20 audit subcommand diffs a saved baseline against the live tenant.
 
 ## Testing
 
-- **Unit:** `tests/unit/` — 1194 tests (compiler 309, transformers + clients + exporters + migration + per-phase)
+- **Unit:** `tests/unit/` — 1207 tests (compiler 309, transformers + clients + exporters + migration + per-phase)
 - **Integration:** `tests/integration/` — env-var-gated (`RUN_INTEGRATION_TESTS=1`)
 - **Legacy:** `tests/legacy/` — Gen2-path regressions
 - **Phase parity:** `tests/unit/test_phase19b_engine_parity.py` pins the Python compiler to TS `nrql-engine` and trips on either-side drift

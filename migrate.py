@@ -294,7 +294,7 @@ class MigrationOrchestrator:
             "workflows": [],             # Automation API workflow JSON
             "anomaly_detectors": [],     # builtin:davis.anomaly-detectors envelopes
             "synthetic_tests": [],       # builtin:synthetic_test envelopes
-            "slos": [],                  # builtin:monitoring.slo envelopes
+            "slos": [],                  # Platform SLO API bodies (/platform/slo/v1/slos)
             "segments": [],              # builtin:segment envelopes
             "iam_policies": [],          # builtin:iam.policy envelopes
             "openpipeline_processors": [],  # builtin:openpipeline.* envelopes
@@ -703,7 +703,7 @@ class MigrationOrchestrator:
             #   anomaly_detectors   -> Settings 2.0 (builtin:davis.anomaly-detectors)
             #   workflows           -> Automation API
             #   synthetic_tests     -> Settings 2.0 (builtin:synthetic_test)
-            #   slos                -> Settings 2.0 (builtin:monitoring.slo)
+            #   slos                -> Platform SLO API (/platform/slo/v1/slos)
             #   segments            -> Settings 2.0 (builtin:segment)
             #   iam_policies        -> Settings 2.0 (builtin:iam.policy)
             #   openpipeline_*      -> Settings 2.0 (builtin:openpipeline.*)
@@ -883,7 +883,7 @@ class MigrationOrchestrator:
             ("Workflows", "workflows", "title"),
             ("Davis Anomaly Detectors", "anomaly_detectors", "value.name"),
             ("Synthetic Tests", "synthetic_tests", "value.name"),
-            ("SLOs", "slos", "value.name"),
+            ("SLOs", "slos", "name"),
             ("Segments", "segments", "value.name"),
             ("IAM Policies", "iam_policies", "value.name"),
             ("OpenPipeline Processors", "openpipeline_processors", "value.name"),

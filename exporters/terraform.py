@@ -8,7 +8,7 @@ Emits:
   segments                -> dynatrace_segment
   iam_policies            -> dynatrace_iam_policy
   synthetic_tests         -> dynatrace_generic_setting (schema builtin:synthetic_test)
-  slos                    -> dynatrace_slo_v2
+  slos                    -> dynatrace_platform_slo
   openpipeline_processors -> dynatrace_generic_setting (schema builtin:openpipeline.*)
 
 Legacy (Config v1 / Gen2 classic resource names) emitted by
@@ -222,24 +222,41 @@ variable "dynatrace_oauth_client_secret" {
         return "\n".join(lines)
 
     def _emit_slos(self, slos: List[Dict[str, Any]]) -> str:
+        """Platform SLO API bodies -> `dynatrace_platform_slo`."""
         lines: List[str] = []
-        for env in slos:
-            value = env.get("value", env)
-            name = value.get("name", "unnamed-slo")
+        for slo in slos:
+            name = slo.get("name", "unnamed-slo")
             res = self._resource_name(name)
-            lines.append(
-                f'resource "dynatrace_slo_v2" "{res}" {{\n'
-                f'  name              = "{self._escape(name)}"\n'
-                f"  enabled           = {str(value.get('enabled', True)).lower()}\n"
-                f'  metric_expression = "{self._escape(str(value.get("metricExpression", "")))}"\n'
-                f'  evaluation_type   = "{value.get("evaluationType", "AGGREGATE")}"\n'
-                f'  evaluation_window = "{value.get("timeframe", "-7d")}"\n'
-                f'  filter            = "{self._escape(value.get("filter", ""))}"\n'
-                f"  target_success    = {value.get('target', 99.0)}\n"
-                f"  target_warning    = {value.get('warning', 99.5)}\n"
-                f"}}\n"
-            )
+            block = [
+                f'resource "dynatrace_platform_slo" "{res}" {{',
+                f'  name        = "{self._escape(name)}"',
+                f'  description = "{self._escape(slo.get("description", ""))}"',
+            ]
+            tags = slo.get("tags") or []
+            if tags:
+                block.append("  tags        = [" + ", ".join(f'"{self._escape(t)}"' for t in tags) + "]")
+            block.append("  criteria {")
+            for c in slo.get("criteria") or []:
+                block.append("    criteria_detail {")
+                block.append(f"      target         = {c.get('target', 99.0)}")
+                block.append(f'      timeframe_from = "{self._escape(c.get("timeframeFrom", "now-7d"))}"')
+                block.append(f'      timeframe_to   = "{self._escape(c.get("timeframeTo", "now"))}"')
+                if c.get("warning") is not None:
+                    block.append(f"      warning        = {c['warning']}")
+                block.append("    }")
+            block.append("  }")
+            indicator = (slo.get("customSli") or {}).get("indicator", "")
+            block.append("  custom_sli {")
+            block.append(f'    indicator = "{self._escape_template(indicator)}"')
+            block.append("  }")
+            block.append("}")
+            lines.append("\n".join(block) + "\n")
         return "\n".join(lines)
+
+    @classmethod
+    def _escape_template(cls, val: str) -> str:
+        """Escape a string literal that must not trigger HCL interpolation."""
+        return cls._escape(val).replace("${", "$${").replace("%{", "%%{")
 
     def _emit_generic_settings(
         self, envelopes: List[Dict[str, Any]], resource_prefix: str

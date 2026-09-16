@@ -13,7 +13,7 @@ Universal migration tool for converting New Relic monitoring configurations to D
 ## Quick Reference
 
 ```bash
-# Run tests (1194 unit + 158 legacy + 14 env-gated integration; 48 files)
+# Run tests (1207 unit + 158 legacy + 13 env-gated integration; 49 files)
 pytest tests/ -v
 
 # Probe target tenant for Gen3 API access + missing token scopes
@@ -63,7 +63,7 @@ python migrate.py --version
 | CLI | Click + Rich | Subcommands with progress display |
 | Logging | structlog | Structured logging |
 | HTTP | requests | API clients |
-| Testing | pytest + hypothesis | 1194 unit (incl 36 property-based + wire-level Gen3 regressions) + 158 legacy + 14 integration tests |
+| Testing | pytest + hypothesis | 1207 unit (incl 36 property-based + wire-level Gen3 regressions) + 158 legacy + 13 integration tests |
 
 ## Architecture
 
@@ -75,7 +75,7 @@ Gen3 Default Transformers (40+):          Targets:
   DashboardTransformer (AST compiler)       Grail Dashboards (Document API)
   AlertTransformer + NotificationTfmr       Workflows + Davis Anomaly Detectors
   SyntheticTransformer                      builtin:synthetic_test
-  SLOTransformer                            builtin:monitoring.slo
+  SLOTransformer                            Platform SLO API (DQL SLI)
   WorkloadTransformer                       builtin:segment + IAM policy
   InfrastructureTransformer                 Davis Anomaly Detectors + Workflows
   LogParsingTransformer                     OpenPipeline DPL processors
@@ -113,7 +113,7 @@ All transformers follow a consistent pattern:
 | Path | Purpose |
 |------|---------|
 | `compiler/` | NRQL-to-DQL AST compiler (309 compiler tests) + `shorthands.py` |
-| `clients/` | Gen3 facade: Settings 2.0 + Document + Automation + OAuth2; legacy Config v1 under `clients/legacy/` |
+| `clients/` | Gen3 facade: Settings 2.0 + Document + Automation + Platform SLO + OAuth2; legacy Config v1 under `clients/legacy/` |
 | `transformers/` | 40+ entity transformers (Gen3 default) + NRQL converter + mapping tables + `mappings/` submodules + `metric_transform.py` plugin hook; legacy Gen2 under `transformers/legacy/` |
 | `validators/` | DQL syntax validator + 25-rule auto-fixer (parity with nrql-engine) |
 | `registry/` | DTEnvironmentRegistry (metrics, entities, segments, dashboards, locations) + SLOAuditor |
@@ -126,7 +126,7 @@ All transformers follow a consistent pattern:
 | `utils/` | Logging, auth (OAuth), validators, `error_taxonomy.py` (WarningCode/ErrorCode) |
 | `examples/` | Sample NRQL queries for batch testing |
 | `docs/` | `COVERAGE.md`, `migration-coverage.md`, `gen2-only-capabilities.md`, `out-of-scope.md`, `validation.md`, `architecture.md`, `nrql-engine-sync-audit.md`, `token-scopes.md` (Platform/Classic token scopes), `quickstart.md`, `migration-guide.md` |
-| `tests/` | 1194 unit (incl 36 Hypothesis + wire-level `TestAnomalyDetectorWirePayload` / `TestMultipartContentTypeWire` / `TestAnalyzerInputQueryIsDql`) + 14 integration tests; `tests/legacy/` (158) for Gen2 paths; `tests/integration/` for schema/IaC validation (env-gated) |
+| `tests/` | 1207 unit (incl 36 Hypothesis + wire-level `TestAnomalyDetectorWirePayload` / `TestMultipartContentTypeWire` / `TestAnalyzerInputQueryIsDql`) + 13 integration tests; `tests/legacy/` (158) for Gen2 paths; `tests/integration/` for schema/IaC validation (env-gated) |
 
 ## Rules
 
@@ -187,5 +187,5 @@ Replaced by dynatrace-for-ai equivalents (do not re-add): `dynatrace-dql` → `d
 - **nrql-engine parity** — the TS sibling at `/Users/Shared/GitHub/PROJECTS/NewRelic/nrql-engine/` is kept at parity (53/53 transformer files covered). CI `nrql-engine-parity` job guards drift. See `docs/nrql-engine-sync-audit.md`.
 - **Phase gates** — Every phase must have complete tests, documentation, and memory updates before moving to the next phase. All phases (0–26 + 19b + 3rd-pass + 25 + 15) are complete as of v2.0.0.
 - **Emitted DQL must be Smartscape-first** — `dt.entity.*`, `entityName()`, `entityAttr()`, and `classicEntitySelector()` are deprecated. See `.claude/rules/gen3-apis.md` §7.
-- **Gen3 API correctness** — Producing requests that Gen3 SaaS (`.apps.*`) tenants accept has several non-obvious rules (auth-by-token-prefix, `/platform/classic/environment-api/v2` settings path, multipart Document API, dict-shaped `tasks`, DQL in `analyzer.input`, v1.0.14 `builtin:davis.anomaly-detectors` shape). See `.claude/rules/gen3-apis.md` before writing new code that talks to a Gen3 tenant.
+- **Gen3 API correctness** — Producing requests that Gen3 SaaS (`.apps.*`) tenants accept has several non-obvious rules (auth-by-token-prefix, `/platform/classic/environment-api/v2` settings path, multipart Document API, dict-shaped `tasks`, DQL in `analyzer.input`, v1.0.14 `builtin:davis.anomaly-detectors` shape, Platform SLOs). See `.claude/rules/gen3-apis.md` before writing new code that talks to a Gen3 tenant.
 - **Gen3 SKIPPED entities** — Synthetic monitors, Grail segments, and IAM policies are deliberately SKIPPED in `migrate.py::_import_phase` (per-facet emission / Platform API / Account Management API not wired). Envelopes still get built; only the POST step is skipped. Don't re-enable without building the right Gen3 client. See `.claude/rules/gen3-apis.md`.

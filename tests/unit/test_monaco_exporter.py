@@ -59,9 +59,15 @@ def gen3_data():
         ],
         "slos": [
             {
-                "schemaId": "builtin:monitoring.slo",
-                "scope": "environment",
-                "value": {"name": "checkout-slo", "target": 99.9},
+                "name": "checkout-slo",
+                "description": "Migrated from New Relic",
+                "criteria": [
+                    {"target": 99.9, "warning": 99.95, "timeframeFrom": "now-7d", "timeframeTo": "now"}
+                ],
+                "customSli": {
+                    "indicator": "timeseries {\n  total=sum(dt.service.request.count),\n  failures=sum(dt.service.request.failure_count)\n}, by: { dt.smartscape.service }\n| fieldsAdd sli=(((total[]-failures[])/total[])*(100))"
+                },
+                "tags": ["MigratedFromNR:true"],
             }
         ],
         "openpipeline_processors": [
@@ -141,3 +147,20 @@ class TestMonacoGen3Structure:
         summary = exporter.export({}, tmp_path)
         assert summary == {}
         assert (tmp_path / "manifest.yaml").is_file()
+
+
+class TestPlatformSloExport:
+    def test_slos_emit_slo_v2_config(self, exporter, gen3_data, tmp_path):
+        import json
+
+        import yaml
+
+        exporter.export(gen3_data, tmp_path)
+        slo_dir = tmp_path / exporter.PROJECT_NAME / "slos"
+        config = yaml.safe_load((slo_dir / "checkout-slo.yaml").read_text())
+        assert config["configs"][0]["type"] == "slo-v2"
+        assert config["configs"][0]["config"]["template"] == "checkout-slo.json"
+        body = json.loads((slo_dir / "checkout-slo.json").read_text())
+        assert body["customSli"]["indicator"].startswith("timeseries")
+        assert "schemaId" not in body
+        assert not list((tmp_path / exporter.PROJECT_NAME).glob("settings/*monitoring-slo*"))

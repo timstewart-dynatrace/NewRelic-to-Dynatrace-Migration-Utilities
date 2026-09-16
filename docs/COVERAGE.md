@@ -34,7 +34,7 @@
 | transformers/drop-rule | Phase 11 | ✅ Gen3 OpenPipeline `drop` / `removeFields` processors |
 | transformers/infrastructure | Phase 11 | ✅ Gen3 `builtin:davis.anomaly-detectors` + Workflow pair |
 | transformers/log-parsing | Phase 11 | ✅ Gen3 OpenPipeline DPL `parse` processors |
-| transformers/slo | Phase 11 | ✅ Gen3 `builtin:monitoring.slo` Settings 2.0 envelope |
+| transformers/slo | Phase 11 | ✅ Gen3 Platform SLO (`/platform/slo/v1/slos`, DQL `customSli` by `dt.smartscape.service`) |
 | transformers/synthetic | Phase 11 | ✅ Gen3 `builtin:synthetic_test` Settings 2.0 envelope |
 | transformers/tag | Phase 11 | ✅ Gen3 OpenPipeline enrichment default; `LegacyTagTransformer` preserves Auto-Tag Rule (opt-in, warns) |
 | transformers/workload | Phase 11 | ✅ Gen3 `builtin:segment` + bucket-scoped IAM policy default; `LegacyWorkloadTransformer` preserves Management Zone (opt-in, warns) |
@@ -226,7 +226,7 @@
 
 | NR Surface | Gen3 Target | Python Module | Status |
 |-----------|-------------|---------------|--------|
-| SLO (v1 / v2) | `builtin:monitoring.slo` | transformers/slo | ✅ |
+| SLO (v1 / v2) | Platform SLO API (DQL SLI) | transformers/slo | ✅ |
 | SLI query (NRQL) | DT SLO metric expression (DQL) | transformers/slo + compiler | ✅ |
 | Error budget burn-rate alerts | Burn-rate Metric Event on SLI | — | 🟡 manual configuration |
 
@@ -395,7 +395,7 @@ CI `nrql-engine-parity` job.
 - 0 🟡 rows with Gen2 leak in Gen3 default path — all 🟡 rows are either (a) Gen2-only features (documented in `gen2-only-capabilities.md`) or (b) delegate to other transformers for partial coverage
 - Every ✅ row has ≥ 1 test in `tests/unit/` or `tests/legacy/`
 - `grep -rn 'Alerting Profile\|Management Zone\|Auto-Tag\|Problem Notification\|Metric Event' transformers/` returns 0 matches outside `transformers/legacy/` and docstring descriptions of what Gen3 replaces
-- 1194 unit + 158 legacy + 14 env-gated integration tests (1366 collected) as of 2026-09-16
+- 1207 unit + 158 legacy + 13 env-gated integration tests (1378 collected) as of 2026-09-16
 
 ## Phase Status
 

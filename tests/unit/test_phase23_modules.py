@@ -33,7 +33,9 @@ class TestKeyTransaction:
             "apdexTarget": 0.5,
         })
         assert r.success
-        assert r.slo_envelope["schemaId"] == "builtin:monitoring.slo"
+        assert "schemaId" not in r.slo
+        assert r.slo["customSli"]["indicator"].startswith("timeseries")
+        assert "dt.entity" not in r.slo["customSli"]["indicator"]
         assert r.enrichment_processor["schemaId"] == (
             "builtin:openpipeline.logs.pipelines"
         )
@@ -41,14 +43,16 @@ class TestKeyTransaction:
             "entityTags"
         ] == {"key_transaction": "checkout-flow"}
 
-    def test_slo_metric_expression_uses_duration_threshold(self):
+    def test_slo_indicator_uses_duration_threshold(self):
         r = KeyTransactionTransformer().transform({
             "name": "Fast Path",
             "applicationName": "svc",
             "apdexTarget": 0.25,  # 250ms
         })
-        # countIf(duration < 250ms)
-        assert "countIf(duration < 250ms)" in r.slo_envelope["value"]["metricExpression"]
+        # 250ms -> 250000us (dt.service.request.response_time is microseconds)
+        indicator = r.slo["customSli"]["indicator"]
+        assert "total[] <= 250000" in indicator
+        assert 'contains(entityName, "svc")' in indicator
 
     def test_missing_service_warns(self):
         r = KeyTransactionTransformer().transform({

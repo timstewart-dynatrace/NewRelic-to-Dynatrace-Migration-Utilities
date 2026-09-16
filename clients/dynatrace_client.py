@@ -6,6 +6,7 @@ Composes the three Gen3 API surfaces used by the migrator:
   * Settings 2.0   (/api/v2/settings/objects)       → Gen3 schemas
   * Document API   (/platform/document/v1/...)      → Grail dashboards
   * Automation API (/platform/automation/v1/...)    → Workflows
+  * SLO API        (/platform/slo/v1/slos)          → Platform SLOs (DQL SLI)
 
 Config v1 methods (alerting profiles, metric events, management zones,
 problem notifications, classic dashboards/synthetics/SLOs) live in
@@ -32,6 +33,7 @@ from ._http import (
 from .automation_client import AutomationClient
 from .document_client import DocumentClient
 from .settings_v2_client import SettingsV2Client
+from .slo_client import SloClient
 
 logger = structlog.get_logger()
 
@@ -78,6 +80,9 @@ _SETTINGS_SCOPES_RECOMMENDED = _SETTINGS_SCOPES_MIN + ["settings:objects:write"]
 
 _DOCUMENT_SCOPES_MIN = ["document:documents:read"]
 _DOCUMENT_SCOPES_RECOMMENDED = _DOCUMENT_SCOPES_MIN + ["document:documents:write"]
+
+_SLO_SCOPES_MIN = ["slo:slos:read"]
+_SLO_SCOPES_RECOMMENDED = _SLO_SCOPES_MIN + ["slo:slos:write"]
 
 _AUTOMATION_SCOPES_MIN = ["automation:workflows:read"]
 _AUTOMATION_SCOPES_RECOMMENDED = _AUTOMATION_SCOPES_MIN + [
@@ -171,7 +176,7 @@ def _diagnose(
 
 
 class DynatraceClient:
-    """Gen3 Dynatrace client — Settings 2.0 + Document + Automation."""
+    """Gen3 Dynatrace client — Settings 2.0 + Document + Automation + SLO."""
 
     def __init__(
         self,
@@ -192,6 +197,7 @@ class DynatraceClient:
         self.settings = SettingsV2Client(self.environment_url, self.transport)
         self.documents = DocumentClient(self.environment_url, self.transport)
         self.automation = AutomationClient(self.environment_url, self.transport)
+        self.slos = SloClient(self.environment_url, self.transport)
 
     # ------------------------------------------------------------------
     # Transformer-facing create helpers (Gen3 targets)
@@ -214,8 +220,9 @@ class DynatraceClient:
     def create_synthetic_test(self, envelope: Dict[str, Any]) -> ImportResult:
         return self.settings.create_synthetic_test(envelope)
 
-    def create_slo(self, envelope: Dict[str, Any]) -> ImportResult:
-        return self.settings.create_slo(envelope)
+    def create_slo(self, slo: Dict[str, Any]) -> ImportResult:
+        """Create a Platform SLO (`/platform/slo/v1/slos`)."""
+        return self.slos.create_slo(slo)
 
     def create_workflow(self, workflow: Dict[str, Any]) -> ImportResult:
         return self.automation.create_workflow(workflow)
@@ -234,12 +241,13 @@ class DynatraceClient:
         "segment": "settings",
         "iam_policy": "settings",
         "synthetic_test": "settings",
-        "slo": "settings",
         "openpipeline_processor": "settings",
         # Document API.
         "dashboard": "document",
         # Automation API.
         "workflow": "automation",
+        # Platform SLO API.
+        "slo": "slo",
     }
 
     def delete_entity(self, entity_type: str, entity_id: str) -> ImportResult:
@@ -268,6 +276,8 @@ class DynatraceClient:
                 response = self.documents.delete_document(entity_id)
             elif kind == "automation":
                 response = self.automation.delete_workflow(entity_id)
+            elif kind == "slo":
+                response = self.slos.delete_slo(entity_id)
             else:  # unreachable
                 response = DynatraceResponse(data=None, status_code=0,
                                              error=f"Unknown delete kind: {kind}")
@@ -399,6 +409,18 @@ class DynatraceClient:
                     "(add ':write' and ':run' for migrate runs)."
                 ),
             ),
+            self._probe(
+                api="slo_api",
+                endpoint=f"{platform}/platform/slo/v1/slos",
+                params={"pageSize": 1},
+                prefer_oauth=True,
+                scopes_min=_SLO_SCOPES_MIN,
+                scopes_recommended=_SLO_SCOPES_RECOMMENDED,
+                ui_path=(
+                    "Access Tokens → your token → Scopes → add "
+                    "'slo:slos:read' (add 'slo:slos:write' for migrate runs)."
+                ),
+            ),
         ]
         return checks
 
@@ -474,7 +496,7 @@ class DynatraceClient:
                 "builtin:davis.anomaly-detectors"
             ),
             "segments": self.settings.list_objects("builtin:segment"),
-            "slos": self.settings.list_objects("builtin:monitoring.slo"),
+            "slos": self.slos.list_slos(),
             "synthetic_tests": self.settings.list_objects(
                 "builtin:synthetic_test"
             ),

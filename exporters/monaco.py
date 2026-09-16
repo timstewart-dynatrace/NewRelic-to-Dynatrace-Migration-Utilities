@@ -5,11 +5,12 @@ Produces a Monaco v2 project tree with a `manifest.yaml`, emitting:
   projects/migrated/settings/<schema-id>/<name>.{yaml,json}     -- Settings 2.0
   projects/migrated/documents/<name>.json                       -- Dashboards
   projects/migrated/workflows/<name>.{yaml,json}                -- Workflows
+  projects/migrated/slos/<name>.{yaml,json}                     -- Platform SLOs (slo-v2)
 
 The settings schemas covered by default are the Gen3 targets produced by
 the transformers: `builtin:davis.anomaly-detectors`, `builtin:segment`,
-`builtin:iam.policy`, `builtin:synthetic_test`, `builtin:monitoring.slo`,
-`builtin:openpipeline.*`. Legacy (Config v1 / Gen2 classic) emission lives
+`builtin:iam.policy`, `builtin:synthetic_test`, `builtin:openpipeline.*`.
+Platform SLOs use the Monaco `slo-v2` config type. Legacy (Config v1 / Gen2 classic) emission lives
 in `exporters/legacy/monaco_v1.py` and is reached via `--legacy`.
 """
 
@@ -78,7 +79,6 @@ class MonacoExporter:
             "segments",
             "iam_policies",
             "synthetic_tests",
-            "slos",
             "openpipeline_processors",
         ):
             envelopes = transformed_data.get(key) or []
@@ -145,6 +145,35 @@ class MonacoExporter:
                 )
             summary["workflows"] = len(workflows)
             logger.info("Exported Gen3 workflows", count=len(workflows))
+
+        # ----- Platform SLOs (Monaco `slo-v2`) ---------------------------
+        slos = transformed_data.get("slos") or []
+        if slos:
+            slo_dir = project_root / "slos"
+            slo_dir.mkdir(parents=True, exist_ok=True)
+            for slo in slos:
+                name = slo.get("name", "unnamed-slo")
+                safe = self._safe_name(name)
+                (slo_dir / f"{safe}.json").write_text(json.dumps(slo, indent=2))
+                (slo_dir / f"{safe}.yaml").write_text(
+                    yaml.safe_dump(
+                        {
+                            "configs": [
+                                {
+                                    "id": f"slo-{safe}",
+                                    "type": "slo-v2",
+                                    "config": {
+                                        "name": name,
+                                        "template": f"{safe}.json",
+                                    },
+                                }
+                            ]
+                        },
+                        sort_keys=False,
+                    )
+                )
+            summary["slos"] = len(slos)
+            logger.info("Exported Gen3 Platform SLOs", count=len(slos))
 
         logger.info("Monaco Gen3 export complete", summary=summary)
         return summary

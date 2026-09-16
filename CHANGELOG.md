@@ -8,6 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- **BREAKING (output): SLOs now target the Platform SLO API** (`POST /platform/slo/v1/slos`)
+  instead of classic Settings 2.0 `builtin:monitoring.slo` metric-selector SLOs.
+  `SLOTransformer` and `KeyTransactionTransformer` emit a DQL `customSli.indicator`
+  grouped by `dt.smartscape.service`; the service is taken from `appName` /
+  `entityName` in the NR SLI and latency thresholds from `duration < N`.
+  `KeyTransactionResult.slo_envelope` is renamed `slo`. New `clients/slo_client.py`
+  (create / list / delete with optimistic-locking version); `DynatraceClient.create_slo`,
+  rollback, backup, and `preflight` (`slo_api`, `slo:slos:read|write`) use it.
+  Monaco export emits `type: slo-v2`; Terraform emits `dynatrace_platform_slo`.
+  Shared builder in `transformers/_slo_utils.py` (also used by the converter).
 - **Smartscape-first DQL emission.** Classic `dt.entity.*` is deprecated per
   Dynatrace's `dt-dql-essentials` / `dt-migration` skills (see
   `.claude/rules/gen3-apis.md` §7). Mirrored in nrql-engine.

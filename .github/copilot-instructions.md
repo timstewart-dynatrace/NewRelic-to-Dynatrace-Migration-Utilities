@@ -65,7 +65,7 @@ python migrate.py --version                                    # Show version
 ## Testing
 
 ```bash
-pytest tests/ -v                    # 1194 unit + 158 legacy + 14 gated integration
+pytest tests/ -v                    # 1207 unit + 158 legacy + 13 gated integration
 pytest tests/unit/test_compiler.py  # 309 compiler tests
 pytest -x --tb=short               # Stop on first failure
 ```

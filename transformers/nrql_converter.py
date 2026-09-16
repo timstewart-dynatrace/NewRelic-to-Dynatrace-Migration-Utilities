@@ -24,6 +24,7 @@ from compiler import NRQLCompiler
 from compiler.emitter import DQLEmitter
 from validators import DQLSyntaxValidator
 
+from ._slo_utils import availability_indicator, build_platform_slo, latency_indicator
 from .nrql_mapping_rules import (
     AGG_MAP,
     ATTR_MAP,
@@ -1414,7 +1415,6 @@ class NRQLtoDQLConverter:
 
         # Get target from NR tags or default
         target = slo_info.get("target", 99.9)
-        warning = min(target + (100 - target) / 2, 99.99)
 
         days = slo_info.get("time_window_days", 7)
         timeframe_from = f"now-{days}d"
@@ -1422,8 +1422,6 @@ class NRQLtoDQLConverter:
         slo_type = slo_info.get("slo_type", "availability")
         service_name = slo_info.get("service_name", "")
 
-        entity_name_step = "\n| fieldsAdd entityName = getNodeName(dt.smartscape.service)"
-        service_filter = ""
         if service_name:
             validated_name, entity_warn = self._validate_entity_name(service_name, "SERVICE")
             if entity_warn:
@@ -1431,33 +1429,11 @@ class NRQLtoDQLConverter:
             if validated_name != service_name:
                 logger.info("Service name corrected: '%s' -> '%s'", service_name, validated_name)
                 service_name = validated_name
-            escaped_name = service_name.replace('"', '\\"')
-            service_filter = f'\n| filter contains(entityName, "{escaped_name}")'
 
         if slo_type == "latency":
-            # dt.service.request.response_time is in MICROSECONDS
-            threshold_ms = slo_info.get("latency_threshold_ms", 4000)
-            threshold_us = threshold_ms * 1000
-
-            dql_indicator = (
-                f"timeseries total=avg(dt.service.request.response_time), default:0, "
-                f"by: {{ dt.smartscape.service }}{entity_name_step}{service_filter}\n"
-                f"| fieldsAdd high=iCollectArray(if(total[] > {threshold_us}, total[]))\n"
-                f"| fieldsAdd low=iCollectArray(if(total[] <= {threshold_us}, total[]))\n"
-                f"| fieldsAdd highRespTimes=iCollectArray(if(isNull(high[]), 0, else: 1))\n"
-                f"| fieldsAdd lowRespTimes=iCollectArray(if(isNull(low[]), 0, else: 1))\n"
-                f"| fieldsAdd sli=100*(lowRespTimes[]/(lowRespTimes[]+highRespTimes[]))\n"
-                f"| fieldsRemove total, high, low, highRespTimes, lowRespTimes"
-            )
+            dql_indicator = latency_indicator(slo_info.get("latency_threshold_ms", 4000), service_name or None)
         else:
-            dql_indicator = (
-                f"timeseries {{\n"
-                f"  total=sum(dt.service.request.count),\n"
-                f"  failures=sum(dt.service.request.failure_count)\n"
-                f"}}, by: {{ dt.smartscape.service }}{entity_name_step}{service_filter}\n"
-                f"| fieldsAdd sli=(((total[]-failures[])/total[])*(100))\n"
-                f"| fieldsRemove total, failures"
-            )
+            dql_indicator = availability_indicator(service_name or None)
 
         description = slo_info.get("description", "")
         if not description:
@@ -1477,20 +1453,14 @@ class NRQLtoDQLConverter:
 
         description = f"{description}\n\n[Migrated from NR GUID: {guid[:40]}...]"
 
-        payload = {
-            "name": slo_name,
-            "description": description[:1000],
-            "criteria": [
-                {
-                    "target": target,
-                    "warning": round(warning, 2),
-                    "timeframeFrom": timeframe_from,
-                    "timeframeTo": "now",
-                }
-            ],
-            "customSli": {"indicator": dql_indicator},
-            "tags": ["MigratedFromNR:true"],
-        }
+        payload = build_platform_slo(
+            name=slo_name,
+            description=description,
+            target=target,
+            indicator=dql_indicator,
+            timeframe_from=timeframe_from,
+            tags=["MigratedFromNR:true"],
+        )
 
         try:
             base_url = self._dt_url.replace(".live.", ".apps.")

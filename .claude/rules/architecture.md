@@ -28,6 +28,7 @@ NewRelic-to-Dynatrace-Migration-Utilities/
 │   ├── settings_v2_client.py          # Settings API v2
 │   ├── document_client.py             # /platform/document/v1/documents (multipart)
 │   ├── automation_client.py           # /platform/automation/v1/workflows
+│   ├── slo_client.py                  # /platform/slo/v1/slos (Platform SLOs)
 │   ├── newrelic_client.py             # NerdGraph GraphQL (pagination, rate limit, retry)
 │   └── legacy/config_v1_client.py     # Gen2 Config v1 client (--legacy only)
 │
@@ -38,6 +39,7 @@ NewRelic-to-Dynatrace-Migration-Utilities/
 │   ├── *_transformer.py               # See docs/COVERAGE.md for full inventory
 │   ├── _detector_utils.py             # nrql_to_analyzer_query() for analyzer.input
 │   ├── _workflow_utils.py             # tasks_list_to_dict() for Automation API
+│   ├── _slo_utils.py                  # Platform SLO body + DQL SLI indicators
 │   ├── nrql_converter.py              # NRQLtoDQLConverter (compiler + post-processing + auto-fix + uplift)
 │   ├── converters.py                  # RegexToDPL, Aparse, Rate, CompareWith, Funnel, etc.
 │   ├── metric_transform.py            # Phase 23 MetricTransform plugin protocol + registry
@@ -48,6 +50,7 @@ NewRelic-to-Dynatrace-Migration-Utilities/
 │
 ├── validators/
 │   ├── dql_validator.py               # Structural DQL syntax validator
+│   ├── smartscape_map.py              # classic dt.entity.* -> Smartscape table
 │   └── dql_fixer.py                   # Auto-fixer (25 fix rules, parity with nrql-engine)
 │
 ├── registry/
@@ -79,9 +82,9 @@ NewRelic-to-Dynatrace-Migration-Utilities/
 │   └── error_taxonomy.py              # WarningCode / ErrorCode
 ├── examples/example_queries.nrql
 │
-└── tests/                             # 1366 collected: 1194 unit + 158 legacy + 14 env-gated integration
+└── tests/                             # 1378 collected: 1207 unit + 158 legacy + 13 env-gated integration
     ├── conftest.py                    # Session-scoped `compiler` fixture
-    ├── unit/                          # 35 files (compiler, CLI, clients incl. wire-level, per-phase, invariants)
+    ├── unit/                          # 36 files (compiler, CLI, clients incl. wire-level, per-phase, invariants)
     ├── legacy/                        # 8 files — Gen2 *_v1 regressions
     └── integration/                   # 5 files — live NR/DT, schema validation, IaC dry-run (gated)
 ```
@@ -108,7 +111,8 @@ Transformers (Gen3 default; transformers/legacy/ under --legacy)
 transformed_data.json buckets -> clients/dynatrace_client.py (Gen3 facade)
   -> Document API        (dashboards, notebooks — multipart POST)
   -> Automation API      (workflows)
-  -> Settings 2.0        (davis anomaly detectors, SLOs, OpenPipeline, RUM, cloud, ...)
+  -> Platform SLO API    (SLOs)
+  -> Settings 2.0        (davis anomaly detectors, OpenPipeline, RUM, cloud, ...)
   -> SKIPPED on import   (synthetic tests, Grail segments, IAM policies — see gen3-apis.md)
   -> OR export-monaco / export-terraform
 ```
@@ -122,7 +126,7 @@ transformed_data.json buckets -> clients/dynatrace_client.py (Gen3 facade)
 | Alert Policy + NRQL Condition | Workflow + `builtin:davis.anomaly-detectors` | AlertTransformer |
 | Notification Channel | Workflow task | NotificationTransformer (in alert_transformer.py) |
 | Synthetic Monitor | `builtin:synthetic_test` envelope (import SKIPPED) | SyntheticTransformer |
-| SLO | `builtin:monitoring.slo` | SLOTransformer |
+| SLO | Platform SLO API (`/platform/slo/v1/slos`, DQL SLI) | SLOTransformer |
 | Workload | `builtin:segment` + `builtin:iam.policy` (import SKIPPED) | WorkloadTransformer |
 | Infra Condition | Davis anomaly detector + Workflow | InfrastructureTransformer |
 | Log Parsing Rule | `builtin:openpipeline.logs.pipelines` (DPL processor) | LogParsingTransformer |
