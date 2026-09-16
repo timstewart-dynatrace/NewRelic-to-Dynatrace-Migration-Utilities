@@ -350,3 +350,28 @@ class TestGuidResolutionUsesDimensions:
         assert 'service.name == "ping"' in result.dql
         assert "dt.entity" not in result.dql
         assert any("verify the dimension" in w for w in result.warnings)
+
+
+class TestPlatformSloParity:
+    """Exact strings shared with TS tests/transformers/slo-parity.test.ts."""
+
+    AVAILABILITY_CHECKOUT = "timeseries {\n  total=sum(dt.service.request.count),\n  failures=sum(dt.service.request.failure_count)\n}, by: { dt.smartscape.service }\n| fieldsAdd entityName = getNodeName(dt.smartscape.service)\n| filter contains(entityName, \"checkout\")\n| fieldsAdd sli=(((total[]-failures[])/total[])*(100))\n| fieldsRemove total, failures"
+    LATENCY_250_API = "timeseries total=avg(dt.service.request.response_time), default:0, by: { dt.smartscape.service }\n| fieldsAdd entityName = getNodeName(dt.smartscape.service)\n| filter contains(entityName, \"api\")\n| fieldsAdd high=iCollectArray(if(total[] > 250000, total[]))\n| fieldsAdd low=iCollectArray(if(total[] <= 250000, total[]))\n| fieldsAdd highRespTimes=iCollectArray(if(isNull(high[]), 0, else: 1))\n| fieldsAdd lowRespTimes=iCollectArray(if(isNull(low[]), 0, else: 1))\n| fieldsAdd sli=100*(lowRespTimes[]/(lowRespTimes[]+highRespTimes[]))\n| fieldsRemove total, high, low, highRespTimes, lowRespTimes"
+
+    def test_indicators_match_ts(self):
+        from transformers._slo_utils import availability_indicator, latency_indicator
+
+        assert availability_indicator("checkout") == self.AVAILABILITY_CHECKOUT
+        assert latency_indicator(250, "api") == self.LATENCY_250_API
+
+    def test_body_and_warning_match_ts(self):
+        from transformers._slo_utils import build_platform_slo, default_warning
+
+        assert [default_warning(t) for t in (99.9, 95, 99.5)] == [99.95, 97.5, 99.75]
+        assert build_platform_slo(
+            name="n", description="d", target=99.5, indicator="i", tags=["t"], external_id="e"
+        ) == {
+            "name": "n", "description": "d",
+            "criteria": [{"target": 99.5, "warning": 99.75, "timeframeFrom": "now-7d", "timeframeTo": "now"}],
+            "customSli": {"indicator": "i"}, "tags": ["t"], "externalId": "e",
+        }

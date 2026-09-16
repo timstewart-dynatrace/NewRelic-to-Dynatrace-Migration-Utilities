@@ -13,7 +13,7 @@ Universal migration tool for converting New Relic monitoring configurations to D
 ## Quick Reference
 
 ```bash
-# Run tests (1207 unit + 158 legacy + 13 env-gated integration; 49 files)
+# Run tests (1209 unit + 158 legacy + 13 env-gated integration; 49 files)
 pytest tests/ -v
 
 # Probe target tenant for Gen3 API access + missing token scopes
@@ -63,7 +63,7 @@ python migrate.py --version
 | CLI | Click + Rich | Subcommands with progress display |
 | Logging | structlog | Structured logging |
 | HTTP | requests | API clients |
-| Testing | pytest + hypothesis | 1207 unit (incl 36 property-based + wire-level Gen3 regressions) + 158 legacy + 13 integration tests |
+| Testing | pytest + hypothesis | 1209 unit (incl 36 property-based + wire-level Gen3 regressions) + 158 legacy + 13 integration tests |
 
 ## Architecture
 
@@ -126,7 +126,7 @@ All transformers follow a consistent pattern:
 | `utils/` | Logging, auth (OAuth), validators, `error_taxonomy.py` (WarningCode/ErrorCode) |
 | `examples/` | Sample NRQL queries for batch testing |
 | `docs/` | `COVERAGE.md`, `migration-coverage.md`, `gen2-only-capabilities.md`, `out-of-scope.md`, `validation.md`, `architecture.md`, `nrql-engine-sync-audit.md`, `token-scopes.md` (Platform/Classic token scopes), `quickstart.md`, `migration-guide.md` |
-| `tests/` | 1207 unit (incl 36 Hypothesis + wire-level `TestAnomalyDetectorWirePayload` / `TestMultipartContentTypeWire` / `TestAnalyzerInputQueryIsDql`) + 13 integration tests; `tests/legacy/` (158) for Gen2 paths; `tests/integration/` for schema/IaC validation (env-gated) |
+| `tests/` | 1209 unit (incl 36 Hypothesis + wire-level `TestAnomalyDetectorWirePayload` / `TestMultipartContentTypeWire` / `TestAnalyzerInputQueryIsDql`) + 13 integration tests; `tests/legacy/` (158) for Gen2 paths; `tests/integration/` for schema/IaC validation (env-gated) |
 
 ## Rules
 
