@@ -132,7 +132,7 @@ class SLOAuditor:
             key = match.group(1).strip()
             # Filter out DQL keywords and known non-metrics
             if key not in ('duration', 'timestamp', 'start_time', 'true', 'false', 'null') \
-               and not key.startswith('dt.entity.') \
+               and not key.startswith(('dt.entity.', 'dt.smartscape.')) \
                and ('.' in key):
                 metrics.append(key)
 

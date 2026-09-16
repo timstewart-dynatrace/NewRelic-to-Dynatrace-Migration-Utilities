@@ -60,9 +60,9 @@ class BaselineAlertTransformer:
                     warnings.append(
                         f"Outlier condition '{name}' has no facet — DT outlier "
                         "detection requires a `by:` dimension. Default set to "
-                        "'dt.entity.service'."
+                        "'dt.smartscape.service'."
                     )
-                    facet = "dt.entity.service"
+                    facet = "dt.smartscape.service"
             else:
                 facet = nr_condition.get("facet", "")
 

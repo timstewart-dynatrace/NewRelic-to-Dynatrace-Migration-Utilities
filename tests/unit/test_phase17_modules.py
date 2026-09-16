@@ -109,7 +109,7 @@ class TestBaselineAlert:
             "name": "svc-outliers", "conditionType": "outlier",
         })
         inputs = _input_map(r.anomaly_detectors[0])
-        assert inputs["dimensions"] == "dt.entity.service"
+        assert inputs["dimensions"] == "dt.smartscape.service"
         assert any("no facet" in w for w in r.warnings)
 
     def test_direction_both_maps_to_outside_bounds(self):

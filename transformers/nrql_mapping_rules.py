@@ -877,7 +877,7 @@ ATTR_MAP: dict[str, str] = {
     # Note: 'error' field is intentionally NOT mapped here as it's too generic
     # and matches inside strings. Use error.message or check error == true explicitly.
     'error.message': 'error.message',
-    'entityGuid': 'dt.entity.service',
+    'entityGuid': 'dt.smartscape.service',
 
     # HTTP/Service attributes
     'request.uri': 'http.request.path',
@@ -899,8 +899,8 @@ ATTR_MAP: dict[str, str] = {
     'diskUsedPercent': 'host.disk.usage',
 
     # Entity attributes
-    'entityname': 'entity.name',
-    'entity.name': 'entity.name',
+    # entityname / entity.name intentionally absent: DQLEmitter maps them by query
+    # context (service.name for spans/logs, dt.service.name for metrics).
 
     # Error attributes
     'errormessage': 'error.message',

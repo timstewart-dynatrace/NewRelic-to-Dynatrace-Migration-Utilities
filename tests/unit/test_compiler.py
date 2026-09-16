@@ -591,7 +591,8 @@ class TestParserGaps:
         assert result.success
         assert "fetch spans" in result.dql
         assert "makeTimeseries" in result.dql
-        assert "dt.entity.name" in result.dql
+        assert 'service.name == "my-api"' in result.dql
+        assert "dt.entity" not in result.dql
 
     def test_from_log_select(self, compiler):
         result = compiler.compile(
@@ -1980,7 +1981,10 @@ class TestG14Session69:
         result = compiler.compile("SELECT latest(isReady) FROM K8sPodSample WHERE clusterName = 'prod'")
         assert_valid_dql(result)
         code = code_lines(result.dql)
-        assert "entity" in code
+        assert code.startswith("smartscapeNodes K8S_DEPLOYMENT")
+        assert "readyReplicas" in code
+        assert 'k8s.cluster.name == "prod"' in code
+        assert "dt.entity" not in code
         assert "timeseries" not in code
 
 
@@ -2007,7 +2011,8 @@ class TestG14AuditFixes:
             "SELECT count(*) FROM Transaction WHERE entity.name = 'my-svc'"
         )
         assert_valid_dql(result)
-        assert "dt.entity.name" in code_lines(result.dql)
+        assert "service.name" in code_lines(result.dql)
+        assert "dt.entity" not in code_lines(result.dql)
 
     def test_percentage_simple_no_nested_agg(self, compiler):
         result = compiler.compile(

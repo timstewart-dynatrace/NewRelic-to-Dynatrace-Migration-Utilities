@@ -2,6 +2,8 @@
 import re
 from typing import List, Tuple
 
+from .smartscape_map import CLASSIC_TO_SMARTSCAPE, MULTI_TARGET, REMOVED_GROUP_TYPES, smartscape_field
+
 
 def ms_to_dql_duration(ms: float) -> str:
     """Convert milliseconds to the most readable DQL duration literal."""
@@ -61,6 +63,7 @@ class DQLValidator:
         dql = self._fix_duration_units(dql)
         dql = self._fix_negation_to_filterout(dql)
         dql = self._fix_array_count_without_expand(dql)
+        dql = self._fix_classic_entity_references(dql)
         dql = self._fix_whitespace(dql)
 
         return dql, self.fixes
@@ -403,7 +406,7 @@ class DQLValidator:
             # Map NR source to DQL
             source_map = {
                 'Span': 'spans', 'Transaction': 'spans',
-                'Log': 'logs', 'SystemSample': 'dt.entity.host',
+                'Log': 'logs', 'SystemSample': 'smartscapeNodes HOST',
             }
             dt_source = source_map.get(source_type, 'spans')
 
@@ -417,7 +420,8 @@ class DQLValidator:
             else:
                 sub_filter = ''
 
-            lookup_dql = (f'lookup [fetch {dt_source}{sub_filter} '
+            source_cmd = dt_source if dt_source.startswith('smartscapeNodes') else f'fetch {dt_source}'
+            lookup_dql = (f'lookup [{source_cmd}{sub_filter} '
                          f'| fields {select_field}], '
                          f'sourceField:{field}, lookupField:{select_field}, prefix:"sub."')
 
@@ -953,7 +957,7 @@ class DQLValidator:
         """
         # Known array fields in Dynatrace
         array_fields = [
-            'affected_entity_ids', 'affected_entities', 'tags',
+            'affected_entity_ids', 'affected_entities', 'smartscape.affected_entities', 'tags',
             'management_zones', 'entity.detected_name',
         ]
         for field in array_fields:
@@ -971,6 +975,101 @@ class DQLValidator:
                             )
                             self.fixes.append(f"Added note: '{field}' should be expanded before summarize")
         return dql
+
+    _CLASSIC_FIELD_RE = re.compile(r'\bdt\.entity\.([a-z][a-z0-9_]*)\b')
+    _CLASSIC_ID_EQ_RE = re.compile(
+        r'\bdt\.entity\.([a-z][a-z0-9_]*)(\s*(?:==|!=)\s*)"([A-Z][A-Z0-9_]*-[0-9A-F]{16})"'
+    )
+    _CLASSIC_FETCH_RE = re.compile(r'\bfetch\s+dt\.entity\.([a-z][a-z0-9_]*)\b')
+    _ENTITY_NAME_FN_RE = re.compile(r'\bentityName\(\s*dt\.(entity|smartscape)\.([a-z][a-z0-9_.]*)\s*\)')
+
+    def _fix_classic_entity_references(self, dql: str) -> str:
+        """Rewrite deprecated classic-entity DQL to Smartscape (gen3-apis.md §7).
+
+        1:1 mappings are rewritten; 1:N types, removed group types, unknown types,
+        ``classicEntitySelector`` and ``entityAttr`` get a ``// NOTE:`` for review.
+        Comment lines are left untouched.
+        """
+        lines = dql.split('\n')
+        code_idx = [i for i, ln in enumerate(lines) if not ln.lstrip().startswith('//')]
+        code = '\n'.join(lines[i] for i in code_idx)
+        if not re.search(r'dt\.entity\.|entityName\(|entityAttr\(|classicEntitySelector', code):
+            return dql
+
+        notes: List[str] = []
+        is_entity_list = bool(re.match(r'\s*fetch\s+dt\.entity\.', code))
+
+        def fetch_sub(m: 're.Match[str]') -> str:
+            target = CLASSIC_TO_SMARTSCAPE.get(m.group(1))
+            if not target:
+                return m.group(0)
+            self.fixes.append(f"fetch dt.entity.{m.group(1)} -> smartscapeNodes {target[1]}")
+            return f"smartscapeNodes {target[1]}"
+
+        def id_sub(m: 're.Match[str]') -> str:
+            field = smartscape_field(m.group(1))
+            if not field:
+                return m.group(0)
+            return f'{field}{m.group(2)}toSmartscapeId("{m.group(3)}")'
+
+        def name_fn_sub(m: 're.Match[str]') -> str:
+            field = smartscape_field(m.group(2)) if m.group(1) == 'entity' else f"dt.smartscape.{m.group(2)}"
+            if not field:
+                return m.group(0)
+            self.fixes.append(f"entityName(dt.{m.group(1)}.{m.group(2)}) -> getNodeName({field})")
+            return f"getNodeName({field})"
+
+        def field_sub(m: 're.Match[str]') -> str:
+            field = smartscape_field(m.group(1))
+            if not field:
+                return m.group(0)
+            self.fixes.append(f"dt.entity.{m.group(1)} -> {field}")
+            return field
+
+        # classicEntitySelector() yields classic IDs, so rewriting the field beside it would
+        # silently break the filter. Leave such queries as-is and only annotate.
+        new_code = code
+        if 'classicEntitySelector' not in code:
+            new_code = self._CLASSIC_FETCH_RE.sub(fetch_sub, new_code)
+            if is_entity_list and new_code != code:
+                new_code = re.sub(r'(?<![\w.`])entity\.name\b', 'name', new_code)
+            new_code = self._CLASSIC_ID_EQ_RE.sub(id_sub, new_code)
+            new_code = self._ENTITY_NAME_FN_RE.sub(name_fn_sub, new_code)
+            new_code = self._CLASSIC_FIELD_RE.sub(field_sub, new_code)
+        if 'toSmartscapeId(' in new_code and 'toSmartscapeId(' not in code:
+            notes.append("// NOTE: classic entity IDs wrapped in toSmartscapeId(); verify they resolve "
+                         "(IDs do not always carry over)")
+
+        for classic in sorted(set(self._CLASSIC_FIELD_RE.findall(new_code))):
+            if classic in MULTI_TARGET:
+                notes.append(f"// NOTE: dt.entity.{classic} maps to several Smartscape types "
+                             f"({MULTI_TARGET[classic]}); rewrite manually")
+            elif classic in REMOVED_GROUP_TYPES:
+                notes.append(f"// NOTE: dt.entity.{classic} has no Smartscape entity; use its fields on "
+                             "HOST / PROCESS / CONTAINER")
+            elif classic not in CLASSIC_TO_SMARTSCAPE:
+                notes.append(f"// NOTE: dt.entity.{classic} is deprecated and has no confirmed "
+                             "Smartscape mapping; review manually")
+        if 'classicEntitySelector' in new_code:
+            notes.append("// NOTE: classicEntitySelector is deprecated; filter on raw dimensions or "
+                         "use smartscapeNodes + traverse")
+        if 'entityAttr(' in new_code:
+            notes.append("// NOTE: entityAttr() is deprecated; use getNodeField(id, \"field\") or a node field")
+        if re.search(r'\bentityName\(', new_code):
+            notes.append("// NOTE: entityName() is deprecated; use getNodeName(id) or name")
+
+        new_notes = [n for n in notes if n not in dql]
+        if new_code == code and not new_notes:
+            return dql
+
+        new_code_lines = new_code.split('\n')
+        for pos, i in enumerate(code_idx):
+            lines[i] = new_code_lines[pos]
+        for note in new_notes:
+            self.fixes.append(note[len('// NOTE: '):])
+        insert_at = code_idx[0] if code_idx else len(lines)
+        lines[insert_at:insert_at] = new_notes
+        return '\n'.join(lines)
 
     def _fix_whitespace(self, dql: str) -> str:
         """Clean up whitespace issues"""
