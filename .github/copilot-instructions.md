@@ -2,25 +2,26 @@
 
 ## Project Overview
 
-**v1.2.0** — Universal migration framework for converting New Relic monitoring configurations to Dynatrace. AST-based NRQL-to-DQL compiler with 292 tested patterns and 894 total tests.
+**v2.0.0** — Universal migration framework for converting New Relic monitoring configurations to Dynatrace. AST-based NRQL-to-DQL compiler with 309 compiler tests and 1,355 total tests (Gen3 default, Gen2 via `--legacy`).
 
 ## Architecture
 
 ```
-Export (NR NerdGraph) → Transform (10 transformers) → Import (DT APIs)
+Export (NR NerdGraph) → Transform (40 Gen3 transformers) → Import (DT Gen3 APIs) / Monaco / Terraform
 
-NRQL Compiler: NRQL string → Lexer → Parser → AST → DQLEmitter → DQL string
+NRQL Compiler: NRQL string → Shorthands → Lexer → Parser → AST → DQLEmitter → DQL string
 ```
 
 **Key modules:**
 - `compiler/` — AST-based NRQL→DQL compiler (lexer, parser, emitter)
-- `transformers/` — 10 entity transformers (Dashboard, Alert, Notification, Synthetic, SLO, Workload, Infrastructure, LogParsing, Tag, DropRule)
-- `validators/` — DQL syntax validator + 19-rule auto-fixer
+- `transformers/` — 40 Gen3 entity transformers (see `docs/COVERAGE.md`); Gen2 `*_v1` under `transformers/legacy/` (`--legacy` only)
+- `validators/` — DQL syntax validator + 24-rule auto-fixer
 - `registry/` — DTEnvironmentRegistry for live validation + SLOAuditor
-- `migration/` — Rollback, checkpointing, incremental state, conversion reports
-- `clients/` — NR NerdGraph + DT API clients (Config v1 + Documents v2 + Settings v2)
-- `migrate.py` — Click CLI (migrate, compile, convert, reference, batch, audit-slos, export-monaco, export-terraform)
-- `exporters/` — Monaco YAML + Terraform HCL config-as-code exporters
+- `migration/` — Rollback, checkpointing, incremental state, conversion reports, retry, diff, canary, audit
+- `clients/` — NR NerdGraph + DT Gen3 facade (Settings 2.0, Document API v1 multipart, Automation API v1); Config v1 under `clients/legacy/`. Gen3 request rules: `.claude/rules/gen3-apis.md`
+- `migrate.py` — Click CLI (migrate, compile, convert, reference, batch, extract-nrql, preflight, audit, audit-slos, export-monaco, export-terraform, agents, scan-instrumentation, archive)
+- `exporters/` — Gen3 Monaco YAML + Terraform HCL exporters (Gen2 under `exporters/legacy/`)
+- `agents/`, `tools/` — per-language APM agent orchestrators; NRDB archive
 
 ## Transformer Pattern
 
@@ -50,6 +51,7 @@ python migrate.py reference                                    # NRQL→DQL tabl
 python migrate.py reference --mappings                         # Full mapping tables
 python migrate.py batch --file queries.csv                     # CSV batch
 python migrate.py audit-slos                                   # SLO metric audit
+python migrate.py preflight                                    # Gen3 API access + token scope check
 python migrate.py migrate --dry-run                            # Validate
 python migrate.py migrate --full                               # Execute
 python migrate.py migrate --list-components                    # Show components
@@ -63,8 +65,8 @@ python migrate.py --version                                    # Show version
 ## Testing
 
 ```bash
-pytest tests/ -v                    # All 894 tests
-pytest tests/unit/test_compiler.py  # 292 compiler tests
+pytest tests/ -v                    # 1183 unit + 158 legacy + 14 gated integration
+pytest tests/unit/test_compiler.py  # 309 compiler tests
 pytest -x --tb=short               # Stop on first failure
 ```
 

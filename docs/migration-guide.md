@@ -285,7 +285,7 @@ python migrate.py reference --mappings
 | LOW | Partial conversion, may need manual adjustment | Manual editing required |
 | FAILED | Could not convert | Rewrite manually in DQL |
 
-Focus your manual review effort on MEDIUM and LOW confidence queries. HIGH confidence queries have been tested against 292 patterns.
+Focus your manual review effort on MEDIUM and LOW confidence queries. HIGH confidence queries have been tested against the 309-case compiler suite.
 
 ---
 

@@ -4,145 +4,131 @@
 
 ```
 NewRelic-to-Dynatrace-Migration-Utilities/
-├── migrate.py                         # CLI entry point (migrate, compile, convert, reference, batch, audit-slos)
-├── _version.py                        # Version (1.3.0)
-├── pyproject.toml                     # Project config, pip install, pytest
+├── migrate.py                         # Click CLI: migrate, compile, convert, reference, batch, extract-nrql,
+│                                      #   export-monaco, export-terraform, preflight, audit, audit-slos,
+│                                      #   agents, scan-instrumentation, archive
+├── _version.py                        # Version (2.0.0) — must match pyproject.toml
+├── pyproject.toml                     # Project config, pip install, pytest, ruff, mypy
 ├── requirements.txt                   # Python dependencies
 ├── .env.example                       # Environment template
+├── CHANGELOG.md / DECISIONS.md / HISTORY.md / MEMORY.md
 │
-├── compiler/                          # NRQL-to-DQL AST compiler (292 tested patterns)
+├── compiler/                          # NRQL-to-DQL AST compiler (309 compiler tests)
+│   ├── shorthands.py                  # Pre-lex shorthand expansion (Phase 19b, nrql-engine port)
 │   ├── tokens.py                      # TokenType enum, Token dataclass, KEYWORDS
 │   ├── lexer.py                       # NRQLLexer (tokenization, preserves regex escapes)
-│   ├── ast_nodes.py                   # 18 AST node classes
+│   ├── ast_nodes.py                   # AST node classes
 │   ├── parser.py                      # NRQLParser (recursive descent)
 │   ├── emitter.py                     # DQLEmitter (context-aware DQL generation)
 │   └── compiler.py                    # NRQLCompiler (orchestrator + validation)
 │
-├── clients/                           # API clients
+├── clients/                           # API clients (Gen3 default)
+│   ├── _http.py                       # HttpTransport, token_auth_header(), settings_v2_base(), OAuth2 provider
+│   ├── dynatrace_client.py            # Gen3 facade (Settings 2.0 + Document + Automation) + preflight_gen3()
+│   ├── settings_v2_client.py          # Settings API v2
+│   ├── document_client.py             # /platform/document/v1/documents (multipart)
+│   ├── automation_client.py           # /platform/automation/v1/workflows
 │   ├── newrelic_client.py             # NerdGraph GraphQL (pagination, rate limit, retry)
-│   └── dynatrace_client.py           # Settings API v2 + Config API v1 + Documents API v2
+│   └── legacy/config_v1_client.py     # Gen2 Config v1 client (--legacy only)
 │
-├── transformers/                      # 10 entity transformers
-│   ├── mapping_rules.py              # EntityMapper, VISUALIZATION_TYPE_MAP, CHART_TYPE_MAP
-│   ├── nrql_mapping_rules.py         # METRIC_MAP (230), ATTR_MAP (72), AGG_MAP (90+), EVENT_TYPE_MAP (34)
-│   ├── nrql_converter.py             # NRQLtoDQLConverter (compiler + post-processing + auto-fix)
-│   ├── converters.py                 # Specialized: RegexToDPL, Aparse, Rate, CompareWith, Funnel, etc.
-│   ├── dashboard_transformer.py      # NR Dashboard -> DT Dashboard
-│   ├── alert_transformer.py          # NR Alert Policy -> DT Alerting Profile + Metric Events
-│   ├── synthetic_transformer.py      # NR Monitors -> DT HTTP/Browser Monitors
-│   ├── slo_transformer.py            # NR SLO -> DT SLO
-│   ├── workload_transformer.py       # NR Workload -> DT Management Zone
-│   ├── infrastructure_transformer.py # NR Infra Conditions -> DT Metric Events
-│   ├── log_parsing_transformer.py    # NR Log Rules -> DT Processing Rules (DPL)
-│   ├── tag_transformer.py            # NR Tags -> DT Auto-Tag Rules
-│   └── drop_rule_transformer.py      # NR Drop Rules -> DT Ingest Rules
+├── transformers/                      # 40 *_transformer.py modules (Gen3 default)
+│   ├── __init__.py                    # Registers every transformer
+│   ├── dashboard_transformer.py       # NR Dashboard -> Document API dashboard
+│   ├── alert_transformer.py           # NR Policy/Condition/Channel -> Workflow + Davis anomaly detector
+│   ├── *_transformer.py               # See docs/COVERAGE.md for full inventory
+│   ├── _detector_utils.py             # nrql_to_analyzer_query() for analyzer.input
+│   ├── _workflow_utils.py             # tasks_list_to_dict() for Automation API
+│   ├── nrql_converter.py              # NRQLtoDQLConverter (compiler + post-processing + auto-fix + uplift)
+│   ├── converters.py                  # RegexToDPL, Aparse, Rate, CompareWith, Funnel, etc.
+│   ├── metric_transform.py            # Phase 23 MetricTransform plugin protocol + registry
+│   ├── mapping_rules.py               # EntityMapper, VISUALIZATION_TYPE_MAP, CHART_TYPE_MAP
+│   ├── nrql_mapping_rules.py          # METRIC_MAP (235), ATTR_MAP (72), AGG_MAP (90), EVENT_TYPE_MAP (37)
+│   ├── mappings/                      # Per-concern re-exports (metrics, attributes, aggregations, ...)
+│   └── legacy/                        # Gen2 *_v1 transformers (--legacy only)
 │
-├── validators/                        # DQL validation
-│   ├── dql_validator.py              # Structural syntax validator (9 regex rules)
-│   └── dql_fixer.py                  # Auto-fixer (19 fix rules)
+├── validators/
+│   ├── dql_validator.py               # Structural DQL syntax validator
+│   └── dql_fixer.py                   # Auto-fixer (24 fix rules, parity with nrql-engine)
 │
-├── registry/                          # Live environment validation
-│   ├── environment.py                # DTEnvironmentRegistry (metrics, entities, dashboards, mgmt zones, locations)
-│   └── slo_auditor.py               # SLOAuditor (metric extraction, validation, fuzzy search)
+├── registry/
+│   ├── environment.py                 # DTEnvironmentRegistry (metrics, entities, segments, dashboards, locations)
+│   └── slo_auditor.py                 # SLOAuditor
 │
-├── migration/                         # Migration infrastructure
-│   ├── state.py                      # RollbackManifest, EntityIdMap, Checkpoint, IncrementalState
-│   ├── report.py                     # ConversionReport (JSON + HTML)
-│   ├── retry.py                      # FailedEntities (save/load/filter for partial retry)
-│   └── diff.py                       # DiffReport (compare transformed vs live DT)
+├── migration/
+│   ├── state.py                       # RollbackManifest, EntityIdMap, Checkpoint, IncrementalState
+│   ├── report.py                      # ConversionReport (JSON + HTML)
+│   ├── retry.py                       # FailedEntities (partial retry)
+│   ├── diff.py                        # DiffReport (transformed vs live DT)
+│   ├── canary.py                      # Phase 20 — two-wave import with approval gate
+│   └── audit.py                       # Phase 20 — post-migration drift audit
 │
-├── exporters/                         # Config-as-code exporters
-│   ├── monaco.py                     # Monaco v2 YAML project structure
-│   └── terraform.py                  # Terraform HCL with dynatrace provider
+├── exporters/
+│   ├── monaco.py                      # Gen3 Monaco v2 YAML project
+│   ├── terraform.py                   # Gen3 Terraform HCL (dynatrace-oss/dynatrace provider)
+│   └── legacy/                        # monaco_v1.py, terraform_v1.py (--legacy only)
 │
+├── agents/                            # Phase 16 — per-language APM agent orchestrators
+│   └── base.py, java.py, dotnet.py, nodejs.py, python_agent.py, ruby.py, php.py, go_agent.py
+├── tools/nrdb_archive.py              # Phase 17 — pre-decommission NRDB JSONL snapshot
+├── scripts/fetch_dt_schemas.py        # Fetch Settings 2.0 schemas for offline validation
 ├── config/
-│   └── settings.py                   # Pydantic BaseSettings (NR + DT + Migration config)
-│
+│   ├── settings.py                    # Pydantic BaseSettings (NR + DT + Migration + legacy mode)
+│   └── project_links.py               # Single-source URL registry
 ├── utils/
-│   ├── logger.py                     # structlog configuration
-│   ├── auth.py                       # OAuth flow, auth header detection, duration conversion
-│   └── validators.py                 # Config validators (NR key format, DT token format)
+│   ├── logger.py / auth.py / validators.py
+│   └── error_taxonomy.py              # WarningCode / ErrorCode
+├── examples/example_queries.nrql
 │
-├── examples/
-│   └── example_queries.nrql          # Sample NRQL queries for batch testing
-│
-└── tests/                            # 920 unit + 8 integration tests across 29 files
-    ├── conftest.py
-    └── unit/
-        ├── test_compiler.py          # 292 compiler tests (25+ classes)
-        ├── test_cli.py               # CLI command tests (interactive, batch, reference, version)
-        ├── test_transformers.py      # Dashboard, Alert, Notification, Synthetic, SLO, Workload
-        ├── test_infrastructure_transformer.py
-        ├── test_log_parsing_transformer.py
-        ├── test_tag_transformer.py
-        ├── test_drop_rule_transformer.py
-        ├── test_converters.py        # RegexToDPL, Aparse, Rate, CompareWith, Funnel
-        ├── test_mapping_rules.py     # EntityMapper + mapping dicts
-        ├── test_nrql_mapping_rules.py
-        ├── test_dql_validator.py
-        ├── test_dql_fixer.py
-        ├── test_utils_validators.py
-        ├── test_newrelic_client.py    # 24 NR client tests (mocked HTTP)
-        ├── test_dynatrace_client.py   # 29 DT client tests (mocked HTTP)
-        ├── test_settings.py           # 13 config tests
-        ├── test_auth.py               # 14 auth utility tests
-        ├── test_registry.py           # 19 registry tests
-        ├── test_slo_auditor.py        # 14 SLO auditor tests
-        ├── test_migration_state.py    # 21 state management tests
-        ├── test_report.py             # 8 report tests
-        ├── test_retry.py              # 5 retry tests
-        ├── test_diff.py               # 5 diff tests
-        ├── test_monaco_exporter.py    # 8 Monaco exporter tests
-        └── test_terraform_exporter.py # 7 Terraform exporter tests
+└── tests/                             # 1355 collected: 1183 unit + 158 legacy + 14 env-gated integration
+    ├── conftest.py                    # Session-scoped `compiler` fixture
+    ├── unit/                          # 35 files (compiler, CLI, clients incl. wire-level, per-phase, invariants)
+    ├── legacy/                        # 8 files — Gen2 *_v1 regressions
+    └── integration/                   # 5 files — live NR/DT, schema validation, IaC dry-run (gated)
 ```
 
 ## Data Flow
 
 ```
 NR NerdGraph API
-  -> Dashboard JSON (pages, widgets, NRQL queries)
-  -> Alert Policies (conditions, thresholds, channels)
-  -> Synthetic Monitors (type, URL, script, frequency)
-  -> SLOs (objectives, events, time windows)
-  -> Workloads (entity collections, search queries)
-  -> Infrastructure Conditions, Log Rules, Tags, Drop Rules
+  -> Dashboards, alert policies/conditions/channels, synthetics, SLOs, workloads,
+     infra conditions, log rules, tags, drop rules, RUM, cloud/K8s, AIOps, ...
 
                     |
                     v
 
-Transformers (per entity type)
-  DashboardTransformer:
-    NRQL -> NRQLCompiler -> AST -> DQLEmitter -> DQL
-    -> DQLValidator auto-fix (quotes, operators, fields)
-    -> Widget type mapping (viz.line -> DATA_EXPLORER, etc.)
-    -> Layout conversion (NR 12-col grid -> DT pixel bounds)
-  AlertTransformer + NotificationTransformer
-  SyntheticTransformer, SLOTransformer, WorkloadTransformer
-  InfrastructureTransformer, LogParsingTransformer, TagTransformer, DropRuleTransformer
+Transformers (Gen3 default; transformers/legacy/ under --legacy)
+  NRQL -> shorthands -> NRQLCompiler -> AST -> DQLEmitter -> DQL
+       -> DQLFixer auto-fix -> Phase 19 confidence uplift -> MetricTransform plugins
+  Detector emitters -> _detector_utils.nrql_to_analyzer_query()
+  Workflow emitters -> _workflow_utils.tasks_list_to_dict()
 
                     |
                     v
 
-DT APIs
-  -> Documents API v2 (dashboards, fallback to Config API v1)
-  -> Settings API v2 (alerting profiles, management zones, auto-tags)
-  -> Config API v1 (metric events, monitors, SLOs)
+transformed_data.json buckets -> clients/dynatrace_client.py (Gen3 facade)
+  -> Document API        (dashboards, notebooks — multipart POST)
+  -> Automation API      (workflows)
+  -> Settings 2.0        (davis anomaly detectors, SLOs, OpenPipeline, RUM, cloud, ...)
+  -> SKIPPED on import   (synthetic tests, Grail segments, IAM policies — see gen3-apis.md)
+  -> OR export-monaco / export-terraform
 ```
 
-## Entity Mapping
+## Entity Mapping (Gen3 default)
 
-| New Relic | Dynatrace | Transformer |
-|-----------|-----------|-------------|
-| Dashboard (multi-page) | Dashboard (per page) | DashboardTransformer |
-| NRQL Query | DQL Query | NRQLCompiler (292 tested patterns) |
-| Alert Policy | Alerting Profile | AlertTransformer |
-| NRQL Condition | Metric Event | AlertTransformer |
-| Notification Channel | Problem Notification | NotificationTransformer |
-| Ping Monitor | HTTP Monitor | SyntheticTransformer |
-| Browser Monitor | Browser Monitor | SyntheticTransformer |
-| SLO | SLO | SLOTransformer |
-| Workload | Management Zone | WorkloadTransformer |
-| Infra Condition | Metric Event | InfrastructureTransformer |
-| Log Parsing Rule | Processing Rule | LogParsingTransformer |
-| Entity Tags | Auto-Tag Rules | TagTransformer |
-| Drop Rules | Ingest Rules | DropRuleTransformer |
+| New Relic | Dynatrace Gen3 | Transformer |
+|-----------|----------------|-------------|
+| Dashboard (multi-page) | Document API dashboard | DashboardTransformer |
+| NRQL Query | DQL Query | NRQLCompiler / NRQLtoDQLConverter |
+| Alert Policy + NRQL Condition | Workflow + `builtin:davis.anomaly-detectors` | AlertTransformer |
+| Notification Channel | Workflow task | NotificationTransformer (in alert_transformer.py) |
+| Synthetic Monitor | `builtin:synthetic_test` envelope (import SKIPPED) | SyntheticTransformer |
+| SLO | `builtin:monitoring.slo` | SLOTransformer |
+| Workload | `builtin:segment` + `builtin:iam.policy` (import SKIPPED) | WorkloadTransformer |
+| Infra Condition | Davis anomaly detector + Workflow | InfrastructureTransformer |
+| Log Parsing Rule | `builtin:openpipeline.logs.pipelines` (DPL processor) | LogParsingTransformer |
+| Drop Rule | `builtin:openpipeline.logs.pipelines` (drop/removeFields) | DropRuleTransformer |
+| Entity Tags | OpenPipeline enrichment | TagTransformer |
+| Browser / Mobile app | `builtin:rum.web.app-config` / `builtin:mobile-application` | BrowserRUMTransformer / MobileRUMTransformer |
+| 30 more surfaces | see `docs/COVERAGE.md` | — |
+
+Gen2 targets (Alerting Profiles, Metric Events, Management Zones, Auto-Tag Rules, Problem Notifications, Config v1) are only reachable via `--legacy`; see `docs/gen2-only-capabilities.md`.
