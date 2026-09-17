@@ -993,3 +993,72 @@ class TestSeverityFanoutWorkflowsKept:
 
         r = AlertTransformer().transform({"name": "flat", "conditions": []})
         assert len(r.workflows) == 1 and r.workflow is r.workflows[0]
+
+
+class TestWorkflowTriggerAndEnvelopeShape:
+    """D3/D4 (docs/live-validation-2026-09.md): no detectorId in Settings envelopes;
+    workflows use the eventTrigger.triggerConfiguration davis-problem shape and
+    link to detectors by event-name prefix."""
+
+    @staticmethod
+    def _all_outputs():
+        from transformers.aiops_transformer import AIOpsTransformer
+        from transformers.alert_transformer import AlertTransformer
+        from transformers.baseline_alert_transformer import BaselineAlertTransformer
+        from transformers.infrastructure_transformer import InfrastructureTransformer
+        from transformers.key_transaction_transformer import KeyTransactionTransformer
+        from transformers.non_nrql_alert_transformer import NonNRQLAlertTransformer
+
+        detectors, workflows = [], []
+        r = AlertTransformer().transform({"name": "Checkout", "conditions": [
+            {"name": "High errors", "nrql": {"query": "SELECT count(*) FROM TransactionError"},
+             "terms": [{"threshold": 5, "priority": "critical"}]}]})
+        detectors += r.anomaly_detectors
+        workflows += r.workflows
+        r = NonNRQLAlertTransformer().transform({"type": "synthetic", "name": "ping"})
+        detectors += r.anomaly_detectors
+        workflows += r.workflows
+        r = InfrastructureTransformer().transform({"type": "infra_metric", "name": "cpu", "select_value": "cpuPercent"})
+        detectors += r.anomaly_detectors
+        workflows += r.workflows
+        detectors += BaselineAlertTransformer().transform(
+            {"name": "b", "conditionType": "baseline", "nrql": {"query": "SELECT count(*) FROM Transaction"}}
+        ).anomaly_detectors
+        workflows.append(KeyTransactionTransformer().transform({"name": "kt", "applicationName": "svc"}).workflow)
+        r = AIOpsTransformer().transform({"workflows": [{"name": "w"}], "anomalySettings": [{"name": "a"}]})
+        detectors += getattr(r, "anomaly_detectors", []) or []
+        workflows += getattr(r, "workflows", []) or []
+        return detectors, workflows
+
+    def test_detector_envelopes_have_only_settings_fields(self):
+        detectors, _ = self._all_outputs()
+        assert len(detectors) >= 4
+        for det in detectors:
+            assert set(det) == {"schemaId", "scope", "value"}, set(det)
+            name = {p["key"]: p["value"] for p in det["value"]["eventTemplate"]["properties"]}["event.name"]
+            assert name.startswith("[Migrated] ") and " | " in name
+
+    def test_workflows_use_davis_problem_event_trigger(self):
+        _, workflows = self._all_outputs()
+        assert len(workflows) >= 4
+        for wf in workflows:
+            assert not {"private", "migratedFrom", "detectorIds"} & set(wf)
+            config = wf["trigger"]["eventTrigger"]["triggerConfiguration"]
+            assert config["type"] == "davis-problem"
+            assert set(config["value"]) >= {"categories", "customFilter", "entityTags", "entityTagsMatch"}
+            assert isinstance(wf["tasks"], dict)
+
+    def test_alert_workflow_filter_matches_its_detector_event_names(self):
+        import re as _re
+
+        from transformers.alert_transformer import AlertTransformer
+
+        r = AlertTransformer().transform({"name": "Prod \"EU\" alerts", "conditions": [
+            {"name": "c1", "nrql": {"query": "SELECT count(*) FROM Transaction"}}]})
+        custom = r.workflow["trigger"]["eventTrigger"]["triggerConfiguration"]["value"]["customFilter"]
+        pattern = _re.match(r'matchesValue\(event\.name, "(.*)"\)$', custom).group(1)
+        assert pattern.endswith("*")
+        prefix = pattern[:-1].replace('\\"', '"').replace("\\\\", "\\")
+        event_name = {p["key"]: p["value"] for p in
+                      r.anomaly_detectors[0]["value"]["eventTemplate"]["properties"]}["event.name"]
+        assert event_name.startswith(prefix)

@@ -30,7 +30,13 @@ from typing import Any, Dict, List
 
 import structlog
 
-from ._workflow_utils import tasks_list_to_dict
+from ._detector_utils import _get_converter, metric_timeseries_query
+from ._workflow_utils import (
+    MIGRATED_EVENT_PREFIX,
+    davis_problem_trigger,
+    migrated_event_name,
+    tasks_list_to_dict,
+)
 
 logger = structlog.get_logger()
 
@@ -117,8 +123,8 @@ class AIOpsTransformer:
                     "active": True,
                     "description": f"Migrated NR enrichment: {enr.get('name', '')}",
                     "input": {
-                        "query": enr.get("nrql", "")
-                        or "// TODO: translate NRQL enrichment",
+                        # D15: dql-query tasks execute DQL, not NRQL.
+                        "query": self._enrichment_dql(enr.get("nrql", ""), warnings),
                     },
                     "position": {"x": 0, "y": idx + 1},
                 }
@@ -150,18 +156,11 @@ class AIOpsTransformer:
         return {
             "title": f"[NR AIOps → DT] {name}",
             "description": "Migrated from NR AI workflow.",
-            "private": False,
-            "trigger": {
-                "event": {
-                    "active": True,
-                    "config": {
-                        "davis_event": {
-                            "eventType": "CUSTOM_ALERT",
-                            "anyEventMatches": True,
-                        }
-                    },
-                }
-            },
+            "isPrivate": False,
+            # NR AI workflows route issues from any policy: match every migrated detector.
+            "trigger": davis_problem_trigger(
+                f'matchesValue(event.name, "{MIGRATED_EVENT_PREFIX} *")'
+            ),
             # Gen3 Automation API requires `tasks` as a dict keyed by task id.
             "tasks": tasks_list_to_dict(tasks),
         }
@@ -180,19 +179,15 @@ class AIOpsTransformer:
         synthesized from the NR metricKey + aggregation.
         """
         name = setting.get("name", "anomaly-setting")
-        detector_id = "".join(
-            c if c.isalnum() or c == "-" else "-"
-            for c in f"davis-aiops-{name}".lower()
-        )[:180]
         metric_key = setting.get("metricKey", "builtin:host.cpu.usage")
         agg = setting.get("aggregation", "AVG").lower()
         sensitivity = float(setting.get("sensitivity", 3.0))
-        dql_query = f"timeseries {agg}({metric_key})"
+        # D2: classic metric keys are invalid DQL; map to Grail keys.
+        dql_query = metric_timeseries_query(metric_key, agg=agg)
 
         return {
             "schemaId": "builtin:davis.anomaly-detectors",
             "scope": "environment",
-            "detectorId": detector_id,
             "value": {
                 "enabled": bool(setting.get("enabled", True)),
                 "title": f"[NR AIOps] {name}",
@@ -218,12 +213,26 @@ class AIOpsTransformer:
                 "eventTemplate": {
                     "properties": [
                         {"key": "event.type", "value": "CUSTOM_ALERT"},
-                        {"key": "event.name", "value": f"[NR AIOps] {name}"},
+                        {"key": "event.name", "value": migrated_event_name("AIOps", name)},
                         {"key": "migrated.from", "value": "newrelic-aiops"},
                     ],
                 },
             },
         }
+
+    @staticmethod
+    def _enrichment_dql(nrql: str, warnings: List[str]) -> str:
+        if not nrql.strip():
+            return "// TODO: add enrichment DQL"
+        try:
+            result = _get_converter().convert(nrql)
+        except Exception:  # noqa: BLE001
+            result = None
+        if result is not None and result.success and (result.confidence or "").upper() in ("HIGH", "MEDIUM"):
+            return result.dql
+        warnings.append(f"AIOps enrichment NRQL could not be converted to DQL: {nrql[:80]}")
+        one_line = " ".join(nrql.split())
+        return f"// UNCONVERTED NRQL: {one_line}\n// TODO: rewrite as DQL"
 
     def transform_all(
         self, configs: List[Dict[str, Any]]

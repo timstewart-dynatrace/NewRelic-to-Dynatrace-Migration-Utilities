@@ -25,7 +25,7 @@ from typing import Any, Dict, List, Optional
 import structlog
 
 from ._slo_utils import build_platform_slo, latency_indicator
-from ._workflow_utils import tasks_list_to_dict
+from ._workflow_utils import davis_problem_trigger, tasks_list_to_dict
 
 logger = structlog.get_logger()
 
@@ -97,25 +97,15 @@ class KeyTransactionTransformer:
                 },
             }
 
-            # --- Workflow — Davis-event trigger filtered to this KT's tag ---
-            detector_id = f"davis-kt-{slug}"
+            # --- Workflow — Davis-problem trigger filtered to this KT's entity tag ---
             workflow = {
                 "title": f"[Migrated KT] {name}",
-                "description": f"Workflow for Key Transaction '{name}'.",
-                "private": False,
-                "trigger": {
-                    "event": {
-                        "active": True,
-                        "config": {
-                            "davis_event": {
-                                "eventType": "CUSTOM_ALERT",
-                                "entityTagsMatch": "all",
-                                "entityTags": {"key_transaction": slug},
-                                "anyEventMatches": True,
-                            }
-                        },
-                    }
-                },
+                "description": (
+                    f"Workflow for Key Transaction '{name}' "
+                    f"(apdex T {apdex_t}s; migrated from newrelic.key_transaction)."
+                ),
+                "isPrivate": False,
+                "trigger": davis_problem_trigger(entity_tags={"key_transaction": slug}),
                 # Gen3 Automation API requires `tasks` as a dict keyed by task id.
                 "tasks": tasks_list_to_dict([
                     {
@@ -130,14 +120,6 @@ class KeyTransactionTransformer:
                         "position": {"x": 0, "y": 1},
                     }
                 ]),
-                # Metadata links the three artifacts so post-migration audit
-                # can identify which SLO/enrichment/workflow are a set.
-                "migratedFrom": {
-                    "type": "newrelic.key_transaction",
-                    "name": name,
-                    "detectorId": detector_id,
-                    "apdexT": apdex_t,
-                },
             }
 
             if not service_name:

@@ -62,14 +62,18 @@ class TestNonNRQLAlert:
         r = NonNRQLAlertTransformer().transform({"type": "unknown", "name": "x"})
         assert not r.success
 
-    def test_workflow_trigger_targets_detector_id(self):
+    def test_workflow_trigger_links_detector_by_event_name(self):
         r = NonNRQLAlertTransformer().transform({
             "type": "infra", "name": "cpu-hi",
             "terms": [{"threshold": 90}],
         })
-        det_id = r.anomaly_detectors[0]["detectorId"]
-        trigger = r.workflows[0]["trigger"]["event"]["config"]["davis_event"]
-        assert trigger["detectorIds"] == [det_id]
+        det = r.anomaly_detectors[0]
+        assert "detectorId" not in det
+        props = {p["key"]: p["value"] for p in det["value"]["eventTemplate"]["properties"]}
+        assert props["event.name"] == "[Migrated] cpu-hi | infra"
+        config = r.workflows[0]["trigger"]["eventTrigger"]["triggerConfiguration"]
+        assert config["type"] == "davis-problem"
+        assert config["value"]["customFilter"] == 'matchesValue(event.name, "[Migrated] cpu-hi | *")'
 
 
 # ---------------------------------------------------------------------------

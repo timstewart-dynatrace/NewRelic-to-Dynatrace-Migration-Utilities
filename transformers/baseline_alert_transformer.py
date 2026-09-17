@@ -17,6 +17,7 @@ from typing import Any, Dict, List
 import structlog
 
 from ._detector_utils import nrql_to_analyzer_query
+from ._workflow_utils import migrated_event_name
 
 logger = structlog.get_logger()
 
@@ -82,10 +83,6 @@ class BaselineAlertTransformer:
             # either way.
             dql_query = nrql_to_analyzer_query(nrql, warnings=warnings)
 
-            detector_id = f"davis-baseline-{name}".lower()
-            detector_id = "".join(
-                c if c.isalnum() or c == "-" else "-" for c in detector_id
-            )[:180]
             # New builtin:davis.anomaly-detectors schema (v1.0.14, 2026-04-20):
             # top level has {enabled,title,description,source,executionSettings,
             # analyzer{name,input[{key,value}]},eventTemplate{properties[{...}]}}
@@ -114,7 +111,6 @@ class BaselineAlertTransformer:
             detector = {
                 "schemaId": "builtin:davis.anomaly-detectors",
                 "scope": "environment",
-                "detectorId": detector_id,
                 "value": {
                     "enabled": bool(nr_condition.get("enabled", True)),
                     "title": f"[Migrated baseline] {name}",
@@ -134,7 +130,7 @@ class BaselineAlertTransformer:
                     "eventTemplate": {
                         "properties": [
                             {"key": "event.type", "value": "CUSTOM_ALERT"},
-                            {"key": "event.name", "value": f"[Migrated baseline] {name}"},
+                            {"key": "event.name", "value": migrated_event_name(name, "baseline")},
                             {"key": "migrated.from", "value": "newrelic"},
                             {"key": "source.kind", "value": kind},
                             {"key": "original.nrql", "value": nrql or "(none provided)"},

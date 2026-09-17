@@ -46,6 +46,26 @@ Subtle gotcha the transport already handles: `HttpTransport.request(..., files=.
 
 All five workflow emitters (`alert_transformer`, `aiops_transformer`, `infrastructure_transformer`, `non_nrql_alert_transformer`, `key_transaction_transformer`) already call it. Any new workflow emitter must too.
 
+### 4a. Workflow trigger shape and detector linkage [MUST]
+
+Verified against live workflows (docs/live-validation-2026-09.md, D3/D4). The trigger is:
+
+```
+trigger.eventTrigger {
+  isActive,
+  triggerConfiguration: { type: "davis-problem" | "davis-event" | "event", value: {...} }
+}
+```
+
+There is no `trigger.event.config.davis_event`, no `detectorIds`, and no top-level `private` / `migratedFrom` on a workflow (`isPrivate` is the field). Settings envelopes carry only `schemaId`, `scope`, `value` — no `detectorId`.
+
+Migrated alert workflows use `davis-problem` (`_workflow_utils.davis_problem_trigger`). Problem records do not carry detector `eventTemplate.properties`, but a problem's `event.name` equals its detector event's name, so linkage is by name:
+
+- detectors set `event.name` = `migrated_event_name(group, item)` → `[Migrated] <policy> | <condition>`
+- the workflow's `customFilter` = `migrated_event_filter(group)` → `matchesValue(event.name, "[Migrated] <policy> | *")`
+
+Workflow `customFilter` is an OpenPipeline matcher: `startsWith()` is not enabled and `*` cannot be escaped (group names have `*` replaced). Validate new filters with `dtctl verify openpipeline-matcher`.
+
 ## 5. `analyzer.input[query].value` is DQL, server-validated [MUST]
 
 Passing raw NRQL produces `400 "Invalid DQL query. 'FROM' isn't allowed here."` Use `transformers._detector_utils.nrql_to_analyzer_query(nrql, warnings=...)`:
@@ -57,7 +77,7 @@ Verified live (`dtctl exec analyzer`, docs/live-validation-2026-09.md): `summari
 
 Span fields verified on OneAgent data: service identity is `dt.service.name` (`service.name` is empty on spans; logs keep `service.name`), and failures are `request.is_failed` (`otel.status_code` is unset).
 
-## 6. `builtin:davis.anomaly-detectors` canonical shape (v1.0.14) [MUST]
+## 6. `builtin:davis.anomaly-detectors` canonical shape (v1.0.14; live tenants report v1.0.16, which adds `executionSettings.delay`) [MUST]
 
 All five emitters (`alert_transformer`, `aiops_transformer`, `baseline_alert_transformer`, `non_nrql_alert_transformer`, `infrastructure_transformer`) must emit:
 
@@ -131,7 +151,7 @@ grep -rnE 'dt\.entity\.|entityName\(|entityAttr\(|classicEntitySelector' compile
 
 Source: `dt-alerting` skill. Accepted by the API today in their current form, so these are improvements, not correctness fixes. Change them together and verify against a live Gen3 tenant first.
 
-- **Workflow triggers on problems, not Davis events.** The workflow emitters use `trigger.event.config.davis_event`; Dynatrace recommends a problem trigger (one notification per grouped incident). See `/Users/Shared/GitHub/PROJECTS/CLAUDE/dynatrace-for-ai/skills/dt-alerting/references/workflow-notifications.md`.
+- ~~Workflow triggers on problems, not Davis events.~~ Done — see §4a.
 - **Detector input key:** `query.expression` is preferred over `query` for new configs (both accepted).
 - **Routing/grouping:** set `dt.alert_group` (and `dt.source_entity` where known) in `eventTemplate.properties`.
 - **Dashboard content `version`:** `dashboard_transformer.py` emits `13`; current Dynatrace examples use `21`.

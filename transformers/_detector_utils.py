@@ -268,8 +268,10 @@ GRAIL_METRIC_KEYS = {
 }
 
 
-def metric_timeseries_query(metric_key: str, warnings: Optional[List[str]] = None) -> str:
-    """``timeseries avg(<grail key>)`` for a metric key, or the inert fallback."""
+def metric_timeseries_query(
+    metric_key: str, warnings: Optional[List[str]] = None, agg: str = "avg"
+) -> str:
+    """``timeseries <agg>(<grail key>)`` for a metric key, or the inert fallback."""
     grail_key = GRAIL_METRIC_KEYS.get(metric_key, metric_key)
     if grail_key.startswith("builtin:") or not grail_key.startswith("dt."):
         if warnings is not None:
@@ -278,7 +280,8 @@ def metric_timeseries_query(metric_key: str, warnings: Optional[List[str]] = Non
                 "emitted with an inert placeholder query for operator review."
             )
         return f"// UNMAPPED METRIC: {metric_key}\n{FALLBACK_QUERY}"
-    return f"timeseries avg({grail_key})"
+    agg = agg if agg in ("avg", "sum", "min", "max", "count") else "avg"
+    return f"timeseries {agg}({grail_key})"
 
 
 # NR term operator -> StaticThreshold analyzer alertCondition.

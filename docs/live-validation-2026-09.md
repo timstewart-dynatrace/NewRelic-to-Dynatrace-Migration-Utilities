@@ -81,6 +81,22 @@ use `dataObject: "dt.entity.service"`. This gives a verified Gen3 form for
 ### Dashboards
 Live Document API dashboards use content `version` 20–21; `dashboard_transformer.py` emits 13.
 
+### Additional defects found while fixing (all fixed on this branch)
+| # | Finding | Evidence |
+|---|---|---|
+| D11 | Fallback placeholder `timeseries count()` is invalid DQL | analyzer: "mandatory parameter is missing: metricKey" |
+| D12 | `otel.status_code` unset on OneAgent spans; failures are `request.is_failed` | 0 of 39,051 spans had `otel.status_code`; 789 had `request.is_failed == true` |
+| D13 | Mixed AND/OR conditions emitted without parentheses | code review; `(a OR b) AND c` became `a or b and c` |
+| D14 | Segment groups used `type = X OR id = …`, matching every node of the type | code review |
+| D15 | AIOps enrichment `dql-query` tasks contained raw NRQL | code review |
+
+### Workflow linkage evidence
+Problem records carry only standard fields (`event.name`, `event.category`, `tags`,
+`labels.alerting_profile`, …) — not detector `eventTemplate.properties`. Over 7 days a
+problem's `event.name` equalled its contributing `CUSTOM_ALERT` event's name 466/466.
+`matchesValue(event.name, "<prefix>*")` validates as a workflow matcher; `startsWith()` is
+not enabled, and `\*` is rejected. No events on the tenant use `dt.alert_group`.
+
 ## Still requires a write test (Phase 2)
 Settings create of a corrected detector, workflow create with the verified trigger,
 Platform SLO create + delete (`optimisticLockingVersion` query-param name), dashboard

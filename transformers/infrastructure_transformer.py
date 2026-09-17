@@ -22,7 +22,12 @@ from typing import Any, Dict, List, Optional
 import structlog
 
 from ._detector_utils import alert_condition_for, metric_timeseries_query
-from ._workflow_utils import tasks_list_to_dict
+from ._workflow_utils import (
+    davis_problem_trigger,
+    migrated_event_filter,
+    migrated_event_name,
+    tasks_list_to_dict,
+)
 
 logger = structlog.get_logger()
 
@@ -110,8 +115,6 @@ class InfrastructureTransformer:
         enabled: bool = True,
         warnings: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
-        detector_id = f"davis-infra-{name}".lower()
-        detector_id = "".join(c if c.isalnum() or c == "-" else "-" for c in detector_id)[:180]
         # New builtin:davis.anomaly-detectors schema (v1.0.14, 2026-04-20):
         # top level is {enabled,title,description,source,executionSettings,
         # analyzer{name,input[{key,value}]},eventTemplate{properties}}.
@@ -121,7 +124,6 @@ class InfrastructureTransformer:
         return {
             "schemaId": "builtin:davis.anomaly-detectors",
             "scope": "environment",
-            "detectorId": detector_id,
             "value": {
                 "enabled": enabled,
                 "title": f"[Migrated] {name}",
@@ -146,7 +148,7 @@ class InfrastructureTransformer:
                 "eventTemplate": {
                     "properties": [
                         {"key": "event.type", "value": "RESOURCE_CONTENTION"},
-                        {"key": "event.name", "value": f"[Migrated] {name}"},
+                        {"key": "event.name", "value": migrated_event_name(name, "infra")},
                         {"key": "source.condition", "value": name},
                         {"key": "migrated.from", "value": "newrelic"},
                     ],
@@ -234,21 +236,9 @@ class InfrastructureTransformer:
     def _workflow_for_detector(detector: Dict[str, Any], name: str) -> Dict[str, Any]:
         return {
             "title": f"[Migrated infra] {name}",
-            "description": f"Workflow shell for Davis anomaly detector '{detector['detectorId']}'.",
-            "private": False,
+            "description": f"Workflow shell for Davis anomaly detector '{detector['value']['title']}'.",
             "isPrivate": False,
-            "trigger": {
-                "event": {
-                    "active": True,
-                    "config": {
-                        "davis_event": {
-                            "eventType": "RESOURCE_CONTENTION",
-                            "detectorIds": [detector["detectorId"]],
-                            "anyEventMatches": True,
-                        }
-                    },
-                }
-            },
+            "trigger": davis_problem_trigger(migrated_event_filter(name)),
             # Gen3 Automation API requires `tasks` as a dict keyed by task id.
             "tasks": tasks_list_to_dict([
                 {

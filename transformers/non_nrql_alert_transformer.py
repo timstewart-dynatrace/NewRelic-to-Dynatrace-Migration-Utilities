@@ -24,7 +24,12 @@ from typing import Any, Dict, List
 import structlog
 
 from ._detector_utils import alert_condition_for, metric_timeseries_query, sample_settings
-from ._workflow_utils import tasks_list_to_dict
+from ._workflow_utils import (
+    davis_problem_trigger,
+    migrated_event_filter,
+    migrated_event_name,
+    tasks_list_to_dict,
+)
 
 logger = structlog.get_logger()
 
@@ -133,14 +138,9 @@ class NonNRQLAlertTransformer:
                     "supports minLocationsFailing in the target tenant."
                 )
 
-            detector_id = f"davis-{ctype}-{name}".lower()
-            detector_id = "".join(
-                c if c.isalnum() or c == "-" else "-" for c in detector_id
-            )[:180]
             detector = {
                 "schemaId": "builtin:davis.anomaly-detectors",
                 "scope": "environment",
-                "detectorId": detector_id,
                 "value": {
                     "enabled": bool(nr_condition.get("enabled", True)),
                     "title": f"[Migrated] {name}",
@@ -157,7 +157,7 @@ class NonNRQLAlertTransformer:
                     "eventTemplate": {
                         "properties": [
                             {"key": "event.type", "value": "CUSTOM_ALERT"},
-                            {"key": "event.name", "value": f"[Migrated] {name}"},
+                            {"key": "event.name", "value": migrated_event_name(name, ctype)},
                             {"key": "source.condition", "value": name},
                             {"key": "source.type", "value": ctype},
                             {"key": "migrated.from", "value": "newrelic"},
@@ -169,19 +169,8 @@ class NonNRQLAlertTransformer:
             workflow = {
                 "title": f"[Migrated {ctype}] {name}",
                 "description": note,
-                "private": False,
-                "trigger": {
-                    "event": {
-                        "active": True,
-                        "config": {
-                            "davis_event": {
-                                "eventType": "CUSTOM_ALERT",
-                                "detectorIds": [detector_id],
-                                "anyEventMatches": True,
-                            }
-                        },
-                    }
-                },
+                "isPrivate": False,
+                "trigger": davis_problem_trigger(migrated_event_filter(name)),
                 # Gen3 Automation API requires `tasks` as a dict keyed by task id.
                 "tasks": tasks_list_to_dict([
                     {

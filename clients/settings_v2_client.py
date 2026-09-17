@@ -109,7 +109,8 @@ class SettingsV2Client:
     # ------------------------------------------------------------------
 
     def _import(self, envelope: Dict[str, Any], entity_type: str) -> ImportResult:
-        name = envelope.get("value", {}).get("name", envelope.get("detectorId", "Unknown"))
+        value = envelope.get("value", {})
+        name = value.get("name") or value.get("title") or "Unknown"
         response = self.create_envelope(envelope)
         if response.is_success and isinstance(response.data, list) and response.data:
             return ImportResult(

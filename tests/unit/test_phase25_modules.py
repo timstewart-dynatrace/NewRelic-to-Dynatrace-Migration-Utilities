@@ -257,7 +257,11 @@ class TestSeverityLadderFanout:
                 {"severityLevel": "ERROR", "delayInMinutes": 3},
             ],
         })
-        # The .workflow is the first from the fanout list.
-        # It should have an eventProperties severity filter.
-        trigger = r.workflow["trigger"]["event"]["config"]["davis_event"]
-        assert trigger.get("eventProperties", {}).get("event.severity") == "AVAILABILITY"
+        # The .workflow is the first from the fanout list; its davis-problem
+        # trigger restricts categories to the severity and links by policy name.
+        config = r.workflow["trigger"]["eventTrigger"]["triggerConfiguration"]
+        assert config["type"] == "davis-problem"
+        assert config["value"]["categories"]["availability"] is True
+        assert config["value"]["categories"]["error"] is False
+        assert config["value"]["customFilter"] == 'matchesValue(event.name, "[Migrated] filter-test | *")'
+        assert "migratedFrom" not in r.workflow and "private" not in r.workflow

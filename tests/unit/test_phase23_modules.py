@@ -39,9 +39,9 @@ class TestKeyTransaction:
         assert r.enrichment_processor["schemaId"] == (
             "builtin:openpipeline.logs.pipelines"
         )
-        assert r.workflow["trigger"]["event"]["config"]["davis_event"][
-            "entityTags"
-        ] == {"key_transaction": "checkout-flow"}
+        config = r.workflow["trigger"]["eventTrigger"]["triggerConfiguration"]
+        assert config["type"] == "davis-problem"
+        assert config["value"]["entityTags"] == {"key_transaction": "checkout-flow"}
 
     def test_slo_indicator_uses_duration_threshold(self):
         r = KeyTransactionTransformer().transform({
@@ -64,7 +64,9 @@ class TestKeyTransaction:
         r = KeyTransactionTransformer().transform({
             "name": "X", "applicationName": "svc",
         })
-        assert r.workflow["migratedFrom"]["type"] == "newrelic.key_transaction"
+        # Automation workflows have no migratedFrom field; provenance lives in description.
+        assert "migratedFrom" not in r.workflow
+        assert "newrelic.key_transaction" in r.workflow["description"]
 
 
 # ---------------------------------------------------------------------------
