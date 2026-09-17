@@ -22,6 +22,7 @@ from clients.automation_client import AutomationClient
 from clients.document_client import DocumentClient
 from clients.dynatrace_client import DynatraceClient
 from clients.settings_v2_client import SettingsV2Client
+from transformers._detector_utils import FALLBACK_QUERY, ensure_timeseries
 
 ENV = "https://abc12345.live.dynatrace.com"
 
@@ -795,7 +796,8 @@ class TestAnalyzerInputQueryIsDql:
         assert "gibberish" in out and "NoSuchEvent" in out
         # Must still end with a valid DQL placeholder so the payload
         # server-validates.
-        assert "timeseries count()" in out
+        assert out.endswith(FALLBACK_QUERY)
+        assert "timeseries count()" not in out  # D11: count() without metric is invalid
 
 
 class TestPlatformSloWire:
@@ -880,3 +882,39 @@ class TestPlatformSloWire:
             "?optimisticLockingVersion=v7"
         )
         assert result.is_success
+
+
+class TestDetectorQueryIsTimeseries:
+    """D1/D11 (docs/live-validation-2026-09.md): analyzers require timeseries results.
+    Each expected output below was accepted by the live StaticThreshold analyzer."""
+
+    def test_summarize_becomes_make_timeseries(self):
+        dql = 'fetch spans\n| filter dt.service.name == "x"\n| summarize avg(duration), by: {span.name}'
+        assert ensure_timeseries(dql) == (
+            'fetch spans\n| filter dt.service.name == "x"\n| makeTimeseries avg(duration), by: {span.name}'
+        )
+
+    def test_percentage_arithmetic_is_split_into_series(self):
+        dql = "fetch spans\n| summarize (100.0 * countIf(request.is_failed == true) / count())"
+        assert ensure_timeseries(dql) == (
+            "fetch spans\n| makeTimeseries { nr_agg0 = countIf(request.is_failed == true), nr_agg1 = count() }"
+            "\n| fieldsAdd value0 = (100.0 * nr_agg0[] / nr_agg1[])\n| fieldsRemove nr_agg0, nr_agg1"
+        )
+
+    def test_comments_and_timeseries_pass_through(self):
+        dql = "// Original NRQL: x\ntimeseries avg(dt.host.cpu.usage), by: {host.name}"
+        assert ensure_timeseries(dql) == dql
+
+    def test_non_timeseries_shapes_are_rejected(self):
+        assert ensure_timeseries("smartscapeNodes K8S_POD | fields name") is None
+        assert ensure_timeseries("fetch spans\n| summarize count()\n| fieldsAdd x = 1") is None
+        assert ensure_timeseries("fetch spans\n| fields span.name") is None
+
+    def test_detector_query_never_summarize(self):
+        from transformers._detector_utils import nrql_to_analyzer_query
+
+        for nrql in ("SELECT count(*) FROM Transaction WHERE appName = 'a'",
+                     "SELECT latest(isReady) FROM K8sDeploymentSample", ""):
+            code = "\n".join(l for l in nrql_to_analyzer_query(nrql).splitlines() if not l.startswith("//"))
+            assert code.startswith(("timeseries", "fetch")) and "summarize" not in code
+            assert "makeTimeseries" in code or code.startswith("timeseries")
