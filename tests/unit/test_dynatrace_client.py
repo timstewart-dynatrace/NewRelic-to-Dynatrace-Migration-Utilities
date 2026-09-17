@@ -918,3 +918,56 @@ class TestDetectorQueryIsTimeseries:
             code = "\n".join(l for l in nrql_to_analyzer_query(nrql).splitlines() if not l.startswith("//"))
             assert code.startswith(("timeseries", "fetch")) and "summarize" not in code
             assert "makeTimeseries" in code or code.startswith("timeseries")
+
+
+class TestNonNrqlDetectorQueries:
+    """D2/D6 (docs/live-validation-2026-09.md): Grail metric keys, operator + occurrences."""
+
+    @staticmethod
+    def _inputs(detector):
+        return {i["key"]: i["value"] for i in detector["value"]["analyzer"]["input"]}
+
+    def test_no_classic_builtin_keys_in_any_detector_query(self):
+        from transformers.infrastructure_transformer import InfrastructureTransformer
+        from transformers.non_nrql_alert_transformer import _CONDITION_METRIC_MAP, NonNRQLAlertTransformer
+
+        detectors = []
+        for ctype in _CONDITION_METRIC_MAP:
+            detectors += NonNRQLAlertTransformer().transform({"type": ctype, "name": ctype}).anomaly_detectors
+        for cond in (
+            {"type": "host_not_reporting", "name": "h"},
+            {"type": "process_not_running", "name": "p"},
+            {"type": "infra_metric", "name": "m", "select_value": "diskUsedPercent"},
+            {"type": "infra_metric", "name": "u", "select_value": "someUnknownMetric"},
+        ):
+            detectors += InfrastructureTransformer().transform(cond).anomaly_detectors
+        assert detectors
+        for det in detectors:
+            code = "\n".join(
+                l for l in self._inputs(det)["query"].splitlines() if not l.startswith("//")
+            )
+            assert "builtin:" not in code, code
+            assert code.startswith("timeseries ")
+
+    def test_operator_and_at_least_once_are_honoured(self):
+        from transformers.non_nrql_alert_transformer import NonNRQLAlertTransformer
+
+        det = NonNRQLAlertTransformer().transform({
+            "type": "synthetic", "name": "ping",
+            "terms": [{"priority": "critical", "threshold": 95, "operator": "ABOVE",
+                       "thresholdDuration": 600, "thresholdOccurrences": "AT_LEAST_ONCE"}],
+        }).anomaly_detectors[0]
+        inputs = self._inputs(det)
+        assert inputs["alertCondition"] == "ABOVE"  # overrides the synthetic default BELOW
+        assert (inputs["violatingSamples"], inputs["slidingWindow"]) == ("1", "10")
+        assert inputs["query"] == "timeseries avg(dt.synthetic.http.availability)"
+
+    def test_unsupported_operator_warns(self):
+        from transformers.infrastructure_transformer import InfrastructureTransformer
+
+        r = InfrastructureTransformer().transform({
+            "type": "infra_metric", "name": "m", "select_value": "cpuPercent", "comparison": "equal",
+            "criticalThreshold": {"value": 90, "durationMinutes": 5},
+        })
+        assert self._inputs(r.anomaly_detectors[0])["alertCondition"] == "ABOVE"
+        assert any("not supported" in w for w in r.warnings)

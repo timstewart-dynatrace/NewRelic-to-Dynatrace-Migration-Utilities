@@ -17,10 +17,11 @@ Legacy (Config v1 Metric Event) behavior is preserved in
 """
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import structlog
 
+from ._detector_utils import alert_condition_for, metric_timeseries_query
 from ._workflow_utils import tasks_list_to_dict
 
 logger = structlog.get_logger()
@@ -39,7 +40,7 @@ INFRA_METRIC_MAP: Dict[str, Any] = {
     },
 }
 
-OPERATOR_MAP = {"above": "ABOVE", "below": "BELOW", "equal": "EQUALS"}
+OPERATOR_MAP = {"above": "ABOVE", "below": "BELOW"}
 
 
 @dataclass
@@ -107,6 +108,7 @@ class InfrastructureTransformer:
         threshold: float,
         samples: int,
         enabled: bool = True,
+        warnings: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         detector_id = f"davis-infra-{name}".lower()
         detector_id = "".join(c if c.isalnum() or c == "-" else "-" for c in detector_id)[:180]
@@ -132,7 +134,7 @@ class InfrastructureTransformer:
                         ".StaticThresholdAnomalyDetectionAnalyzer"
                     ),
                     "input": [
-                        {"key": "query", "value": f"timeseries avg({metric_key})"},
+                        {"key": "query", "value": metric_timeseries_query(metric_key, warnings)},
                         {"key": "threshold", "value": str(threshold)},
                         {"key": "alertCondition", "value": alert_condition},
                         {"key": "alertOnMissingData", "value": alert_on_missing},
@@ -195,15 +197,19 @@ class InfrastructureTransformer:
         if not metric_id:
             warnings.append(
                 f"Metric '{select_value}' from '{event_type}' has no direct mapping. "
-                "Using placeholder metric key."
+                "Detector uses an inert placeholder query."
             )
             metric_id = f"builtin:host.{select_value}"
 
         critical = condition.get("criticalThreshold", {}) or {}
+        condition_value = OPERATOR_MAP.get(str(comparison).lower())
+        if condition_value is None:
+            condition_value = alert_condition_for(comparison, "ABOVE", warnings)
         return self._base_detector(
             name=name,
             metric_key=metric_id,
-            alert_condition=OPERATOR_MAP.get(comparison, "ABOVE"),
+            alert_condition=condition_value,
+            warnings=warnings,
             threshold=float(critical.get("value", 0)),
             samples=max(1, int(critical.get("durationMinutes", 5))),
             enabled=bool(condition.get("enabled", True)),

@@ -244,3 +244,81 @@ def ensure_timeseries(dql: str) -> Optional[str]:
         out.append("fieldsRemove " + ", ".join(temps))
     query = out[0] + "".join(f"\n| {s}" for s in out[1:])
     return "\n".join(comments + [query])
+
+
+# ---------------------------------------------------------------------------
+# Metric-key and condition helpers for non-NRQL / infrastructure detectors
+# ---------------------------------------------------------------------------
+
+# Classic metric-selector keys are not valid in DQL (D2: "There isn't a parameter
+# builtin."). Grail equivalents below were confirmed to exist on a live tenant
+# via `metrics | filter …` (docs/live-validation-2026-09.md).
+GRAIL_METRIC_KEYS = {
+    "builtin:host.cpu.usage": "dt.host.cpu.usage",
+    "builtin:host.mem.usage": "dt.host.memory.usage",
+    "builtin:host.disk.usedPct": "dt.host.disk.used.percent",
+    "builtin:host.cpu.load": "dt.host.cpu.load",
+    "builtin:host.net.bytesRx": "dt.host.net.nic.bytes_rx",
+    "builtin:host.net.bytesTx": "dt.host.net.nic.bytes_tx",
+    "builtin:host.availability": "dt.host.availability",
+    "builtin:tech.generic.process.count": "dt.process.count",
+    "builtin:synthetic.http.availability.location.total": "dt.synthetic.http.availability",
+    "builtin:service.response.time": "dt.service.request.response_time",
+    "builtin:apps.web.actionCount.osAndGeo": "dt.frontend.request.count",
+}
+
+
+def metric_timeseries_query(metric_key: str, warnings: Optional[List[str]] = None) -> str:
+    """``timeseries avg(<grail key>)`` for a metric key, or the inert fallback."""
+    grail_key = GRAIL_METRIC_KEYS.get(metric_key, metric_key)
+    if grail_key.startswith("builtin:") or not grail_key.startswith("dt."):
+        if warnings is not None:
+            warnings.append(
+                f"Metric '{metric_key}' has no verified Grail metric key; detector "
+                "emitted with an inert placeholder query for operator review."
+            )
+        return f"// UNMAPPED METRIC: {metric_key}\n{FALLBACK_QUERY}"
+    return f"timeseries avg({grail_key})"
+
+
+# NR term operator -> StaticThreshold analyzer alertCondition.
+_OPERATOR_TO_CONDITION = {
+    "ABOVE": "ABOVE",
+    "ABOVE_OR_EQUALS": "ABOVE",
+    "BELOW": "BELOW",
+    "BELOW_OR_EQUALS": "BELOW",
+}
+
+
+def alert_condition_for(
+    operator: Optional[str], default: str, warnings: Optional[List[str]] = None
+) -> str:
+    """Map an NR term operator; unsupported operators keep ``default`` with a warning."""
+    if not operator:
+        return default
+    op = str(operator).upper()
+    if op in _OPERATOR_TO_CONDITION:
+        if op.endswith("_OR_EQUALS") and warnings is not None:
+            warnings.append(
+                f"NR operator {op} mapped to {_OPERATOR_TO_CONDITION[op]} "
+                "(the analyzer has no inclusive comparison); adjust the threshold if needed."
+            )
+        return _OPERATOR_TO_CONDITION[op]
+    if warnings is not None:
+        warnings.append(
+            f"NR operator '{operator}' is not supported by the static threshold analyzer; "
+            f"using {default}."
+        )
+    return default
+
+
+def sample_settings(duration_seconds: int, occurrences: Optional[str]) -> Tuple[int, int]:
+    """(violatingSamples, slidingWindow) for an NR threshold duration + occurrence mode.
+
+    ``ALL`` (default): every 1-minute sample in the window must violate.
+    ``AT_LEAST_ONCE``: a single violating sample in the window is enough.
+    """
+    window = max(1, int(duration_seconds) // 60)
+    if str(occurrences or "").upper() == "AT_LEAST_ONCE":
+        return 1, window
+    return window, window

@@ -23,6 +23,7 @@ from typing import Any, Dict, List
 
 import structlog
 
+from ._detector_utils import alert_condition_for, metric_timeseries_query, sample_settings
 from ._workflow_utils import tasks_list_to_dict
 
 logger = structlog.get_logger()
@@ -94,15 +95,18 @@ class NonNRQLAlertTransformer:
 
             terms = nr_condition.get("terms", []) or []
             threshold = 0.0
-            samples = 3
+            violating, window = 3, 3
             if terms:
                 critical = next(
                     (t for t in terms if str(t.get("priority", "")).lower() == "critical"),
                     terms[0],
                 )
                 threshold = float(critical.get("threshold", 0))
-                duration_seconds = int(critical.get("thresholdDuration", 300))
-                samples = max(1, duration_seconds // 60)
+                alert_cond = alert_condition_for(critical.get("operator"), alert_cond, warnings)
+                violating, window = sample_settings(
+                    int(critical.get("thresholdDuration", 300)),
+                    critical.get("thresholdOccurrences"),
+                )
 
             # New builtin:davis.anomaly-detectors schema (v1.0.14, 2026-04-20):
             # top level is {enabled,title,description,source,executionSettings,
@@ -110,12 +114,12 @@ class NonNRQLAlertTransformer:
             # All thresholds/conditions/samples go into analyzer.input as
             # stringified key/value pairs.
             analyzer_input = [
-                {"key": "query", "value": f"timeseries avg({metric_key})"},
+                {"key": "query", "value": metric_timeseries_query(metric_key, warnings)},
                 {"key": "threshold", "value": str(threshold)},
                 {"key": "alertCondition", "value": alert_cond},
                 {"key": "alertOnMissingData", "value": "false"},
-                {"key": "violatingSamples", "value": str(samples)},
-                {"key": "slidingWindow", "value": str(samples)},
+                {"key": "violatingSamples", "value": str(violating)},
+                {"key": "slidingWindow", "value": str(window)},
                 {"key": "dealertingSamples", "value": "5"},
             ]
             if ctype == "multi_location_synthetic":
