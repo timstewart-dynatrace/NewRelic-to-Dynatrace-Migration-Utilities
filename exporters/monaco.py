@@ -24,6 +24,8 @@ from typing import Any, Dict, List
 import structlog
 import yaml
 
+from clients._detector_actor import DETECTOR_SCHEMA_ID, with_detector_actor
+
 logger = structlog.get_logger()
 
 
@@ -84,6 +86,11 @@ class MonacoExporter:
             envelopes = transformed_data.get(key) or []
             if not envelopes:
                 continue
+            if key == "anomaly_detectors":
+                # D16: executionSettings.actor comes from the Monaco environment.
+                envelopes = [
+                    with_detector_actor(e, "{{ .detectorActor }}") for e in envelopes
+                ]
             count = self._emit_settings(envelopes, project_root)
             if count:
                 summary[key] = count
@@ -208,10 +215,7 @@ class MonacoExporter:
                                         "scope": env.get("scope", "environment"),
                                     }
                                 },
-                                "config": {
-                                    "name": name,
-                                    "template": f"{safe}.json",
-                                },
+                                "config": self._settings_config(name, safe, schema),
                             }
                         ]
                     },
@@ -220,6 +224,15 @@ class MonacoExporter:
             )
             count += 1
         return count
+
+    @staticmethod
+    def _settings_config(name: str, safe: str, schema: str) -> Dict[str, Any]:
+        config: Dict[str, Any] = {"name": name, "template": f"{safe}.json"}
+        if schema == DETECTOR_SCHEMA_ID:
+            config["parameters"] = {
+                "detectorActor": {"type": "environment", "name": "DYNATRACE_DETECTOR_ACTOR"}
+            }
+        return config
 
     @staticmethod
     def _safe_name(name: str) -> str:

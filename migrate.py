@@ -1183,7 +1183,13 @@ def main(
             dt_client = DynatraceClient(
                 environment_url=settings.dynatrace.environment_url,
                 api_token=settings.dynatrace.api_token,
+                detector_actor=settings.dynatrace.detector_actor,
             )
+            if (not components or "alerts" in components) and not settings.dynatrace.detector_actor:
+                console.print(
+                    "[yellow]DYNATRACE_DETECTOR_ACTOR is not set — Davis anomaly detectors "
+                    "will fail to import (executionSettings.actor must be a service-user UUID).[/yellow]"
+                )
 
         # Validate Dynatrace connection
         if not dt_client.validate_connection():
@@ -1933,6 +1939,12 @@ def preflight():
             ", ".join(check.scopes_min),
         )
     console.print(table)
+    if not settings.dynatrace.detector_actor:
+        console.print(
+            "[yellow]DYNATRACE_DETECTOR_ACTOR is not set.[/yellow] Davis anomaly detectors "
+            "(migrated alerts) require executionSettings.actor = the UUID of a service user "
+            "on this tenant; detector import fails without it."
+        )
 
     for check in checks:
         header = (

@@ -48,15 +48,16 @@ class TestNonNRQLAlert:
         assert r.success
         assert "BrowserRUMTransformer" in r.anomaly_detectors[0]["value"]["description"]
 
-    def test_multi_location_synthetic_encodes_required_count(self):
+    def test_multi_location_synthetic_warns_required_count(self):
+        # D19: minLocationsFailing is not an analyzer parameter (live validation rejects it).
         r = NonNRQLAlertTransformer().transform({
             "type": "multi_location_synthetic", "name": "mls",
             "locationsRequired": 2,
             "terms": [{"threshold": 1}],
         })
         inputs = _non_nrql_input_map(r.anomaly_detectors[0])
-        assert inputs["minLocationsFailing"] == "2"
-        assert any("Multi-location" in w for w in r.warnings)
+        assert "minLocationsFailing" not in inputs
+        assert any("Multi-location" in w and "2 failing" in w for w in r.warnings)
 
     def test_unknown_type_errors_gracefully(self):
         r = NonNRQLAlertTransformer().transform({"type": "unknown", "name": "x"})
@@ -111,9 +112,12 @@ class TestBaselineAlert:
     def test_outlier_without_facet_warns_and_defaults(self):
         r = BaselineAlertTransformer().transform({
             "name": "svc-outliers", "conditionType": "outlier",
+            "nrql": {"query": "SELECT average(duration) FROM Transaction"},
         })
         inputs = _input_map(r.anomaly_detectors[0])
-        assert inputs["dimensions"] == "dt.smartscape.service"
+        # D21: there is no `dimensions` analyzer input; the split lives in the query.
+        assert "dimensions" not in inputs
+        assert inputs["query"].splitlines()[-1].endswith("by: {dt.smartscape.service}")
         assert any("no facet" in w for w in r.warnings)
 
     def test_direction_both_maps_to_outside_bounds(self):

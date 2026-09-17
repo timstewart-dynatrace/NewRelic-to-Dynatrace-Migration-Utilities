@@ -24,6 +24,8 @@ from typing import Any, Dict, List
 
 import structlog
 
+from clients._detector_actor import DETECTOR_ACTOR_PLACEHOLDER, with_detector_actor
+
 logger = structlog.get_logger()
 
 
@@ -64,6 +66,12 @@ variable "dynatrace_api_token" {
 
 variable "dynatrace_oauth_client_id" {
   description = "OAuth2 client id for Gen3 Platform APIs (Document, Automation)"
+  type        = string
+  default     = ""
+}
+
+variable "detector_actor" {
+  description = "Service-user UUID Davis anomaly detectors execute as (executionSettings.actor)"
   type        = string
   default     = ""
 }
@@ -159,9 +167,12 @@ variable "dynatrace_oauth_client_secret" {
     def _emit_anomaly_detectors(
         self, detectors: List[Dict[str, Any]]
     ) -> str:
-        return self._emit_generic_settings(
-            detectors, resource_prefix="detector"
+        # D16: executionSettings.actor is a tenant service user -> var.detector_actor.
+        hcl = self._emit_generic_settings(
+            [with_detector_actor(d, DETECTOR_ACTOR_PLACEHOLDER) for d in detectors],
+            resource_prefix="detector",
         )
+        return hcl.replace(f'"{DETECTOR_ACTOR_PLACEHOLDER}"', "var.detector_actor")
 
     def _emit_synthetic_tests(
         self, synthetics: List[Dict[str, Any]]

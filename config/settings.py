@@ -2,6 +2,7 @@
 Configuration management for the New Relic to Dynatrace Migration Tool.
 """
 
+import re
 from typing import List, Optional
 
 from pydantic import Field, field_validator
@@ -39,6 +40,17 @@ class DynatraceConfig(BaseSettings):
 
     api_token: str = Field(..., alias="DYNATRACE_API_TOKEN")
     environment_url: str = Field(..., alias="DYNATRACE_ENVIRONMENT_URL")
+    # Service-user UUID that Davis anomaly detectors execute as
+    # (builtin:davis.anomaly-detectors executionSettings.actor is required).
+    detector_actor: Optional[str] = Field(None, alias="DYNATRACE_DETECTOR_ACTOR")
+
+    @field_validator("detector_actor")
+    @classmethod
+    def validate_detector_actor(cls, v: Optional[str]) -> Optional[str]:
+        """Must be a UUID when set."""
+        if v and not re.fullmatch(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}", v):
+            raise ValueError("DYNATRACE_DETECTOR_ACTOR must be a service-user UUID")
+        return v or None
 
     @field_validator("environment_url")
     @classmethod

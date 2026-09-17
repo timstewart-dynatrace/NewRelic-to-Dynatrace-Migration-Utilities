@@ -23,7 +23,12 @@ from typing import Any, Dict, List
 
 import structlog
 
-from ._detector_utils import alert_condition_for, metric_timeseries_query, sample_settings
+from ._detector_utils import (
+    alert_condition_for,
+    dealerting_samples,
+    metric_timeseries_query,
+    sample_settings,
+)
 from ._workflow_utils import (
     davis_problem_trigger,
     migrated_event_filter,
@@ -125,17 +130,16 @@ class NonNRQLAlertTransformer:
                 {"key": "alertOnMissingData", "value": "false"},
                 {"key": "violatingSamples", "value": str(violating)},
                 {"key": "slidingWindow", "value": str(window)},
-                {"key": "dealertingSamples", "value": "5"},
+                {"key": "dealertingSamples", "value": dealerting_samples(window)},
             ]
             if ctype == "multi_location_synthetic":
+                # D19: the static threshold analyzer has no location-count parameter.
                 required = int(nr_condition.get("locationsRequired", 3))
-                analyzer_input.append(
-                    {"key": "minLocationsFailing", "value": str(required)}
-                )
                 warnings.append(
-                    f"Multi-location synthetic '{name}' requires "
-                    f"{required} locations failing — verify DT detector "
-                    "supports minLocationsFailing in the target tenant."
+                    f"Multi-location synthetic '{name}' requires {required} failing "
+                    "locations in NR; the Davis analyzer has no location-count input. "
+                    "Add a `by: {dt.synthetic.location.id}` split or use the synthetic "
+                    "monitor's own outage settings."
                 )
 
             detector = {
@@ -146,7 +150,7 @@ class NonNRQLAlertTransformer:
                     "title": f"[Migrated] {name}",
                     "description": f"{note} Migrated from NR '{ctype}' condition.",
                     "source": "newrelic-migration",
-                    "executionSettings": {"actor": None, "queryOffset": None},
+                    "executionSettings": {},  # actor (service user) injected at import/export — D16
                     "analyzer": {
                         "name": (
                             "dt.statistics.ui.anomaly_detection"

@@ -22,6 +22,7 @@ from typing import Any, Dict, List, Optional
 
 import structlog
 
+from ._detector_actor import with_detector_actor
 from ._http import (
     DynatraceResponse,
     HttpTransport,
@@ -184,12 +185,14 @@ class DynatraceClient:
         api_token: Optional[str] = None,
         oauth: Optional[OAuth2PlatformTokenProvider] = None,
         rate_limit: float = 5.0,
+        detector_actor: Optional[str] = None,
     ) -> None:
         if not api_token and oauth is None:
             raise ValueError(
                 "DynatraceClient requires either api_token or oauth credentials."
             )
         self.environment_url = environment_url.rstrip("/")
+        self.detector_actor = detector_actor
         self.transport = HttpTransport(
             rate_limit=rate_limit, api_token=api_token, oauth=oauth
         )
@@ -204,7 +207,20 @@ class DynatraceClient:
     # ------------------------------------------------------------------
 
     def create_anomaly_detector(self, envelope: Dict[str, Any]) -> ImportResult:
-        return self.settings.create_anomaly_detector(envelope)
+        """Create a Davis anomaly detector, injecting executionSettings.actor (D16)."""
+        actor = (envelope.get("value") or {}).get("executionSettings", {}).get("actor") or self.detector_actor
+        if not actor:
+            value = envelope.get("value") or {}
+            return ImportResult(
+                entity_type="anomaly_detector",
+                entity_name=value.get("title") or "Unknown",
+                success=False,
+                error_message=(
+                    "DYNATRACE_DETECTOR_ACTOR is not set. builtin:davis.anomaly-detectors "
+                    "requires executionSettings.actor = the UUID of a service user on the tenant."
+                ),
+            )
+        return self.settings.create_anomaly_detector(with_detector_actor(envelope, actor))
 
     def create_segment(self, envelope: Dict[str, Any]) -> ImportResult:
         return self.settings.create_segment(envelope)

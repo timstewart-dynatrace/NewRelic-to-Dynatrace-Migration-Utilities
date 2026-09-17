@@ -24,7 +24,7 @@ from typing import Any, Dict, List, Optional
 
 import structlog
 
-from ._detector_utils import nrql_to_analyzer_query
+from ._detector_utils import dealerting_samples, nrql_to_analyzer_query
 from ._workflow_utils import (
     davis_problem_trigger,
     migrated_event_filter,
@@ -160,7 +160,7 @@ class AlertTransformer:
             {"key": "alertOnMissingData", "value": "false"},
             {"key": "violatingSamples", "value": str(violating)},
             {"key": "slidingWindow", "value": str(samples)},
-            {"key": "dealertingSamples", "value": "5"},
+            {"key": "dealertingSamples", "value": dealerting_samples(samples)},
         ]
 
         event_properties = [
@@ -194,7 +194,7 @@ class AlertTransformer:
                 or f"Migrated from New Relic policy '{policy_name}'. "
                    f"Original NRQL: {query[:200]}",
                 "source": "newrelic-migration",
-                "executionSettings": {"actor": None, "queryOffset": None},
+                "executionSettings": {},  # actor (service user) injected at import/export — D16
                 "analyzer": {
                     "name": (
                         "dt.statistics.ui.anomaly_detection"

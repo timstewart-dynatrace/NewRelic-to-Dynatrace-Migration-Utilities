@@ -16,7 +16,7 @@ from typing import Any, Dict, List
 
 import structlog
 
-from ._detector_utils import nrql_to_analyzer_query
+from ._detector_utils import add_split_dimension, dealerting_samples, nrql_to_analyzer_query
 from ._workflow_utils import migrated_event_name
 
 logger = structlog.get_logger()
@@ -81,7 +81,7 @@ class BaselineAlertTransformer:
             # a `// UNCONVERTED NRQL` comment + placeholder when the query
             # can't be confidently translated. minLength=1 is satisfied
             # either way.
-            dql_query = nrql_to_analyzer_query(nrql, warnings=warnings)
+            dql_query = add_split_dimension(nrql_to_analyzer_query(nrql, warnings=warnings), facet)
 
             # New builtin:davis.anomaly-detectors schema (v1.0.14, 2026-04-20):
             # top level has {enabled,title,description,source,executionSettings,
@@ -96,17 +96,14 @@ class BaselineAlertTransformer:
                 {"key": "alertOnMissingData", "value": "false"},
                 {"key": "violatingSamples", "value": "3"},
                 {"key": "slidingWindow", "value": "5"},
-                {"key": "dealertingSamples", "value": "5"},
+                {"key": "dealertingSamples", "value": dealerting_samples(5)},
             ]
-            if facet:
-                analyzer_input.append(
-                    {"key": "dimensions", "value": facet}
+            if nr_condition.get("learningPeriodDays"):
+                # D20: the adaptive analyzer has no learning-period input.
+                warnings.append(
+                    f"NR learningPeriodDays={nr_condition['learningPeriodDays']} has no Davis "
+                    "analyzer equivalent; the adaptive baseline uses its own training window."
                 )
-            analyzer_input.append(
-                {"key": "learningPeriodDays", "value": str(
-                    int(nr_condition.get("learningPeriodDays", 7))
-                )}
-            )
 
             detector = {
                 "schemaId": "builtin:davis.anomaly-detectors",
@@ -119,7 +116,7 @@ class BaselineAlertTransformer:
                         f"Direction: {direction}, sensitivity: {sensitivity}σ."
                     ),
                     "source": "newrelic-migration",
-                    "executionSettings": {"actor": None, "queryOffset": None},
+                    "executionSettings": {},  # actor (service user) injected at import/export — D16
                     "analyzer": {
                         "name": (
                             "dt.statistics.ui.anomaly_detection"

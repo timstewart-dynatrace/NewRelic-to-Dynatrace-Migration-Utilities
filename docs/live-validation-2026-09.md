@@ -90,6 +90,20 @@ Live Document API dashboards use content `version` 20–21; `dashboard_transform
 | D14 | Segment groups used `type = X OR id = …`, matching every node of the type | code review |
 | D15 | AIOps enrichment `dql-query` tasks contained raw NRQL | code review |
 
+### Settings validation (`dtctl create settings --validate-only`, no objects created)
+Every detector emitter was submitted to the tenant's Settings validator. Rejections found and fixed:
+
+| # | Rejection | Fix |
+|---|---|---|
+| D16 | `executionSettings/actor: Must not be null`; random UUID → "Provided actor is not a valid service user" | Transformers emit `executionSettings: {}`; import injects `DYNATRACE_DETECTOR_ACTOR` (service-user UUID); Monaco/Terraform parameterise it |
+| D17 | "Dealerting samples must be less than or equal to sliding window" | `dealertingSamples = min(5, slidingWindow)` |
+| D18 | `event.type` `RESOURCE_CONTENTION` not in the allowed set | `RESOURCE_CONTENTION_EVENT` / `AVAILABILITY_EVENT` |
+| D19 | "Parameter 'minLocationsFailing' does not exist" | removed; warning |
+| D20 | "Parameter 'learningPeriodDays' does not exist" | removed; warning |
+| D21 | "Parameter 'dimensions' does not exist" | facet moved into the query's `by:` |
+
+After the fixes all 14 emitter variants validate (`scripts/validate_detectors_live.py`).
+
 ### Workflow linkage evidence
 Problem records carry only standard fields (`event.name`, `event.category`, `tags`,
 `labels.alerting_profile`, …) — not detector `eventTemplate.properties`. Over 7 days a

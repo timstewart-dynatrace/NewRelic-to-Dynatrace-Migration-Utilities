@@ -21,7 +21,7 @@ from typing import Any, Dict, List, Optional
 
 import structlog
 
-from ._detector_utils import alert_condition_for, metric_timeseries_query
+from ._detector_utils import alert_condition_for, dealerting_samples, metric_timeseries_query
 from ._workflow_utils import (
     davis_problem_trigger,
     migrated_event_filter,
@@ -114,6 +114,7 @@ class InfrastructureTransformer:
         samples: int,
         enabled: bool = True,
         warnings: Optional[List[str]] = None,
+        event_type: str = "RESOURCE_CONTENTION_EVENT",
     ) -> Dict[str, Any]:
         # New builtin:davis.anomaly-detectors schema (v1.0.14, 2026-04-20):
         # top level is {enabled,title,description,source,executionSettings,
@@ -129,7 +130,7 @@ class InfrastructureTransformer:
                 "title": f"[Migrated] {name}",
                 "description": f"Migrated from New Relic infrastructure condition: {name}",
                 "source": "newrelic-migration",
-                "executionSettings": {"actor": None, "queryOffset": None},
+                "executionSettings": {},  # actor (service user) injected at import/export — D16
                 "analyzer": {
                     "name": (
                         "dt.statistics.ui.anomaly_detection"
@@ -142,12 +143,12 @@ class InfrastructureTransformer:
                         {"key": "alertOnMissingData", "value": alert_on_missing},
                         {"key": "violatingSamples", "value": str(samples)},
                         {"key": "slidingWindow", "value": str(samples)},
-                        {"key": "dealertingSamples", "value": "5"},
+                        {"key": "dealertingSamples", "value": dealerting_samples(samples)},
                     ],
                 },
                 "eventTemplate": {
                     "properties": [
-                        {"key": "event.type", "value": "RESOURCE_CONTENTION"},
+                        {"key": "event.type", "value": event_type},
                         {"key": "event.name", "value": migrated_event_name(name, "infra")},
                         {"key": "source.condition", "value": name},
                         {"key": "migrated.from", "value": "newrelic"},
@@ -162,6 +163,7 @@ class InfrastructureTransformer:
         return self._base_detector(
             name=name,
             metric_key=INFRA_METRIC_MAP["host_not_reporting"],
+            event_type="AVAILABILITY_EVENT",
             alert_condition="BELOW",
             threshold=1,
             samples=max(1, duration),
@@ -181,6 +183,7 @@ class InfrastructureTransformer:
         return self._base_detector(
             name=name,
             metric_key=INFRA_METRIC_MAP["process_not_running"],
+            event_type="AVAILABILITY_EVENT",
             alert_condition="BELOW",
             threshold=1,
             samples=3,

@@ -100,6 +100,15 @@ value {
 
 Forbidden (emission triggers validator errors): `name`, `strategy`, `eventTemplate.title`, `eventTemplate.description`, `eventTemplate.eventType`, `eventTemplate.davisMerge`.
 
+Also rejected by the live Settings validator (docs/live-validation-2026-09.md, D16–D21):
+
+- `executionSettings.actor` null / missing / not a service user → set from `DYNATRACE_DETECTOR_ACTOR` at import (`clients/_detector_actor.py`); transformers emit `executionSettings: {}`
+- `dealertingSamples` greater than `slidingWindow` → use `_detector_utils.dealerting_samples()`
+- `event.type` must be a Davis event type (`CUSTOM_ALERT`, `AVAILABILITY_EVENT`, `ERROR_EVENT`, `PERFORMANCE_EVENT`, `RESOURCE_CONTENTION_EVENT`, `CUSTOM_INFO`, …)
+- analyzer inputs `minLocationsFailing`, `learningPeriodDays`, `dimensions` do not exist → splits go in the query `by:` (`add_split_dimension()`)
+
+Before changing any detector emitter run `DYNATRACE_DETECTOR_ACTOR=<uuid> PYTHONPATH=. python scripts/validate_detectors_live.py` (uses `dtctl … --validate-only`; creates nothing).
+
 Canonical analyzer names:
 
 - `dt.statistics.ui.anomaly_detection.StaticThresholdAnomalyDetectionAnalyzer`

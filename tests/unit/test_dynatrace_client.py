@@ -1062,3 +1062,122 @@ class TestWorkflowTriggerAndEnvelopeShape:
         event_name = {p["key"]: p["value"] for p in
                       r.anomaly_detectors[0]["value"]["eventTemplate"]["properties"]}["event.name"]
         assert event_name.startswith(prefix)
+
+
+class TestDetectorActorWire:
+    """D16: builtin:davis.anomaly-detectors rejects a null/missing executionSettings.actor."""
+
+    ACTOR = "12345678-1234-1234-1234-123456789abc"
+
+    @staticmethod
+    def _detector():
+        from transformers.alert_transformer import AlertTransformer
+
+        return AlertTransformer().transform({"name": "p", "conditions": [
+            {"name": "c", "nrql": {"query": "SELECT count(*) FROM Transaction"}}]}).anomaly_detectors[0]
+
+    def test_transformers_emit_no_null_execution_settings(self):
+        assert self._detector()["value"]["executionSettings"] == {}
+
+    def test_actor_injected_into_request_body(self):
+        import json
+
+        import requests
+
+        client = DynatraceClient(environment_url="https://abc12345.apps.dynatrace.com",
+                                 api_token="dt0s16.test", detector_actor=self.ACTOR)
+        captured = {}
+
+        def fake_send(req, **kw):
+            captured["body"] = json.loads(req.body)
+            r = requests.Response()
+            r.status_code = 200
+            r._content = b'[{"objectId": "obj-1"}]'
+            return r
+
+        with patch.object(client.transport.session, "send", side_effect=fake_send):
+            result = client.create_anomaly_detector(self._detector())
+        assert result.success
+        body = captured["body"][0] if isinstance(captured["body"], list) else captured["body"]
+        assert body["value"]["executionSettings"] == {"actor": self.ACTOR}
+
+    def test_missing_actor_fails_without_http_call(self):
+        client = DynatraceClient(environment_url="https://abc12345.apps.dynatrace.com", api_token="dt0s16.test")
+        with patch.object(client.transport.session, "send") as send:
+            result = client.create_anomaly_detector(self._detector())
+        send.assert_not_called()
+        assert not result.success and "DYNATRACE_DETECTOR_ACTOR" in result.error_message
+
+    def test_exporters_parameterise_actor(self, tmp_path):
+        from exporters.monaco import MonacoExporter
+        from exporters.terraform import TerraformExporter
+
+        data = {"anomaly_detectors": [self._detector()]}
+        TerraformExporter().export(data, tmp_path / "tf")
+        hcl = (tmp_path / "tf" / "anomaly_detectors.tf").read_text()
+        assert '"actor":var.detector_actor' in hcl.replace(" ", "")
+        assert 'variable "detector_actor"' in (tmp_path / "tf" / "provider.tf").read_text()
+
+        MonacoExporter().export(data, tmp_path / "mn")
+        jsons = list((tmp_path / "mn").rglob("*.json"))
+        yamls = list((tmp_path / "mn").rglob("*.yaml"))
+        assert any('"{{ .detectorActor }}"' in p.read_text() for p in jsons)
+        assert any("DYNATRACE_DETECTOR_ACTOR" in p.read_text() for p in yamls if p.name != "manifest.yaml")
+
+
+def test_detector_actor_setting_must_be_uuid(monkeypatch):
+    from config.settings import DynatraceConfig
+
+    monkeypatch.setenv("DYNATRACE_API_TOKEN", "dt0s16.x")
+    monkeypatch.setenv("DYNATRACE_ENVIRONMENT_URL", "https://abc.apps.dynatrace.com")
+    monkeypatch.setenv("DYNATRACE_DETECTOR_ACTOR", "not-a-uuid")
+    with pytest.raises(Exception):
+        DynatraceConfig()
+    monkeypatch.setenv("DYNATRACE_DETECTOR_ACTOR", TestDetectorActorWire.ACTOR)
+    assert DynatraceConfig().detector_actor == TestDetectorActorWire.ACTOR
+
+
+class TestDetectorInputsAcceptedBySettingsValidator:
+    """D17-D21: inputs rejected by live `dtctl create settings --validate-only`."""
+
+    @staticmethod
+    def _inputs(det):
+        return {i["key"]: i["value"] for i in det["value"]["analyzer"]["input"]}
+
+    def test_dealerting_never_exceeds_sliding_window(self):
+        from transformers.alert_transformer import AlertTransformer
+        from transformers.infrastructure_transformer import InfrastructureTransformer
+        from transformers.non_nrql_alert_transformer import NonNRQLAlertTransformer
+
+        dets = AlertTransformer().transform({"name": "p", "conditions": [
+            {"name": "c", "nrql": {"query": "SELECT count(*) FROM Transaction"},
+             "terms": [{"threshold": 1, "thresholdDuration": 120}]}]}).anomaly_detectors
+        dets += NonNRQLAlertTransformer().transform({"type": "synthetic", "name": "s"}).anomaly_detectors
+        dets += InfrastructureTransformer().transform({"type": "infra_metric", "name": "m", "select_value": "cpuPercent",
+                                                       "criticalThreshold": {"value": 1, "durationMinutes": 2}}).anomaly_detectors
+        for det in dets:
+            inputs = self._inputs(det)
+            assert int(inputs["dealertingSamples"]) <= int(inputs["slidingWindow"])
+
+    def test_event_types_are_valid_davis_event_types(self):
+        from transformers.infrastructure_transformer import InfrastructureTransformer
+
+        valid = {"AVAILABILITY_EVENT", "CUSTOM_ALERT", "CUSTOM_INFO", "ERROR_EVENT",
+                 "PERFORMANCE_EVENT", "RESOURCE_CONTENTION_EVENT"}
+        for cond in ({"type": "host_not_reporting", "name": "h"}, {"type": "process_not_running", "name": "p"},
+                     {"type": "infra_metric", "name": "m", "select_value": "cpuPercent"}):
+            det = InfrastructureTransformer().transform(cond).anomaly_detectors[0]
+            props = {p["key"]: p["value"] for p in det["value"]["eventTemplate"]["properties"]}
+            assert props["event.type"] in valid
+
+    def test_no_nonexistent_analyzer_parameters(self):
+        from transformers.baseline_alert_transformer import BaselineAlertTransformer
+        from transformers.non_nrql_alert_transformer import NonNRQLAlertTransformer
+
+        dets = NonNRQLAlertTransformer().transform(
+            {"type": "multi_location_synthetic", "name": "m", "locationsRequired": 2}).anomaly_detectors
+        dets += BaselineAlertTransformer().transform(
+            {"name": "o", "conditionType": "outlier", "learningPeriodDays": 14, "facet": "dt.service.name",
+             "nrql": {"query": "SELECT average(duration) FROM Transaction"}}).anomaly_detectors
+        for det in dets:
+            assert not {"minLocationsFailing", "learningPeriodDays", "dimensions"} & set(self._inputs(det))

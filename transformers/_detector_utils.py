@@ -315,6 +315,29 @@ def alert_condition_for(
     return default
 
 
+def add_split_dimension(dql: str, dimension: str) -> str:
+    """Add ``by: {dimension}`` to the timeseries stage of an analyzer query.
+
+    D21: analyzers have no ``dimensions`` input; splitting belongs in the query.
+    Queries that already split (``by:``) or are the inert fallback are unchanged.
+    """
+    if not dimension or "__nr_migration_unconverted__" in dql:
+        return dql
+    lines = dql.split("\n")
+    for i, line in enumerate(lines):
+        stage = line.strip().lstrip("|").strip()
+        if stage.startswith(("timeseries ", "makeTimeseries ")):
+            if "by:" not in stage:
+                lines[i] = f"{line.rstrip()}, by: {{{dimension}}}"
+            break
+    return "\n".join(lines)
+
+
+def dealerting_samples(sliding_window: int) -> str:
+    """D17: the analyzer requires dealertingSamples <= slidingWindow."""
+    return str(max(1, min(5, int(sliding_window))))
+
+
 def sample_settings(duration_seconds: int, occurrences: Optional[str]) -> Tuple[int, int]:
     """(violatingSamples, slidingWindow) for an NR threshold duration + occurrence mode.
 

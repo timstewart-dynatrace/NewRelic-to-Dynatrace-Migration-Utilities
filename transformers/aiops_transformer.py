@@ -193,7 +193,7 @@ class AIOpsTransformer:
                 "title": f"[NR AIOps] {name}",
                 "description": "Migrated anomaly-detection setting.",
                 "source": "newrelic-migration",
-                "executionSettings": {"actor": None, "queryOffset": None},
+                "executionSettings": {},  # actor (service user) injected at import/export — D16
                 "analyzer": {
                     "name": (
                         "dt.statistics.ui.anomaly_detection"
