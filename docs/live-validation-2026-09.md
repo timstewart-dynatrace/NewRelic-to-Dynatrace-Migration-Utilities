@@ -1,0 +1,87 @@
+# Live validation — 2026-09-17
+
+Read-only evidence gathered against a Gen3 SaaS tenant (`*.apps.dynatrace.com`) with
+`dtctl` 0.38.0. No objects were created. Tenant, host, and service names are omitted.
+This document drives the fixes on branch `fix/live-validated-defects`.
+
+## Method
+
+| Check | dtctl command | What it proves |
+|---|---|---|
+| Settings schema | `get settings-schemas builtin:davis.anomaly-detectors` | Allowed value fields |
+| Real object shapes | `get anomaly-detectors`, `get workflows <id>`, `get slos`, `get segments <id>`, `get dashboards <id>` | Formats tenants actually store |
+| DQL syntax | `verify query` | **Syntax only** — unknown metrics/fields still report `valid` |
+| Detector input | `exec analyzer <analyzer> --input …` | Runs the analyzer without persisting; catches non-timeseries and invalid DQL. `verify analyzer` accepted invalid queries, so it is **not** sufficient |
+| Field existence | bounded `query` (`from:-10m`..`-2h`, `limit`) | Dimension actually carries data |
+
+## Findings
+
+### D1 — detector query must be a timeseries — CONFIRMED FAILURE
+`exec analyzer StaticThresholdAnomalyDetectionAnalyzer` with
+`fetch spans | … | summarize count()` → `resultStatus: FAILED`:
+"No valid time series records found. Expected a single field of type timeframe.
+Consider using the 'timeseries' or 'makeTimeseries' DQL command."
+
+### D2 — classic `builtin:*` metric keys in DQL — CONFIRMED FAILURE
+`timeseries avg(builtin:host.cpu.usage)` → DQL error "There isn't a parameter builtin."
+(both `verify query` and `exec analyzer`). Control `timeseries avg(dt.host.cpu.usage)` succeeds.
+
+### D3 — `detectorId` in the Settings envelope — CONFIRMED NOT A SCHEMA FIELD
+Schema `builtin:davis.anomaly-detectors` is **v1.0.16** (repo documented v1.0.14). Value
+properties: `analyzer, description, enabled, eventTemplate, executionSettings, source, title`.
+`ExecutionSettings` now has `actor, delay, queryOffset`. `detectorId` is not a value or
+envelope field. Live detectors use input key `query` (55) and `query.expression` (10).
+
+### D4 — workflow trigger shape — CONFIRMED WRONG
+Emitters produce `trigger.event.config.davis_event{detectorIds, eventType, anyEventMatches}`.
+Every event-triggered workflow on the tenant uses:
+
+```
+trigger.eventTrigger {
+  isActive, filterQuery (server-derived), uniqueExpression,
+  triggerConfiguration: {
+    type: "davis-event" | "davis-problem" | "event",
+    value: {…}
+  }
+}
+```
+
+- `davis-event` value: `customFilter, entityTags, entityTagsMatch, maintenanceWindowTriggerBehavior, onProblemClose, triggerOn`
+- `davis-problem` value: `analysisReady, categories, customFilter, entityTags, entityTagsMatch, onProblemClose, problemOpenDuration, severityThreshold, triggerOn, triggerOnUpdateFields`
+
+Detector → workflow linkage is done with `customFilter` on event fields that the detector sets
+via `eventTemplate.properties` — there is no `detectorIds` field. `tasks` is a dict (§4 holds).
+
+### D8 — new Smartscape / SLO output — CONFIRMED WORKING
+| Query | Result |
+|---|---|
+| `timeseries avg(dt.host.cpu.usage), by:{host.name}` | data |
+| `timeseries sum(dt.service.request.count), by:{dt.service.name}` | data |
+| `timeseries avg(dt.kubernetes.container.cpu_usage), by:{k8s.workload.name}` | data |
+| Platform SLO availability indicator (`by:{dt.smartscape.service}` + `getNodeName`) | `sli` series |
+| Platform SLO latency indicator | `sli` series |
+| `smartscapeNodes K8S_DEPLOYMENT… \| parse k8s.object` readyReplicas / desiredReplicas | data |
+| `smartscapeNodes K8S_POD \| parse k8s.object` phase | data |
+| `smartscapeNodes HOST \| fields name, id` | data |
+
+Platform SLO objects on the tenant have exactly `id, name, description, version, criteria[{timeframeFrom, timeframeTo, target, warning}], customSli{indicator, filterSegments}, tags, externalId` — matches `_slo_utils.build_platform_slo`. `version` is present for optimistic locking.
+
+### D10 (new) — `service.name` is empty on OneAgent spans — CONFIRMED
+10-minute window: `countIf(isNotNull(service.name))` = 0 of 38,304 spans;
+`dt.service.name` and `dt.smartscape.service` populated on all. Logs: `service.name` on some
+records, `dt.service.name` on none. Span-context mapping of `appName` / `entityName` to
+`service.name` returns no data on OneAgent-instrumented services.
+
+### Segments — Smartscape form now observable
+Live segment includes use `dataObject: "_all_entities"` with filter statements
+`type = SERVICE` and `id in (…)`, plus `_all_data_object` / `logs`. A few legacy segments still
+use `dataObject: "dt.entity.service"`. This gives a verified Gen3 form for
+`workload_transformer.py` (currently `dt.entity.type` / `dt.entity.id`).
+
+### Dashboards
+Live Document API dashboards use content `version` 20–21; `dashboard_transformer.py` emits 13.
+
+## Still requires a write test (Phase 2)
+Settings create of a corrected detector, workflow create with the verified trigger,
+Platform SLO create + delete (`optimisticLockingVersion` query-param name), dashboard
+version 21 acceptance, segment create with `_all_entities`.
