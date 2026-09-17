@@ -59,7 +59,8 @@ class SloClient:
         self, slo_id: str, optimistic_version: Optional[str] = None
     ) -> DynatraceResponse:
         """Delete an SLO. The API requires the current optimistic-locking
-        version; it is looked up when not supplied."""
+        version (query param ``optimistic-locking-version``, verified live — D22);
+        it is looked up when not supplied."""
         if not optimistic_version:
             current = self.get_slo(slo_id)
             if not current.is_success:
@@ -68,7 +69,7 @@ class SloClient:
                 optimistic_version = current.data.get("version")
         params: Dict[str, Any] = {}
         if optimistic_version:
-            params["optimisticLockingVersion"] = optimistic_version
+            params["optimistic-locking-version"] = optimistic_version
         return self.http.delete(
             f"{self.base}/{slo_id}", params=params, prefer_oauth=True
         )

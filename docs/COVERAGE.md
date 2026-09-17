@@ -395,7 +395,7 @@ CI `nrql-engine-parity` job.
 - 0 🟡 rows with Gen2 leak in Gen3 default path — all 🟡 rows are either (a) Gen2-only features (documented in `gen2-only-capabilities.md`) or (b) delegate to other transformers for partial coverage
 - Every ✅ row has ≥ 1 test in `tests/unit/` or `tests/legacy/`
 - `grep -rn 'Alerting Profile\|Management Zone\|Auto-Tag\|Problem Notification\|Metric Event' transformers/` returns 0 matches outside `transformers/legacy/` and docstring descriptions of what Gen3 replaces
-- 1209 unit + 158 legacy + 13 env-gated integration tests (1380 collected) as of 2026-09-16
+- 1238 unit + 158 legacy + 13 env-gated integration tests (1409 collected) as of 2026-09-16
 
 ## Phase Status
 

@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed (live-validated Gen3 defects — see docs/live-validation-2026-09.md)
+- **Detectors would not create or would never alert.** Queries are always timeseries
+  (`summarize` → `makeTimeseries`), unconverted queries use a valid inert placeholder,
+  classic `builtin:*` metric keys map to Grail keys, `executionSettings.actor` comes from
+  the new `DYNATRACE_DETECTOR_ACTOR` setting, `dealertingSamples` ≤ `slidingWindow`, valid
+  Davis `event.type` values, and non-existent analyzer inputs (`minLocationsFailing`,
+  `learningPeriodDays`, `dimensions`) removed. Every emitter passes the tenant's Settings
+  validator (`scripts/validate_detectors_live.py`). The non-schema `detectorId` field is gone.
+- **Workflows would never fire.** Triggers use the real
+  `eventTrigger.triggerConfiguration` `davis-problem` shape, linked to detectors by
+  `matchesValue(event.name, "[Migrated] <policy> | *")`; `private` / `migratedFrom` removed;
+  every severity-fanout workflow is kept; NR operator and `AT_LEAST_ONCE` honoured.
+- **Span queries returned no data on OneAgent services.** `appName` / `entityName` →
+  `dt.service.name`, `error` → `request.is_failed`; mixed AND/OR keeps parentheses.
+- Segments filter `_all_entities` by `type` / `id` / `name` with AND grouping.
+- AIOps enrichment tasks no longer embed raw NRQL in `dql-query` tasks.
+- SLO and Document deletes use the `optimistic-locking-version` query param; SLO auditor
+  updates send it.
+
+### Added
+- `DYNATRACE_DETECTOR_ACTOR` (service-user UUID) — required to import Davis anomaly detectors.
+
 ### Changed
 - **BREAKING (output): SLOs now target the Platform SLO API** (`POST /platform/slo/v1/slos`)
   instead of classic Settings 2.0 `builtin:monitoring.slo` metric-selector SLOs.

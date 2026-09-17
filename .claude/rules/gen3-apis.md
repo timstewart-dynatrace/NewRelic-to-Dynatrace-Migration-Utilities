@@ -179,7 +179,8 @@ POST /platform/slo/v1/slos            # platform host (.apps.), Bearer, slo:slos
 ```
 
 - The indicator is DQL and must follow §7 (`by: { dt.smartscape.service }`, `getNodeName()`).
-- DELETE (and PUT) need the current `optimisticLockingVersion`; `SloClient.delete_slo` GETs it first. The query-param name follows this repo's Document API convention and is not yet verified on a live tenant.
+- DELETE and PUT need the current version as query param `optimistic-locking-version` (kebab-case; verified from dtctl's live requests, D22 — the same param applies to Document API deletes). `SloClient.delete_slo` and `SLOAuditor.update_slo` GET the version first.
+- Verified live: the body above is accepted by `POST /platform/slo/v1/slos` (Phase 2 write test).
 - IaC: Monaco `type: slo-v2` (body is the template JSON); Terraform `dynatrace_platform_slo`.
 - Classic metric-selector SLOs (`metricExpression`, `entitySelector("type(service)")`) are not emitted anywhere in the Gen3 path.
 

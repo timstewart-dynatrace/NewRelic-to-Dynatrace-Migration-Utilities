@@ -879,7 +879,7 @@ class TestPlatformSloWire:
         assert [s["method"] for s in sent] == ["GET", "DELETE"]
         assert sent[1]["url"] == (
             "https://abc12345.apps.dynatrace.com/platform/slo/v1/slos/slo-1"
-            "?optimisticLockingVersion=v7"
+            "?optimistic-locking-version=v7"  # D22: verified against dtctl's live request
         )
         assert result.is_success
 
@@ -1181,3 +1181,43 @@ class TestDetectorInputsAcceptedBySettingsValidator:
              "nrql": {"query": "SELECT average(duration) FROM Transaction"}}).anomaly_detectors
         for det in dets:
             assert not {"minLocationsFailing", "learningPeriodDays", "dimensions"} & set(self._inputs(det))
+
+
+class TestDocumentDeleteLockingParamWire:
+    """D22: Document API DELETE uses the kebab-case optimistic-locking-version param."""
+
+    def test_document_delete_query_param(self):
+        import requests
+
+        transport = HttpTransport(api_token="dt0s16.test")
+        client = DocumentClient("https://abc12345.apps.dynatrace.com", transport)
+        captured = {}
+
+        def fake_send(req, **kw):
+            captured["url"] = req.url
+            r = requests.Response()
+            r.status_code = 204
+            r._content = b""
+            return r
+
+        with patch.object(transport.session, "send", side_effect=fake_send):
+            client.delete_document("doc-1", optimistic_version="3")
+        assert captured["url"].endswith("/platform/document/v1/documents/doc-1?optimistic-locking-version=3")
+
+
+def test_slo_auditor_update_sends_locking_version():
+    from unittest.mock import patch as _patch
+
+    from registry.slo_auditor import SLOAuditor
+
+    auditor = SLOAuditor.__new__(SLOAuditor)
+    auditor.platform_url = "https://abc12345.apps.dynatrace.com"
+    calls = []
+
+    def fake_request(url, method="GET", data=None):
+        calls.append((method, url))
+        return {"version": "v9"} if method == "GET" else {}
+
+    with _patch.object(auditor, "_platform_request", side_effect=fake_request):
+        assert auditor.update_slo("slo-1", {"name": "x"})
+    assert calls[-1] == ("PUT", "https://abc12345.apps.dynatrace.com/platform/slo/v1/slos/slo-1?optimistic-locking-version=v9")

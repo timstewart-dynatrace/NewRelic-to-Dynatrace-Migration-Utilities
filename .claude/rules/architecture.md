@@ -82,7 +82,7 @@ NewRelic-to-Dynatrace-Migration-Utilities/
 │   └── error_taxonomy.py              # WarningCode / ErrorCode
 ├── examples/example_queries.nrql
 │
-└── tests/                             # 1380 collected: 1209 unit + 158 legacy + 13 env-gated integration
+└── tests/                             # 1409 collected: 1238 unit + 158 legacy + 13 env-gated integration
     ├── conftest.py                    # Session-scoped `compiler` fixture
     ├── unit/                          # 36 files (compiler, CLI, clients incl. wire-level, per-phase, invariants)
     ├── legacy/                        # 8 files — Gen2 *_v1 regressions

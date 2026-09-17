@@ -111,7 +111,19 @@ problem's `event.name` equalled its contributing `CUSTOM_ALERT` event's name 466
 `matchesValue(event.name, "<prefix>*")` validates as a workflow matcher; `startsWith()` is
 not enabled, and `\*` is rejected. No events on the tenant use `dt.alert_group`.
 
-## Still requires a write test (Phase 2)
-Settings create of a corrected detector, workflow create with the verified trigger,
-Platform SLO create + delete (`optimisticLockingVersion` query-param name), dashboard
-version 21 acceptance, segment create with `_all_entities`.
+## Phase 2 — write tests (2026-09-17)
+Created on the tenant with `dtctl create`, read back, and deleted immediately. All names used
+the `[nr-migration-test]` prefix; a follow-up `get` found none remaining.
+
+| Object | Result |
+|---|---|
+| Workflow (`davis-problem` trigger, §4a shape, inactive) | **Accepted.** Server-derived `filterQuery` contains `matchesValue(event.name, "[Migrated] … \| *")`; categories map to `MONITORING_UNAVAILABLE, AVAILABILITY, ERROR, SLOWDOWN, RESOURCE_CONTENTION, CUSTOM_ALERT` |
+| Platform SLO (`_slo_utils` body, Smartscape indicator) | **Accepted.** Deleted via `DELETE …/slos/<id>?optimistic-locking-version=<version>` → 204 |
+| Document API dashboard (content version 13, converted DQL tile) | **Accepted**; stored as version 13. Deleted via `DELETE …/documents/<id>?optimistic-locking-version=1` → 204 (moved to trash) |
+| Davis anomaly detectors (all emitters) | Not created — fully validated with `--validate-only` instead (see above) |
+
+### D22 — optimistic-locking query parameter name — FIXED
+Both Platform SLO and Document API deletes use `optimistic-locking-version` (kebab-case). The
+repo sent `optimisticLockingVersion` from `SloClient.delete_slo` and
+`DocumentClient.delete_document`, and `SLOAuditor.update_slo` sent no version at all — rollback
+deletes and SLO auto-fix updates would have failed.

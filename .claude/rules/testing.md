@@ -2,7 +2,7 @@
 
 ## Running Tests
 ```bash
-pytest tests/ -v                    # 1209 unit + 158 legacy + 13 gated integration (1380 collected)
+pytest tests/ -v                    # 1238 unit + 158 legacy + 13 gated integration (1409 collected)
 pytest tests/unit/test_compiler.py  # 309 compiler tests
 pytest tests/unit/test_invariants.py  # 36 Hypothesis property-based fuzz tests
 pytest tests/unit/test_cli.py       # CLI tests
@@ -21,7 +21,7 @@ RUN_IAC_VALIDATION=1 pytest tests/integration/test_iac_validates.py -v
 ```
 
 ## Test Structure
-- 1209 unit tests across 36 test files in `tests/unit/`
+- 1238 unit tests across 36 test files in `tests/unit/`
 - 36 Hypothesis property-based invariant tests in `test_invariants.py` (1080 randomized inputs per run)
 - 16 nrql-engine parity regression tests in `test_phase19b_engine_parity.py`
 - 13 integration tests across 5 files in `tests/integration/` (env-var gated)

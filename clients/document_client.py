@@ -113,7 +113,8 @@ class DocumentClient:
     ) -> DynatraceResponse:
         params: Dict[str, Any] = {}
         if optimistic_version:
-            params["optimisticLockingVersion"] = optimistic_version
+            # D22: verified live — kebab-case query param.
+            params["optimistic-locking-version"] = optimistic_version
         return self.http.delete(
             f"{self.base}/{doc_id}", params=params, prefer_oauth=True
         )
