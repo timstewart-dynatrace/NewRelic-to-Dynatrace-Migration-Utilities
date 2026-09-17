@@ -224,7 +224,7 @@ class TestSmartscapeParity:
 
     def test_entity_name_by_context(self, compiler):
         cases = {
-            "SELECT count(*) FROM Transaction WHERE entityName = 'svc'": 'service.name == "svc"',
+            "SELECT count(*) FROM Transaction WHERE entityName = 'svc'": 'dt.service.name == "svc"',
             "SELECT average(cpuPercent) FROM SystemSample FACET entityName": "by: {host.name}",
             "SELECT average(apm.service.transaction.duration) FROM Metric FACET entity.name":
                 "by: {dt.service.name}",
@@ -347,7 +347,7 @@ class TestGuidResolutionUsesDimensions:
 
     def test_other_guid_resolves_to_service_name_with_warning(self):
         result = self._convert("MONITOR", "ping")
-        assert 'service.name == "ping"' in result.dql
+        assert 'dt.service.name == "ping"' in result.dql
         assert "dt.entity" not in result.dql
         assert any("verify the dimension" in w for w in result.warnings)
 

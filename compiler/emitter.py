@@ -222,8 +222,16 @@ class DQLEmitter:
     # the dt-migration skill): span.name-style resource attribute in span/log context,
     # metric dimension in metric/K8s context.
     ENTITY_NAME_FIELDS = {'entityname', 'entity.name'}
-    ENTITY_NAME_SPAN_FIELD = 'service.name'
+    # OneAgent spans carry dt.service.name but not service.name (verified live,
+    # docs/live-validation-2026-09.md D10); logs carry service.name.
+    ENTITY_NAME_SPAN_FIELD = 'dt.service.name'
+    ENTITY_NAME_LOG_FIELD = 'service.name'
     ENTITY_NAME_METRIC_FIELD = 'dt.service.name'
+    # NRQL service-identity fields mapped by context regardless of field_map overrides.
+    SERVICE_NAME_FIELDS = {'appname'}
+    # NR `error` on Transaction/Span -> OneAgent request failure flag (D12);
+    # otel.status_code is unset on OneAgent spans.
+    SPAN_ERROR_FIELD = 'request.is_failed'
     ENTITY_NAME_HOST_FIELD = 'host.name'
     ENTITY_NAME_K8S_FIELD = 'k8s.workload.name'
     # NR infra samples whose entityName is the host
@@ -1145,7 +1153,7 @@ class DQLEmitter:
         # 1b. Auto-filter for TransactionError -> only error spans
         from_type = query.from_clause.lower().replace('_', '').replace('-', '')
         if from_type == 'transactionerror':
-            parts.append('| filter otel.status_code == "ERROR"')
+            parts.append(f'| filter {self.SPAN_ERROR_FIELD} == true')
 
         # 2. Filter -- extract subqueries for separate lookup steps
         subqueries: List[InSubqueryCond] = []
@@ -2118,9 +2126,14 @@ class DQLEmitter:
 
     def _emit_condition(self, cond: Condition) -> str:
         if isinstance(cond, LogicalCond):
+            op = cond.op.lower()  # and, or
             left = self._emit_condition(cond.left)
             right = self._emit_condition(cond.right)
-            op = cond.op.lower()  # and, or
+            # DQL `and` binds tighter than `or`: keep mixed-operator groups explicit.
+            if isinstance(cond.left, LogicalCond) and cond.left.op.lower() != op:
+                left = f"({left})"
+            if isinstance(cond.right, LogicalCond) and cond.right.op.lower() != op:
+                right = f"({right})"
             return f"{left} {op} {right}"
 
         if isinstance(cond, NotCond):
@@ -2169,6 +2182,10 @@ class DQLEmitter:
 
         if isinstance(cond, IsNullCond):
             expr = self._emit_expr(cond.expr)
+            if expr == self.SPAN_ERROR_FIELD:
+                # NR `error IS [NOT] NULL` means "had / had no error"; request.is_failed is
+                # present on every request span, so a null check would match everything.
+                return f"{expr} == true" if cond.negated else f"{expr} != true"
             return f"isNotNull({expr})" if cond.negated else f"isNull({expr})"
 
         if isinstance(cond, InListCond):
@@ -2329,9 +2346,14 @@ class DQLEmitter:
             if low in self.METRIC_DIMENSION_PASSTHROUGH:
                 return name  # Preserve as custom metric dimension
 
-        # Entity name: raw dimension, chosen by query context (gen3-apis.md §7)
-        if low in self.ENTITY_NAME_FIELDS and name not in self.field_map and low not in self.field_map:
+        # Entity / service name: raw dimension, chosen by query context (gen3-apis.md §7)
+        if low in self.SERVICE_NAME_FIELDS or (
+                low in self.ENTITY_NAME_FIELDS and name not in self.field_map and low not in self.field_map):
             return self._entity_name_field(query_class)
+
+        # Span error flag
+        if low == 'error' and query_class == 'spans':
+            return self.SPAN_ERROR_FIELD
 
         # Check exact match first
         if name in self.field_map:
@@ -2354,6 +2376,8 @@ class DQLEmitter:
             return self.ENTITY_NAME_K8S_FIELD
         if query_class == 'METRIC':
             return self.ENTITY_NAME_METRIC_FIELD
+        if query_class == 'logs':
+            return self.ENTITY_NAME_LOG_FIELD
         return self.ENTITY_NAME_SPAN_FIELD
 
     # -- FACET items --

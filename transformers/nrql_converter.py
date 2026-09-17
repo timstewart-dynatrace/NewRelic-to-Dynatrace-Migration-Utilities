@@ -916,10 +916,10 @@ class NRQLtoDQLConverter:
                 "name": "span.name",
                 "transactionName": "span.name",
                 "transactionname": "span.name",
-                "appName": "service.name",
-                "appname": "service.name",
-                "entityName": "service.name",
-                "entityname": "service.name",
+                "appName": "dt.service.name",
+                "appname": "dt.service.name",
+                "entityName": "dt.service.name",
+                "entityname": "dt.service.name",
                 "entityGuid": "dt.smartscape.service",
                 "httpResponseCode": "http.response.status_code",
                 "httpresponsecode": "http.response.status_code",
@@ -1602,13 +1602,13 @@ class NRQLtoDQLConverter:
                 if entity_subtype in ("SERVICE_LEVEL",):
                     new_filter = f'slo.name == "{resolved_name}"'
                 elif entity_subtype in ("APM_APPLICATION", "APPLICATION", "SERVICE"):
-                    new_filter = f'service.name == "{resolved_name}"'
+                    new_filter = f'dt.service.name == "{resolved_name}"'
                 elif entity_subtype in ("HOST",):
                     new_filter = f'host.name == "{resolved_name}"'
                 else:
-                    new_filter = f'service.name == "{resolved_name}"'
+                    new_filter = f'dt.service.name == "{resolved_name}"'
                     result.warnings.append(
-                        f"NR entity type {entity_subtype or 'unknown'} resolved to a service.name filter; "
+                        f"NR entity type {entity_subtype or 'unknown'} resolved to a dt.service.name filter; "
                         "verify the dimension (e.g. host.name, k8s.workload.name)"
                     )
 
@@ -1624,7 +1624,7 @@ class NRQLtoDQLConverter:
             else:
                 result.warnings.append(
                     f"NR GUID detected ({entity_type or 'unknown type'}): {guid[:30]}... "
-                    f"Replace with a service.name / host.name filter"
+                    f"Replace with a dt.service.name / host.name filter"
                 )
 
         return dql
@@ -3667,15 +3667,15 @@ class NRQLtoDQLConverter:
                         f'SLO GUID resolved to: {entity_name} -> Use: fetch slo | filter slo.name == "{entity_name}"'
                     )
                 elif entity_type in ("APM_APPLICATION", "APPLICATION", "SERVICE"):
-                    replacement = f'service.name == "{entity_name}"'
+                    replacement = f'dt.service.name == "{entity_name}"'
                     self._current_warnings.append(f"Service GUID resolved to: {entity_name}")
                 elif entity_type == "HOST":
                     replacement = f'host.name == "{entity_name}"'
                     self._current_warnings.append(f"Host GUID resolved to: {entity_name}")
                 else:
-                    replacement = f'service.name == "{entity_name}"'
+                    replacement = f'dt.service.name == "{entity_name}"'
                     self._current_warnings.append(
-                        f"GUID resolved to: {entity_name} ({entity_type or 'unknown type'}) -> service.name; "
+                        f"GUID resolved to: {entity_name} ({entity_type or 'unknown type'}) -> dt.service.name; "
                         "verify the dimension"
                     )
             else:
@@ -3695,13 +3695,13 @@ class NRQLtoDQLConverter:
                         replacement = "__GUID_PLACEHOLDER__"
                         self._current_warnings.append(
                             f"GUID filter detected ({entity_type}) - replace with a dimension filter. "
-                            'Example: service.name == "your-svc-name"'
+                            'Example: dt.service.name == "your-svc-name"'
                         )
                 except Exception:
                     replacement = "__GUID_PLACEHOLDER__"
                     self._current_warnings.append(
                         "GUID filter detected - replace with a dimension filter. "
-                        'Example: service.name == "your-svc-name"'
+                        'Example: dt.service.name == "your-svc-name"'
                     )
 
             result = re.sub(
@@ -3724,7 +3724,7 @@ class NRQLtoDQLConverter:
                     replacement = f'slo.name == "{entity_name}"'
                     self._current_warnings.append(f"SLO GUID resolved: {entity_name}")
                 else:
-                    replacement = f'service.name == "{entity_name}"'
+                    replacement = f'dt.service.name == "{entity_name}"'
                     self._current_warnings.append(f"GUID resolved to: {entity_name}")
             else:
                 try:
@@ -3869,7 +3869,7 @@ class NRQLtoDQLConverter:
         # Replace GUID placeholder
         result = result.replace(
             "__GUID_PLACEHOLDER__",
-            '/* REPLACE WITH: service.name == "your-service-name" OR dt.smartscape.service == toSmartscapeId("SERVICE-XXXXX") */',
+            '/* REPLACE WITH: dt.service.name == "your-service-name" OR dt.smartscape.service == toSmartscapeId("SERVICE-XXXXX") */',
         )
 
         # Duration unit conversions
