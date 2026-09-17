@@ -971,3 +971,25 @@ class TestNonNrqlDetectorQueries:
         })
         assert self._inputs(r.anomaly_detectors[0])["alertCondition"] == "ABOVE"
         assert any("not supported" in w for w in r.warnings)
+
+
+class TestSeverityFanoutWorkflowsKept:
+    """D5: per-severity workflows were built but only the first was returned."""
+
+    def test_all_fanout_workflows_returned(self):
+        from transformers.alert_transformer import AlertTransformer
+
+        r = AlertTransformer().transform({
+            "name": "tiered", "conditions": [],
+            "severityRules": [{"severity": "ERROR", "delayMinutes": 0},
+                              {"severity": "AVAILABILITY", "delayMinutes": 10}],
+        })
+        assert r.success
+        assert len(r.workflows) == 2
+        assert r.workflow is r.workflows[0]
+
+    def test_single_workflow_still_listed(self):
+        from transformers.alert_transformer import AlertTransformer
+
+        r = AlertTransformer().transform({"name": "flat", "conditions": []})
+        assert len(r.workflows) == 1 and r.workflow is r.workflows[0]

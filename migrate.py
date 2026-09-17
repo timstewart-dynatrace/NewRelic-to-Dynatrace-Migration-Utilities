@@ -366,8 +366,11 @@ class MigrationOrchestrator:
                     )
                     for (idx, item), result in zip(items_to_transform, results):
                         if result.success:
-                            if result.workflow:
-                                transformed_data["workflows"].append(result.workflow)
+                            # D5: severity fanout can emit several workflows per policy.
+                            transformed_data["workflows"].extend(
+                                getattr(result, "workflows", None)
+                                or ([result.workflow] if result.workflow else [])
+                            )
                             transformed_data["anomaly_detectors"].extend(
                                 result.anomaly_detectors or []
                             )

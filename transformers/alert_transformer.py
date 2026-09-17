@@ -35,7 +35,8 @@ class AlertTransformResult:
     """Result of alert transformation (Gen3)."""
 
     success: bool
-    workflow: Optional[Dict[str, Any]] = None
+    workflow: Optional[Dict[str, Any]] = None  # first of `workflows` (backward compat)
+    workflows: List[Dict[str, Any]] = field(default_factory=list)  # all, incl. severity fanout
     anomaly_detectors: List[Dict[str, Any]] = field(default_factory=list)
     warnings: List[str] = field(default_factory=list)
     errors: List[str] = field(default_factory=list)
@@ -78,7 +79,7 @@ class AlertTransformer:
                 warnings=warnings,
             )
             # Backward compat: `.workflow` is the first (or only) Workflow;
-            # `.all_workflows` carries the full list when fanout occurred.
+            # `.workflows` carries the full list when severity fanout occurred.
             workflow = workflows[0]
 
             logger.info(
@@ -91,6 +92,7 @@ class AlertTransformer:
             return AlertTransformResult(
                 success=True,
                 workflow=workflow,
+                workflows=workflows,
                 anomaly_detectors=anomaly_detectors,
                 warnings=warnings,
                 errors=errors,
