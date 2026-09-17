@@ -35,6 +35,7 @@ def main() -> int:
     dets = []
     dets += [("alert", d) for d in AlertTransformer().transform({"name":"[nr-migration-test] p","conditions":[{"name":"err","nrql":{"query":"SELECT percentage(count(*), WHERE error IS true) FROM Transaction WHERE appName='frontend'"}}]}).anomaly_detectors]
     dets += [("alert:terms", d) for d in AlertTransformer().transform({"name":"[nr-migration-test] p2","conditions":[{"name":"lat","nrql":{"query":"SELECT average(duration) FROM Transaction FACET appName"},"terms":[{"threshold":2,"operator":"ABOVE","priority":"critical","thresholdDuration":600,"thresholdOccurrences":"AT_LEAST_ONCE"}]}]}).anomaly_detectors]
+    dets += [("alert:ABOVE_OR_EQUALS", d) for d in AlertTransformer().transform({"name": "[nr-migration-test] p3", "conditions": [{"name": "op", "nrql": {"query": "SELECT count(*) FROM Transaction"}, "terms": [{"threshold": 1, "operator": "ABOVE_OR_EQUALS", "priority": "critical"}]}]}).anomaly_detectors]
     for ct in _CONDITION_METRIC_MAP: dets += [(f"nonnrql:{ct}", d) for d in NonNRQLAlertTransformer().transform({"type":ct,"name":f"[nr-migration-test] {ct}"}).anomaly_detectors]
     for c in ({"type":"host_not_reporting","name":"[nr-migration-test] h"},{"type":"process_not_running","name":"[nr-migration-test] p"},{"type":"infra_metric","name":"[nr-migration-test] m","select_value":"diskUsedPercent","criticalThreshold":{"value":90,"durationMinutes":2}}):
         dets += [(f"infra:{c['type']}", d) for d in InfrastructureTransformer().transform(c).anomaly_detectors]

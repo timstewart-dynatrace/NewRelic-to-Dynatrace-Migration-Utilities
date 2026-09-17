@@ -24,14 +24,14 @@ from typing import Any, Dict, List, Optional
 
 import structlog
 
-from ._detector_utils import dealerting_samples, nrql_to_analyzer_query
+from ._detector_utils import alert_condition_for, dealerting_samples, nrql_to_analyzer_query
 from ._workflow_utils import (
     davis_problem_trigger,
     migrated_event_filter,
     migrated_event_name,
     tasks_list_to_dict,
 )
-from .mapping_rules import OPERATOR_MAP, EntityMapper
+from .mapping_rules import EntityMapper
 
 logger = structlog.get_logger()
 
@@ -135,7 +135,7 @@ class AlertTransformer:
         signal = condition.get("signal", {}) or {}
         aggregation_window = int(signal.get("aggregationWindow", 60))
 
-        threshold, operator_dt, samples, violating = self._resolve_threshold(terms)
+        threshold, operator_dt, samples, violating = self._resolve_threshold(terms, warnings)
 
 
         # builtin:davis.anomaly-detectors schema v1.0.14 (verified 2026-04-20
@@ -211,7 +211,7 @@ class AlertTransformer:
         return detector
 
     @staticmethod
-    def _resolve_threshold(terms: List[Dict[str, Any]]):
+    def _resolve_threshold(terms: List[Dict[str, Any]], warnings: Optional[List[str]] = None):
         """Pick the critical term (fallback: warning) and translate to DT fields."""
         operator_dt = "ABOVE"
         threshold = 0.0
@@ -231,7 +231,9 @@ class AlertTransformer:
         )
         active = critical or warning or terms[0]
 
-        operator_dt = OPERATOR_MAP.get(active.get("operator", "ABOVE"), "ABOVE")
+        # D23: the analyzer only accepts ABOVE / BELOW (verified live); inclusive and
+        # EQUALS operators are mapped or defaulted with a warning.
+        operator_dt = alert_condition_for(active.get("operator", "ABOVE"), "ABOVE", warnings)
         threshold = float(active.get("threshold", 0))
         duration_seconds = int(active.get("thresholdDuration", 300))
         samples = max(1, duration_seconds // 60)

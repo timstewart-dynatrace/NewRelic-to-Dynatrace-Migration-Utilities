@@ -1221,3 +1221,27 @@ def test_slo_auditor_update_sends_locking_version():
     with _patch.object(auditor, "_platform_request", side_effect=fake_request):
         assert auditor.update_slo("slo-1", {"name": "x"})
     assert calls[-1] == ("PUT", "https://abc12345.apps.dynatrace.com/platform/slo/v1/slos/slo-1?optimistic-locking-version=v9")
+
+
+class TestLiveRejectedEnumsAndActions:
+    """D23/D24: values rejected by / absent from a live tenant."""
+
+    def test_nrql_alert_condition_is_above_or_below(self):
+        from transformers.alert_transformer import AlertTransformer
+
+        for op, expected in (("ABOVE_OR_EQUALS", "ABOVE"), ("BELOW_OR_EQUALS", "BELOW"), ("EQUALS", "ABOVE")):
+            r = AlertTransformer().transform({"name": "p", "conditions": [
+                {"name": "c", "nrql": {"query": "SELECT count(*) FROM Transaction"},
+                 "terms": [{"threshold": 1, "operator": op, "priority": "critical"}]}]})
+            inputs = {i["key"]: i["value"] for i in r.anomaly_detectors[0]["value"]["analyzer"]["input"]}
+            assert inputs["alertCondition"] == expected
+            assert r.warnings
+
+    def test_dql_task_uses_execute_dql_query_action(self):
+        from transformers.aiops_transformer import AIOpsTransformer
+
+        r = AIOpsTransformer().transform({"workflows": [
+            {"name": "w", "enrichments": [{"name": "e", "nrql": "SELECT count(*) FROM Transaction"}]}]})
+        actions = [t["action"] for wf in r.workflows for t in wf["tasks"].values()]
+        assert "dynatrace.automations:execute-dql-query" in actions
+        assert "dynatrace.automations:dql-query" not in actions

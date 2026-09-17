@@ -127,3 +127,12 @@ Both Platform SLO and Document API deletes use `optimistic-locking-version` (keb
 repo sent `optimisticLockingVersion` from `SloClient.delete_slo` and
 `DocumentClient.delete_document`, and `SLOAuditor.update_slo` sent no version at all — rollback
 deletes and SLO auto-fix updates would have failed.
+
+### D23 / D24 — found during the nrql-engine port review — FIXED
+- **D23:** the NRQL alert path mapped operators through `OPERATOR_MAP` and could emit
+  `ABOVE_OR_EQUAL` / `EQUALS`. Settings validation: "Enumeration value 'ABOVE_OR_EQUAL' is not
+  supported … Possible values are [BELOW, ABOVE]". Now uses `alert_condition_for()`.
+- **D24:** AIOps enrichment tasks used action `dynatrace.automations:dql-query`, which does not
+  exist. Across the tenant's 102 workflows DQL tasks use `dynatrace.automations:execute-dql-query`
+  (90 tasks).
+

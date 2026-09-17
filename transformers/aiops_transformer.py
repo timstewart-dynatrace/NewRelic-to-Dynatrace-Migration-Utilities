@@ -10,7 +10,7 @@ Davis + Workflows:
   NR Destinations        -> Workflow action tasks
                             (delegates to NotificationTransformer)
   NR Enrichments         -> Workflow enrichment steps (tasks with
-                            `dynatrace.automations:dql-query` or
+                            `dynatrace.automations:execute-dql-query` or
                             `http-function` actions)
   NR Decisions (correlation rules)
                          -> Davis causal engine (auto — no direct
@@ -119,7 +119,8 @@ class AIOpsTransformer:
             tasks.append(
                 {
                     "name": f"enrich_{idx}",
-                    "action": "dynatrace.automations:dql-query",
+                    # D24: real action id (verified on live workflows).
+                    "action": "dynatrace.automations:execute-dql-query",
                     "active": True,
                     "description": f"Migrated NR enrichment: {enr.get('name', '')}",
                     "input": {
