@@ -39,17 +39,24 @@ class WorkloadTransformResult:
 class WorkloadTransformer:
     """NR Workload -> DT Segment + IAM policy skeleton (Gen3)."""
 
+    # NR entity type -> Smartscape node type. Segment includes on Gen3 tenants
+    # filter `_all_entities` with `type` / `id` / `name` statements (verified live,
+    # docs/live-validation-2026-09.md). Synthetic monitors have no available
+    # Smartscape node type yet.
     ENTITY_TYPE_MAP = {
         "APPLICATION": "SERVICE",
         "APM_APPLICATION": "SERVICE",
-        "BROWSER_APPLICATION": "APPLICATION",
-        "MOBILE_APPLICATION": "MOBILE_APPLICATION",
+        "BROWSER_APPLICATION": "FRONTEND",
+        "MOBILE_APPLICATION": "FRONTEND",
         "HOST": "HOST",
         "INFRASTRUCTURE_HOST": "HOST",
-        "SYNTHETIC_MONITOR": "SYNTHETIC_TEST",
+        "SYNTHETIC_MONITOR": None,
         "WORKLOAD": None,
         "DASHBOARD": None,
     }
+    SEGMENT_DATA_OBJECT = "_all_entities"
+    # Dynatrace entity IDs (e.g. HOST-0123ABCD). NR GUIDs are base64 and never match.
+    DT_ENTITY_ID_RE = re.compile(r"^[A-Z][A-Z0-9_]*-[0-9A-F]+$")
 
     def transform(self, nr_workload: Dict[str, Any]) -> WorkloadTransformResult:
         warnings: List[str] = []
@@ -95,9 +102,9 @@ class WorkloadTransformer:
         """Build a Segment filter tree (Group -> Statement children)."""
         children: List[Dict[str, Any]] = []
 
-        # Phase 25: prefer entity-ID-based statements when GUIDs are available;
-        # fall back to exact entity.name == (not contains) when the NR collection
-        # carries names. This closes Gen2-only capability #4.
+        # Phase 25: prefer entity-ID-based statements when the collection carries
+        # Dynatrace entity IDs; otherwise match the exact node name (NR GUIDs are
+        # not Dynatrace IDs). This closes Gen2-only capability #4.
         by_type_ids: Dict[str, List[str]] = {}  # dt_type -> [guid1, ...]
         by_type_names: Dict[str, List[str]] = {}  # dt_type -> [name1, ...]
         for entity in collection:
@@ -110,23 +117,33 @@ class WorkloadTransformer:
                     f"Entity type '{etype}' for '{ename}' has no Gen3 segment mapping."
                 )
                 continue
-            if eguid:
+            if eguid and self.DT_ENTITY_ID_RE.match(eguid):
                 by_type_ids.setdefault(dt_type, []).append(eguid)
-            else:
+            elif ename:
+                if eguid:
+                    warnings.append(
+                        f"Entity '{ename}' has an NR GUID, not a Dynatrace entity ID; "
+                        "segment matches it by name."
+                    )
                 by_type_names.setdefault(dt_type, []).append(ename)
+            else:
+                warnings.append(
+                    f"Entity of type '{etype}' has neither a Dynatrace ID nor a name; skipped."
+                )
 
         for dt_type, guids in by_type_ids.items():
             children.append(
                 {
+                    # D14: type AND (id OR id ...) — the old OR matched every node of the type.
                     "type": "Group",
-                    "logicalOperator": "OR",
+                    "logicalOperator": "AND",
                     "children": [
-                        self._statement("dt.entity.type", "=", dt_type),
+                        self._statement("type", "=", dt_type),
                         {
                             "type": "Group",
                             "logicalOperator": "OR",
                             "children": [
-                                self._statement("dt.entity.id", "=", g) for g in guids
+                                self._statement("id", "=", g) for g in guids
                             ],
                         },
                     ],
@@ -137,14 +154,14 @@ class WorkloadTransformer:
             children.append(
                 {
                     "type": "Group",
-                    "logicalOperator": "OR",
+                    "logicalOperator": "AND",
                     "children": [
-                        self._statement("dt.entity.type", "=", dt_type),
+                        self._statement("type", "=", dt_type),
                         {
                             "type": "Group",
                             "logicalOperator": "OR",
                             "children": [
-                                self._statement("entity.name", "=", n) for n in names
+                                self._statement("name", "=", n) for n in names
                             ],
                         },
                     ],
@@ -161,11 +178,11 @@ class WorkloadTransformer:
                 )
                 continue
             group_children: List[Dict[str, Any]] = [
-                self._statement("dt.entity.type", "=", dt_type)
+                self._statement("type", "=", dt_type)
             ]
             if parsed["name_filter"]:
                 group_children.append(
-                    self._statement("entity.name", "contains", parsed["name_filter"])
+                    self._statement("name", "contains", parsed["name_filter"])
                 )
             for tag_key, tag_value in parsed["tags"]:
                 group_children.append(
@@ -217,7 +234,7 @@ class WorkloadTransformer:
                 "includes": {
                     "items": [
                         {
-                            "dataObject": "_all_data_object",
+                            "dataObject": self.SEGMENT_DATA_OBJECT,
                             "filter": filter_tree,
                         }
                     ]

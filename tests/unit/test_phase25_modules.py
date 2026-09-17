@@ -139,31 +139,30 @@ class TestTemplateValueAutoTag:
 
 
 class TestEntityIDSegment:
-    def test_guid_produces_dt_entity_id_statement(self):
+    def test_dt_entity_id_produces_smartscape_id_statement(self):
         r = WorkloadTransformer().transform({
             "name": "prod",
             "collection": [
                 {"type": "HOST", "name": "h1", "guid": "HOST-ABC123"},
             ],
         })
-        seg_filter = r.segment["value"]["includes"]["items"][0]["filter"]
-        # Flatten the tree to check for dt.entity.id
-        flat = str(seg_filter)
-        assert "dt.entity.id" in flat
-        assert "HOST-ABC123" in flat
+        seg = r.segment["value"]["includes"]["items"][0]
+        assert seg["dataObject"] == "_all_entities"
+        group = seg["filter"]["children"][0]
+        assert group["logicalOperator"] == "AND"  # D14: type AND ids, not OR
+        assert group["children"][0]["key"]["value"] == "type"
+        assert group["children"][1]["children"][0]["key"]["value"] == "id"
+        assert "HOST-ABC123" in str(group)
+        assert "dt.entity" not in str(seg)
 
     def test_no_guid_produces_entity_name_equality(self):
         r = WorkloadTransformer().transform({
             "name": "prod",
             "collection": [{"type": "HOST", "name": "h1"}],
         })
-        flat = str(r.segment["value"]["includes"]["items"][0]["filter"])
-        assert "entity.name" in flat
-        assert "h1" in flat
-        # Should use equality, not contains
-        children = r.segment["value"]["includes"]["items"][0]["filter"]["children"]
-        name_group = [c for c in children if str(c).count("entity.name") > 0]
-        assert name_group  # at least one group referencing entity.name
+        group = r.segment["value"]["includes"]["items"][0]["filter"]["children"][0]
+        name_stmt = group["children"][1]["children"][0]
+        assert (name_stmt["key"]["value"], name_stmt["operator"]["value"], name_stmt["value"]["value"]) == ("name", "=", "h1")
 
     def test_mixed_guid_and_name_collection(self):
         r = WorkloadTransformer().transform({
@@ -174,8 +173,19 @@ class TestEntityIDSegment:
             ],
         })
         flat = str(r.segment["value"]["includes"]["items"][0]["filter"])
-        assert "dt.entity.id" in flat
-        assert "entity.name" in flat
+        assert "'value': 'id'" in flat
+        assert "'value': 'name'" in flat
+        assert "dt.entity" not in flat
+
+    def test_nr_guid_falls_back_to_name_with_warning(self):
+        r = WorkloadTransformer().transform({
+            "name": "nr",
+            "collection": [{"type": "APPLICATION", "name": "checkout", "guid": "MXxBUE18QVBQTElDQVRJT058MTIz"}],
+        })
+        flat = str(r.segment["value"]["includes"]["items"][0]["filter"])
+        assert "'value': 'SERVICE'" in flat and "'value': 'checkout'" in flat
+        assert "MXxBUE18" not in flat
+        assert any("not a Dynatrace entity ID" in w for w in r.warnings)
 
 
 # ---------------------------------------------------------------------------

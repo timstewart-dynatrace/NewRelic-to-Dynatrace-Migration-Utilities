@@ -50,8 +50,12 @@ All five workflow emitters (`alert_transformer`, `aiops_transformer`, `infrastru
 
 Passing raw NRQL produces `400 "Invalid DQL query. 'FROM' isn't allowed here."` Use `transformers._detector_utils.nrql_to_analyzer_query(nrql, warnings=...)`:
 
-- HIGH/MEDIUM conversion → converter's DQL
-- Empty/LOW/failure → `// UNCONVERTED NRQL: <orig>\ntimeseries count()` (preserves the NRQL as a comment; trailing placeholder keeps the payload server-validatable so the detector still creates)
+- HIGH/MEDIUM conversion → converter's DQL, normalised by `ensure_timeseries()`: the analyzer only accepts timeseries results, so `fetch … | summarize …` becomes `makeTimeseries` (arithmetic over aggregations such as percentages is split into named series + `fieldsAdd`)
+- Empty/LOW/failure, or DQL that cannot be made a timeseries → `// UNCONVERTED NRQL: <orig>\n` + `FALLBACK_QUERY`, an inert timeseries that matches no data so the detector creates but never fires
+
+Verified live (`dtctl exec analyzer`, docs/live-validation-2026-09.md): `summarize` output fails with "No valid time series records found", and the old placeholder `timeseries count()` is invalid (count() needs a metric key). Metric-based detectors must use Grail keys (`transformers._detector_utils.GRAIL_METRIC_KEYS`) — `timeseries avg(builtin:…)` is a DQL syntax error.
+
+Span fields verified on OneAgent data: service identity is `dt.service.name` (`service.name` is empty on spans; logs keep `service.name`), and failures are `request.is_failed` (`otel.status_code` is unset).
 
 ## 6. `builtin:davis.anomaly-detectors` canonical shape (v1.0.14) [MUST]
 
@@ -111,7 +115,7 @@ No classic mapping exists for host groups, process groups, or container groups �
 
 **Status:** implemented in the compiler, converter, and fixer (`validators/smartscape_map.py`, `DQLValidator._fix_classic_entity_references`), mirrored in nrql-engine. NRQL `entityName` / `entity.name` emit a raw dimension by context: `service.name` (spans/logs), `host.name` (host samples), `dt.service.name` (Metric), `k8s.workload.name` (K8s, with warning).
 
-**Known exception — segment filters (not DQL):** `workload_transformer.py` emits segment filter statements keyed on `dt.entity.type` / `dt.entity.id`. The filter-segments `includes[].filter` tree has no public documentation and no documented Smartscape-node `dataObject`, so there is no verified Gen3 form to move to. Segment import is SKIPPED anyway. Leave as-is until Dynatrace documents it; the audit grep below matches these lines and that is expected.
+**Segment filters:** live Gen3 segments include `dataObject: "_all_entities"` with `type = <NODE_TYPE>` AND (`id = …` | `name = …`) statements; `workload_transformer.py` emits that form. NR GUIDs are not Dynatrace IDs, so they fall back to `name`. The emitted wrapper is still the Settings-style `{schemaId, value.includes.items}` shape, whereas the Platform filter-segments API takes `{name, isPublic, includes: [{dataObject, filter: "<stringified tree>"}]}` — another reason segment import stays SKIPPED.
 
 Events API v2 `entitySelector` strings (`entityId(...)` / `entityName(...)`) in change-event payloads are also not DQL and remain supported on Gen3 — not covered by this rule.
 
