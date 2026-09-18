@@ -16,7 +16,7 @@
 
 ## Overall capability (this repo, as of Phase 14)
 
-- 10 transformers, 292 compiler patterns, 920+ NRQL→DQL tests
+- 10 transformers, 292 compiler patterns, 920+ NRQL→DQL tests *(Phase 14 snapshot — current: 40 transformers, 309 compiler tests, 1183 unit tests; see `docs/COVERAGE.md`)*
 - Gen3 default (`--legacy` flag preserves Config v1 path)
 - Settings 2.0 + Document API + Automation API clients
 - Monaco v2 and Terraform HCL exporters
@@ -29,7 +29,7 @@
 | NR Surface | Dynatrace Target | Coverage | Notes |
 |---|---|---|---|
 | APM Application entity | Service (OneAgent auto-discovered) | 🔴 | Agent install is out of the transformer's scope |
-| `Transaction` NRQL event | `fetch spans` | ✅ | 292 compiler patterns handle this |
+| `Transaction` NRQL event | `fetch spans` | ✅ | AST compiler handles this |
 | `TransactionError` event | `fetch spans \| filter isNotNull(error)` | ✅ | |
 | `Span` event | `fetch spans` | ✅ | |
 | Distributed tracing config | DT (auto) | ✅ | No config needed |

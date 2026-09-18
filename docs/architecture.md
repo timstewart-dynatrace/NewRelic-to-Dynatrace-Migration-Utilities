@@ -1,9 +1,9 @@
-# Architecture (Gen3, post-Phase-23)
+# Architecture (Gen3, post-Phase-26)
 
-> **Last updated:** 2026-04-15
-> **Companion docs:** `migration-coverage.md`, `out-of-scope.md`, `nrql-engine-sync-audit.md`, `quickstart.md`, `migration-guide.md`.
+> **Last updated:** 2026-09-16
+> **Companion docs:** `migration-coverage.md`, `out-of-scope.md`, `nrql-engine-sync-audit.md`, `quickstart.md`, `migration-guide.md`, `token-scopes.md`.
 
-This is the high-level map of the codebase after Phases 11–23. For
+This is the high-level map of the codebase after Phases 11–26. Gen3 request-shape rules (auth, paths, multipart, detector shape) live in `.claude/rules/gen3-apis.md`. For
 per-surface migration status, read `docs/migration-coverage.md`. For
 permanent exclusions, read `docs/out-of-scope.md`.
 
@@ -17,7 +17,7 @@ NewRelic-to-Dynatrace-Migration-Utilities/
 │   ├── lexer.py / parser.py / ast_nodes.py / emitter.py
 │   ├── shorthands.py                # Phase 19b — pre-lex shorthand expansion
 │   └── tokens.py
-├── transformers/                    # 30+ entity transformers (one per NR surface)
+├── transformers/                    # 40 entity transformers (one per NR surface)
 │   ├── alert_transformer.py         # Gen3: Workflow + Davis Anomaly Detector
 │   ├── dashboard_transformer.py     # Gen3: Document API dashboard JSON
 │   ├── *_transformer.py             # see "Transformer inventory" below
@@ -39,8 +39,8 @@ NewRelic-to-Dynatrace-Migration-Utilities/
 │   ├── terraform.py                 # Gen3 Terraform HCL emitter
 │   └── legacy/                      # Gen2 emitters (--legacy mode)
 ├── validators/
-│   ├── dql_validator.py             # 24 DQL fixers (Phase 19b at parity with TS)
-│   └── dql_fixer.py
+│   ├── dql_validator.py             # Structural DQL validator
+│   └── dql_fixer.py                 # 24 fix rules (Phase 19b parity with TS)
 ├── registry/
 │   ├── environment.py               # DT environment lookups (entities, metrics, segments)
 │   └── slo_auditor.py
@@ -64,9 +64,9 @@ NewRelic-to-Dynatrace-Migration-Utilities/
 │   ├── error_taxonomy.py            # Phase 22 — WarningCode/ErrorCode enums
 │   ├── auth.py / logger.py / validators.py
 └── tests/
-    ├── unit/                        # 1100+ unit tests
-    ├── integration/                 # env-var-gated tests against real tenants
-    └── legacy/                      # tests for transformers/legacy/* under --legacy
+    ├── unit/                        # 1183 unit tests (35 files)
+    ├── integration/                 # 14 env-var-gated tests against real tenants
+    └── legacy/                      # 158 tests for transformers/legacy/* under --legacy
 ```
 
 ## Pipeline
@@ -75,7 +75,7 @@ NewRelic-to-Dynatrace-Migration-Utilities/
 NR NerdGraph (export)
         │
         ▼
-   transformers/* (Gen3 default)         ← 30+ transformers, one per surface
+   transformers/* (Gen3 default)         ← 40 transformers, one per surface
         │
         ├── compile NRQL → DQL via compiler/* + nrql_converter (Phase 19 uplift)
         │     └── post-processors: shift, extrapolate, apdex, funnel, percentage
@@ -85,9 +85,9 @@ NR NerdGraph (export)
    transformed_data buckets (Gen3-shaped):
      - workflows                  (Automation API)
      - anomaly_detectors          (Settings 2.0 builtin:davis.anomaly-detectors)
-     - segments                   (Settings 2.0 builtin:segment)
-     - iam_policies               (Settings 2.0 builtin:iam.policy)
-     - synthetic_tests            (Settings 2.0 builtin:synthetic_test)
+     - segments                   (builtin:segment envelope — import SKIPPED; needs Platform segment API)
+     - iam_policies               (builtin:iam.policy envelope — import SKIPPED; needs Account Mgmt API)
+     - synthetic_tests            (builtin:synthetic_test envelope — import SKIPPED; Gen3 uses per-facet schemas)
      - slos                       (Settings 2.0 builtin:monitoring.slo)
      - openpipeline_processors    (Settings 2.0 builtin:openpipeline.*)
      - dashboards                 (Document API dashboard content)
@@ -121,7 +121,7 @@ Phase 20 audit subcommand diffs a saved baseline against the live tenant.
 | 21 | `HISTORY.md`, `config/project_links.py` (single-source URL registry) |
 | 22 | `docs/out-of-scope.md`, `utils/error_taxonomy.py` (WarningCode/ErrorCode), CI workflow parity job |
 | 23 | `key_transaction_transformer`, `otel_metrics_transformer`, `statsd_transformer`, `cloudwatch_metric_streams_transformer`, `metric_transform` plugin hook, `mappings/` per-concern modules, numeric confidence-score sync |
-| 24 (pending) | DB monitoring, on-host integrations, security signals, custom entities, log archive, metric normalization, synthetic specialized (cert-check / broken-links), saved-filter notebooks |
+| 24 | DB monitoring, on-host integrations, security signals, custom entities, log archive, metric normalization, synthetic specialized (cert-check / broken-links), saved-filter notebooks |
 
 ## Configuration & runtime
 
@@ -134,7 +134,7 @@ Phase 20 audit subcommand diffs a saved baseline against the live tenant.
 
 ## Testing
 
-- **Unit:** `tests/unit/` — 1100+ tests (compiler 292, transformers + clients + exporters + migration + per-phase)
+- **Unit:** `tests/unit/` — 1183 tests (compiler 309, transformers + clients + exporters + migration + per-phase)
 - **Integration:** `tests/integration/` — env-var-gated (`RUN_INTEGRATION_TESTS=1`)
 - **Legacy:** `tests/legacy/` — Gen2-path regressions
 - **Phase parity:** `tests/unit/test_phase19b_engine_parity.py` pins the Python compiler to TS `nrql-engine` and trips on either-side drift

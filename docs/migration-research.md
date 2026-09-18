@@ -72,7 +72,7 @@ See also: [Dynatrace OpenTelemetry Collector](https://github.com/dynatrace-oss/d
 | `SINCE 1 hour ago` | `from: now()-1h` |
 | `TIMESERIES` | `\| makeTimeseries` |
 
-> This project's AST compiler now handles 292 tested NRQL patterns automatically.
+> This project's AST compiler now handles 309 tested NRQL cases automatically.
 > Run `python migrate.py reference` for the full mapping table.
 
 ## Recommended Migration Workflow

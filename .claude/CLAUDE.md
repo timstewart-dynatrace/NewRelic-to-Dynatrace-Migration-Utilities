@@ -6,15 +6,18 @@
 
 Universal migration tool for converting New Relic monitoring configurations to Dynatrace. Migrates dashboards (with a real NRQL-to-DQL compiler), alerts, synthetic monitors, SLOs, and workloads. Three-phase pipeline: Export (NR NerdGraph) -> Transform -> Import (DT APIs). Supports config-as-code export (Monaco, Terraform).
 
-**Last Updated:** 2026-04-20
-**Version:** 2.0.0 (+ PRs #16–22 Gen3-tenant correctness fixes)
+**Last Updated:** 2026-09-16
+**Version:** 2.0.0 (+ PRs #16–24 Gen3-tenant correctness fixes; unreleased: `preflight` scope diagnostics)
 **Phases Completed:** 0-26 + 19b + 3rd-pass + Phase 25 (all complete)
 
 ## Quick Reference
 
 ```bash
-# Run tests (1183 unit + 8 integration; 50+ files)
+# Run tests (1183 unit + 158 legacy + 14 env-gated integration; 48 files)
 pytest tests/ -v
+
+# Probe target tenant for Gen3 API access + missing token scopes
+python migrate.py preflight
 
 # Integration tests (requires .env with real credentials)
 RUN_INTEGRATION_TESTS=1 pytest tests/integration/ -v
@@ -60,7 +63,7 @@ python migrate.py --version
 | CLI | Click + Rich | Subcommands with progress display |
 | Logging | structlog | Structured logging |
 | HTTP | requests | API clients |
-| Testing | pytest + hypothesis | 1183 unit (incl 36 property-based + wire-level Gen3 regressions) + 8 integration tests |
+| Testing | pytest + hypothesis | 1183 unit (incl 36 property-based + wire-level Gen3 regressions) + 158 legacy + 14 integration tests |
 
 ## Architecture
 
@@ -109,20 +112,21 @@ All transformers follow a consistent pattern:
 
 | Path | Purpose |
 |------|---------|
-| `compiler/` | NRQL-to-DQL AST compiler (292 tested patterns) + `shorthands.py` |
+| `compiler/` | NRQL-to-DQL AST compiler (309 compiler tests) + `shorthands.py` |
 | `clients/` | Gen3 facade: Settings 2.0 + Document + Automation + OAuth2; legacy Config v1 under `clients/legacy/` |
 | `transformers/` | 40+ entity transformers (Gen3 default) + NRQL converter + mapping tables + `mappings/` submodules + `metric_transform.py` plugin hook; legacy Gen2 under `transformers/legacy/` |
 | `validators/` | DQL syntax validator + 24-rule auto-fixer (parity with nrql-engine) |
 | `registry/` | DTEnvironmentRegistry (metrics, entities, segments, dashboards, locations) + SLOAuditor |
 | `migration/` | Rollback, checkpoint, incremental, reports, retry, diff, `canary.py` (Phase 20), `audit.py` (Phase 20) |
-| `exporters/` | Gen3 Monaco v2 YAML + Gen3 Terraform HCL; legacy exporters under `exporters/legacy/` |
 | `agents/` | Per-language APM agent migration orchestrator (7 languages) |
+| `scripts/` | `fetch_dt_schemas.py` (Settings 2.0 schema fixtures for offline validation) |
+| `exporters/` | Gen3 Monaco v2 YAML + Gen3 Terraform HCL; legacy exporters under `exporters/legacy/` |
 | `tools/` | `nrdb_archive.py` (pre-decommission JSONL snapshot) |
 | `config/` | Pydantic BaseSettings from .env + `project_links.py` URL registry |
 | `utils/` | Logging, auth (OAuth), validators, `error_taxonomy.py` (WarningCode/ErrorCode) |
 | `examples/` | Sample NRQL queries for batch testing |
-| `docs/` | `COVERAGE.md`, `migration-coverage.md`, `gen2-only-capabilities.md`, `out-of-scope.md`, `validation.md`, `architecture.md`, `nrql-engine-sync-audit.md` |
-| `tests/` | 1183 unit (incl 36 Hypothesis + wire-level `TestAnomalyDetectorWirePayload` / `TestMultipartContentTypeWire` / `TestAnalyzerInputQueryIsDql`) + 8 integration tests; `tests/legacy/` for Gen2 paths; `tests/integration/` for schema/IaC validation (env-gated) |
+| `docs/` | `COVERAGE.md`, `migration-coverage.md`, `gen2-only-capabilities.md`, `out-of-scope.md`, `validation.md`, `architecture.md`, `nrql-engine-sync-audit.md`, `token-scopes.md` (Platform/Classic token scopes), `quickstart.md`, `migration-guide.md` |
+| `tests/` | 1183 unit (incl 36 Hypothesis + wire-level `TestAnomalyDetectorWirePayload` / `TestMultipartContentTypeWire` / `TestAnalyzerInputQueryIsDql`) + 14 integration tests; `tests/legacy/` (158) for Gen2 paths; `tests/integration/` for schema/IaC validation (env-gated) |
 
 ## Rules
 

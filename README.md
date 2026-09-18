@@ -9,7 +9,7 @@ Utilities for migrating from New Relic to Dynatrace.
 
 ## New Relic to Dynatrace Migration Framework
 
-A universal, comprehensive migration framework for converting New Relic monitoring configurations to Dynatrace. Includes a built-in NRQL-to-DQL compiler with 292 tested patterns and 894 tests.
+A universal, comprehensive migration framework for converting New Relic monitoring configurations to Dynatrace. Includes a built-in NRQL-to-DQL compiler with 309 compiler tests and 1,355 tests overall (1,183 unit + 158 legacy + 14 env-gated integration).
 
 ### Architecture
 
@@ -162,23 +162,25 @@ missing and how to fix them.
 
 ```
 NewRelic-to-Dynatrace-Migration-Utilities/
-├── migrate.py                     # CLI entry point (migrate, compile, convert, reference, batch, export)
+├── migrate.py                     # CLI entry point (migrate, compile, convert, preflight, export, audit, ...)
 ├── pyproject.toml                 # Project config + pip install
 ├── requirements.txt               # Python dependencies
 ├── .env.example                   # Environment template
-├── _version.py                    # Version (1.2.0)
+├── _version.py                    # Version (2.0.0)
 │
-├── compiler/                      # NRQL-to-DQL AST compiler (292 tested patterns)
-├── clients/                       # NR NerdGraph + DT API clients
+├── compiler/                      # NRQL-to-DQL AST compiler (309 compiler tests)
+├── clients/                       # NR NerdGraph + DT Gen3 clients (Settings 2.0, Document, Automation)
 ├── config/                        # Pydantic settings from .env
-├── transformers/                  # 10 entity transformers + NRQL converter
+├── transformers/                  # 40 Gen3 entity transformers + NRQL converter (Gen2 in legacy/)
 ├── validators/                    # DQL syntax validator + auto-fixer
 ├── registry/                      # DTEnvironmentRegistry + SLOAuditor
-├── migration/                     # Rollback, checkpoint, retry, diff, reports
+├── migration/                     # Rollback, checkpoint, retry, diff, reports, canary, audit
 ├── exporters/                     # Monaco YAML + Terraform HCL exporters
-├── utils/                         # Logging, auth, validators
+├── utils/                         # Logging, auth, validators, error taxonomy
+├── agents/                        # Per-language APM agent orchestrators
+├── tools/                         # NRDB pre-decommission archive
 ├── examples/                      # Sample NRQL queries
-├── tests/                         # 894 tests across 25 files
+├── tests/                         # 1,355 tests across 48 files (unit / legacy / integration)
 │
 ├── docs/                          # SVG diagrams + migration research
 ├── .github/workflows/ci.yml       # CI pipeline
@@ -213,7 +215,7 @@ NewRelic-to-Dynatrace-Migration-Utilities/
 
 | Area                    | Limitation                                            | Workaround             |
 | ----------------------- | ----------------------------------------------------- | ---------------------- |
-| **NRQL → DQL**          | AST compiler covers 292 tested patterns; edge cases may need review | Manual query review    |
+| **NRQL → DQL**          | AST compiler covers 309 tested cases; edge cases may need review | Manual query review    |
 | **Scripted Synthetics** | Complex scripts not converted                         | Manual recreation      |
 | **Entity References**   | GUIDs don't map to DT IDs                             | Manual linking         |
 | **Dashboard Variables** | Limited filter conversion                             | Manual configuration   |

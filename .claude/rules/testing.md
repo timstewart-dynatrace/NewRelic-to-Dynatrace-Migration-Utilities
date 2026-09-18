@@ -2,8 +2,8 @@
 
 ## Running Tests
 ```bash
-pytest tests/ -v                    # All 1183 unit + 8 integration tests
-pytest tests/unit/test_compiler.py  # 292 compiler tests
+pytest tests/ -v                    # 1183 unit + 158 legacy + 14 gated integration (1355 collected)
+pytest tests/unit/test_compiler.py  # 309 compiler tests
 pytest tests/unit/test_invariants.py  # 36 Hypothesis property-based fuzz tests
 pytest tests/unit/test_cli.py       # CLI tests
 pytest -x --tb=short               # Stop on first failure
@@ -21,15 +21,15 @@ RUN_IAC_VALIDATION=1 pytest tests/integration/test_iac_validates.py -v
 ```
 
 ## Test Structure
-- 1183 unit tests across 50+ test files in `tests/unit/`
+- 1183 unit tests across 35 test files in `tests/unit/`
 - 36 Hypothesis property-based invariant tests in `test_invariants.py` (1080 randomized inputs per run)
 - 16 nrql-engine parity regression tests in `test_phase19b_engine_parity.py`
-- 8 integration tests across 5 files in `tests/integration/` (env-var gated)
-- Gen2 regression tests preserved in `tests/legacy/` (run against `transformers/legacy/`)
-- 292 compiler tests in `test_compiler.py` (25+ test classes by feature)
-- Per-phase test files: `test_phase16_modules.py` through `test_phase24_modules.py` + `test_phase19b_engine_parity.py` + `test_phase20_modules.py` + `test_phase23_modules.py` + `test_third_pass_parity.py`
-- 19 Gen3 DT client tests in `test_dynatrace_client.py` (composition, auth, Settings 2.0, Document, Automation, OAuth2)
-- 7 legacy-flag + preflight tests in `test_legacy_flag.py`
+- 14 integration tests across 5 files in `tests/integration/` (env-var gated)
+- 158 Gen2 regression tests across 8 files in `tests/legacy/` (run against `transformers/legacy/`)
+- 309 compiler tests in `test_compiler.py` (30 test classes by feature)
+- Per-phase test files: `test_phase16_modules.py` through `test_phase25_modules.py` + `test_phase19b_engine_parity.py` + `test_phase20_modules.py` + `test_phase23_modules.py` + `test_third_pass_parity.py`
+- 42 Gen3 DT client tests in `test_dynatrace_client.py` (composition, auth, Settings 2.0, Document, Automation, OAuth2, wire-level)
+- 8 legacy-flag + preflight tests in `test_legacy_flag.py`
 - Session-scoped `compiler` fixture in `tests/conftest.py`
 - Structural validators: balanced parens, no NRQL keyword leaks, reserved alias quoting
 
