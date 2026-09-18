@@ -166,7 +166,7 @@ NewRelic-to-Dynatrace-Migration-Utilities/
 ├── pyproject.toml                 # Project config + pip install
 ├── requirements.txt               # Python dependencies
 ├── .env.example                   # Environment template
-├── _version.py                    # Version (2.0.0)
+├── _version.py                    # Version (3.0.0)
 │
 ├── compiler/                      # NRQL-to-DQL AST compiler (309 compiler tests)
 ├── clients/                       # NR NerdGraph + DT Gen3 clients (Settings 2.0, Document, Automation)
