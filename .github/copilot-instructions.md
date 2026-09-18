@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-**v2.0.0** — Universal migration framework for converting New Relic monitoring configurations to Dynatrace. AST-based NRQL-to-DQL compiler with 309 compiler tests and 1,355 total tests (Gen3 default, Gen2 via `--legacy`).
+**v3.0.0** — Universal migration framework for converting New Relic monitoring configurations to Dynatrace. AST-based NRQL-to-DQL compiler with 309 compiler tests and 1,355 total tests (Gen3 default, Gen2 via `--legacy`).
 
 ## Architecture
 

@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.0.0] - 2026-09-18
+
+> **Breaking.** Set `DYNATRACE_DETECTOR_ACTOR` (service-user UUID) to import Davis anomaly
+> detectors. Emitted output changes: Platform SLOs replace `builtin:monitoring.slo`;
+> workflows use `davis-problem` triggers linked by event name; span DQL uses
+> `dt.service.name` / `request.is_failed`; Smartscape-first DQL replaces `dt.entity.*`.
+> Validated against a live Gen3 tenant — see `docs/live-validation-2026-09.md`.
+
 ### Fixed (live-validated Gen3 defects — see docs/live-validation-2026-09.md)
 - **Detectors would not create or would never alert.** Queries are always timeseries
   (`summarize` → `makeTimeseries`), unconverted queries use a valid inert placeholder,

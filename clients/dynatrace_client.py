@@ -22,6 +22,8 @@ from typing import Any, Dict, List, Optional
 
 import structlog
 
+from _version import __version__
+
 from ._detector_actor import with_detector_actor
 from ._http import (
     DynatraceResponse,
@@ -498,7 +500,7 @@ class DynatraceClient:
                 "backup_timestamp": time.strftime(
                     "%Y-%m-%dT%H:%M:%SZ", time.gmtime()
                 ),
-                "tool_version": "2.0.0",
+                "tool_version": __version__,
                 "tier": "gen3",
             },
             "dashboards": self.documents.list_documents(

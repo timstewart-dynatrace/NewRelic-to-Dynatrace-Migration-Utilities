@@ -7,7 +7,7 @@ NewRelic-to-Dynatrace-Migration-Utilities/
 ├── migrate.py                         # Click CLI: migrate, compile, convert, reference, batch, extract-nrql,
 │                                      #   export-monaco, export-terraform, preflight, audit, audit-slos,
 │                                      #   agents, scan-instrumentation, archive
-├── _version.py                        # Version (2.0.0) — must match pyproject.toml
+├── _version.py                        # Version (3.0.0) — must match pyproject.toml
 ├── pyproject.toml                     # Project config, pip install, pytest, ruff, mypy
 ├── requirements.txt                   # Python dependencies
 ├── .env.example                       # Environment template
