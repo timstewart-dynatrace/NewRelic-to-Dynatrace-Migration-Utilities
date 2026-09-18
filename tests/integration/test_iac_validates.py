@@ -44,18 +44,15 @@ _GEN3_FIXTURE = {
     ],
     "slos": [
         {
-            "schemaId": "builtin:monitoring.slo",
-            "scope": "environment",
-            "value": {
-                "name": "slo",
-                "enabled": True,
-                "metricExpression": "(100)*(builtin:service.availability)",
-                "evaluationType": "AGGREGATE",
-                "timeframe": "-7d",
-                "filter": "",
-                "target": 99.9,
-                "warning": 99.5,
+            "name": "slo",
+            "description": "Migrated from New Relic",
+            "criteria": [
+                {"target": 99.9, "warning": 99.95, "timeframeFrom": "now-7d", "timeframeTo": "now"},
+            ],
+            "customSli": {
+                "indicator": "timeseries sli = avg(dt.synthetic.http.availability)",
             },
+            "tags": [],
         },
     ],
 }

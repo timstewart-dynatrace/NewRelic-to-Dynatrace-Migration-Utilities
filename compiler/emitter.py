@@ -146,8 +146,9 @@ FIELD_MAP = {
     'http.method': 'http.request.method', 'httpmethod': 'http.request.method',
     'http.url': 'http.request.path', 'httpurl': 'http.request.path',
     'error.message': 'error.message',
-    'entityguid': 'dt.entity.service', 'entityname': 'dt.entity.name',
-    'entity.name': 'dt.entity.name',
+    # Smartscape-first (gen3-apis.md §7): classic dt.entity.* is deprecated.
+    # entityname / entity.name are context-dependent -> see DQLEmitter.ENTITY_NAME_FIELDS.
+    'entityguid': 'dt.smartscape.service',
     'cpupercent': 'host.cpu.usage', 'memoryusedpercent': 'host.memory.usage',
     'diskusedpercent': 'host.disk.usage',
     'message': 'content', 'level': 'loglevel', 'log.level': 'loglevel',
@@ -217,30 +218,62 @@ class DQLEmitter:
         'memoryworkingsetbytes': 'dt.kubernetes.container.memory_working_set',
     }
 
-    # K8s fields that are NOT valid timeseries metrics -- they need entity queries instead.
-    # When encountered, _emit_metric_query redirects to an entity-based DQL fetch.
+    # NRQL entity-name fields. Emitted as raw dimensions (dimension-first strategy from
+    # the dt-migration skill): span.name-style resource attribute in span/log context,
+    # metric dimension in metric/K8s context.
+    ENTITY_NAME_FIELDS = {'entityname', 'entity.name'}
+    # OneAgent spans carry dt.service.name but not service.name (verified live,
+    # docs/live-validation-2026-09.md D10); logs carry service.name.
+    ENTITY_NAME_SPAN_FIELD = 'dt.service.name'
+    ENTITY_NAME_LOG_FIELD = 'service.name'
+    ENTITY_NAME_METRIC_FIELD = 'dt.service.name'
+    # NRQL service-identity fields mapped by context regardless of field_map overrides.
+    SERVICE_NAME_FIELDS = {'appname'}
+    # NR `error` on Transaction/Span -> OneAgent request failure flag (D12);
+    # otel.status_code is unset on OneAgent spans.
+    SPAN_ERROR_FIELD = 'request.is_failed'
+    ENTITY_NAME_HOST_FIELD = 'host.name'
+    ENTITY_NAME_K8S_FIELD = 'k8s.workload.name'
+    # NR infra samples whose entityName is the host
+    HOST_SAMPLE_TYPES = {'systemsample', 'processsample', 'networksample', 'storagesample'}
+
+    # Classic dt.entity.cloud_application maps to several Smartscape workload types.
+    K8S_WORKLOAD_NODE_TYPES = (
+        'K8S_DEPLOYMENT, K8S_DAEMONSET, K8S_STATEFULSET, K8S_REPLICASET, '
+        'K8S_REPLICATIONCONTROLLER, K8S_JOB, K8S_DEPLOYMENTCONFIG'
+    )
+
+    # K8s fields that are NOT valid timeseries metrics -- they need topology queries instead.
+    # When encountered, _emit_metric_query redirects to a smartscapeNodes query that reads
+    # the Kubernetes object JSON (k8s.object). No trailing projection so an appended
+    # `| filter` can still reference any node field.
     K8S_ENTITY_FIELDS = {
         'isready': {
             'dql': (
-                'fetch dt.entity.cloud_application'
-                ' | fields entity.name, readyReplicas = readyReplicas, desiredReplicas = desiredReplicas'
+                'smartscapeNodes K8S_DEPLOYMENT, K8S_STATEFULSET, K8S_REPLICASET'
+                '\n| parse k8s.object, "JSON:config"'
+                '\n| fieldsAdd desiredReplicas = config[`spec`][`replicas`], '
+                'readyReplicas = config[`status`][`readyReplicas`]'
             ),
-            'note': '// isReady -> DT uses entity properties, not timeseries metrics. '
-                    'Compare readyReplicas vs desiredReplicas for readiness.',
+            'note': '// isReady -> Smartscape workload node; compare readyReplicas vs desiredReplicas.',
         },
         'status': {
             'dql': (
-                'fetch dt.entity.cloud_application'
-                ' | fields entity.name, status = cloudApplicationStatus'
+                'smartscapeNodes ' + K8S_WORKLOAD_NODE_TYPES +
+                '\n| parse k8s.object, "JSON:config"'
+                '\n| fieldsAdd desiredReplicas = config[`spec`][`replicas`], '
+                'readyReplicas = config[`status`][`readyReplicas`], '
+                'availableReplicas = config[`status`][`availableReplicas`]'
             ),
-            'note': '// status -> DT uses entity properties for workload status.',
+            'note': '// status -> Smartscape workload node; status read from k8s.object replica counts.',
         },
         'isscheduled': {
             'dql': (
-                'fetch dt.entity.cloud_application_instance'
-                ' | fields entity.name, phase = cloudApplicationInstancePhase'
+                'smartscapeNodes K8S_POD'
+                '\n| parse k8s.object, "JSON:config"'
+                '\n| fieldsAdd phase = config[`status`][`phase`]'
             ),
-            'note': '// isScheduled -> DT uses entity phase property, not timeseries metrics.',
+            'note': '// isScheduled -> Smartscape K8S_POD phase (Pending = not scheduled).',
         },
     }
 
@@ -290,14 +323,15 @@ class DQLEmitter:
 
         # Handle SHOW EVENT TYPES
         if query.from_clause == '__SHOW_EVENT_TYPES__':
-            self.warnings.append("SHOW EVENT TYPES -> use DT Schema browser or: fetch dt.entity.type")
+            self.warnings.append("SHOW EVENT TYPES -> use DT Schema browser or the DQL describe command")
             return ("// SHOW EVENT TYPES has no direct DQL equivalent\n"
                     "// In Dynatrace, use the Schema browser in Notebooks/Dashboards\n"
-                    "// or query: fetch dt.entity.type | fields entity.type | dedup entity.type")
+                    "// or query: describe logs  (also: spans, events, bizevents)")
 
         from_type = query.from_clause.lower().replace('_', '').replace('-', '')
         query_class = self._classify_query(from_type)
         self._query_class = query_class  # Store for context-aware field mapping
+        self._from_type = from_type
 
         if query_class == 'METRIC':
             dql = self._emit_metric_query(query, from_type)
@@ -1119,7 +1153,7 @@ class DQLEmitter:
         # 1b. Auto-filter for TransactionError -> only error spans
         from_type = query.from_clause.lower().replace('_', '').replace('-', '')
         if from_type == 'transactionerror':
-            parts.append('| filter otel.status_code == "ERROR"')
+            parts.append(f'| filter {self.SPAN_ERROR_FIELD} == true')
 
         # 2. Filter -- extract subqueries for separate lookup steps
         subqueries: List[InSubqueryCond] = []
@@ -2092,9 +2126,14 @@ class DQLEmitter:
 
     def _emit_condition(self, cond: Condition) -> str:
         if isinstance(cond, LogicalCond):
+            op = cond.op.lower()  # and, or
             left = self._emit_condition(cond.left)
             right = self._emit_condition(cond.right)
-            op = cond.op.lower()  # and, or
+            # DQL `and` binds tighter than `or`: keep mixed-operator groups explicit.
+            if isinstance(cond.left, LogicalCond) and cond.left.op.lower() != op:
+                left = f"({left})"
+            if isinstance(cond.right, LogicalCond) and cond.right.op.lower() != op:
+                right = f"({right})"
             return f"{left} {op} {right}"
 
         if isinstance(cond, NotCond):
@@ -2143,6 +2182,10 @@ class DQLEmitter:
 
         if isinstance(cond, IsNullCond):
             expr = self._emit_expr(cond.expr)
+            if expr == self.SPAN_ERROR_FIELD:
+                # NR `error IS [NOT] NULL` means "had / had no error"; request.is_failed is
+                # present on every request span, so a null check would match everything.
+                return f"{expr} == true" if cond.negated else f"{expr} != true"
             return f"isNotNull({expr})" if cond.negated else f"isNull({expr})"
 
         if isinstance(cond, InListCond):
@@ -2303,6 +2346,15 @@ class DQLEmitter:
             if low in self.METRIC_DIMENSION_PASSTHROUGH:
                 return name  # Preserve as custom metric dimension
 
+        # Entity / service name: raw dimension, chosen by query context (gen3-apis.md §7)
+        if low in self.SERVICE_NAME_FIELDS or (
+                low in self.ENTITY_NAME_FIELDS and name not in self.field_map and low not in self.field_map):
+            return self._entity_name_field(query_class)
+
+        # Span error flag
+        if low == 'error' and query_class == 'spans':
+            return self.SPAN_ERROR_FIELD
+
         # Check exact match first
         if name in self.field_map:
             return self.field_map[name]
@@ -2311,6 +2363,22 @@ class DQLEmitter:
             return self.field_map[low]
         # Pass through unmapped fields
         return name
+
+    def _entity_name_field(self, query_class: str) -> str:
+        """Raw dimension for NRQL entityName / entity.name in the current query context."""
+        if getattr(self, '_from_type', '') in self.HOST_SAMPLE_TYPES:
+            return self.ENTITY_NAME_HOST_FIELD
+        if isinstance(query_class, str) and query_class.startswith('K8S_'):
+            warning = ("entityName in a K8s sample mapped to k8s.workload.name; "
+                       "use k8s.pod.name / k8s.node.name if the NR entity was a pod or node")
+            if warning not in self.warnings:
+                self.warnings.append(warning)
+            return self.ENTITY_NAME_K8S_FIELD
+        if query_class == 'METRIC':
+            return self.ENTITY_NAME_METRIC_FIELD
+        if query_class == 'logs':
+            return self.ENTITY_NAME_LOG_FIELD
+        return self.ENTITY_NAME_SPAN_FIELD
 
     # -- FACET items --
 

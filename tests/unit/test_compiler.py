@@ -174,7 +174,7 @@ class TestNRFunctions:
             "SELECT filter(average(duration), WHERE error IS NOT NULL) FROM Transaction TIMESERIES"
         )
         assert result.success
-        assert "avgIf(duration, isNotNull(error))" in result.dql
+        assert "avgIf(duration, request.is_failed == true)" in result.dql
 
     def test_rate_to_count_with_warning(self, compiler):
         result = compiler.compile(
@@ -218,7 +218,7 @@ class TestConditions:
             "SELECT count(*) FROM Transaction WHERE error IS NOT NULL AND host IS NULL"
         )
         assert result.success
-        assert "isNotNull(error)" in result.dql
+        assert "request.is_failed == true" in result.dql
         assert "isNull(host.name)" in result.dql
 
     def test_in_list(self, compiler):
@@ -226,14 +226,14 @@ class TestConditions:
             "SELECT count(*) FROM Transaction WHERE appName IN ('a', 'b', 'c')"
         )
         assert result.success
-        assert 'in(service.name, {"a", "b", "c"})' in result.dql
+        assert 'in(dt.service.name, {"a", "b", "c"})' in result.dql
 
     def test_not_in(self, compiler):
         result = compiler.compile(
             "SELECT count(*) FROM Transaction WHERE appName NOT IN ('x')"
         )
         assert result.success
-        assert 'not in(service.name, {"x"})' in result.dql
+        assert 'not in(dt.service.name, {"x"})' in result.dql
 
     def test_like_contains(self, compiler):
         result = compiler.compile(
@@ -254,8 +254,7 @@ class TestConditions:
             "SELECT count(*) FROM Transaction WHERE (appName = 'a' OR appName = 'b') AND error IS NOT NULL"
         )
         assert result.success
-        assert 'service.name == "a" or service.name == "b"' in result.dql
-        assert "isNotNull(error)" in result.dql
+        assert '(dt.service.name == "a" or dt.service.name == "b") and request.is_failed == true' in result.dql
 
 
 # ---------------------------------------------------------------------------
@@ -330,7 +329,7 @@ class TestEdgeCases:
             "SELECT count(*) FROM Transaction FACET appName as Service, host as Host"
         )
         assert result.success
-        assert "Service=service.name" in result.dql
+        assert "Service=dt.service.name" in result.dql
         assert "Host=host.name" in result.dql
 
     def test_empty_count_star(self, compiler):
@@ -344,7 +343,7 @@ class TestEdgeCases:
             "SELECT count(*) FROM Transaction WHERE error = true TIMESERIES"
         )
         assert result.success
-        assert "error == true" in result.dql
+        assert "request.is_failed == true" in result.dql
 
 
 # ---------------------------------------------------------------------------
@@ -591,7 +590,8 @@ class TestParserGaps:
         assert result.success
         assert "fetch spans" in result.dql
         assert "makeTimeseries" in result.dql
-        assert "dt.entity.name" in result.dql
+        assert 'service.name == "my-api"' in result.dql
+        assert "dt.entity" not in result.dql
 
     def test_from_log_select(self, compiler):
         result = compiler.compile(
@@ -636,7 +636,7 @@ class TestParserGaps:
             "SELECT count(*) FROM TransactionError WHERE error IS NOT FALSE AND appId IN ('123')"
         )
         assert result.success
-        assert "error != false" in result.dql
+        assert "request.is_failed != false" in result.dql
         assert "appId" in result.dql
 
     def test_or_coalesce_in_function_args(self, compiler):
@@ -1094,12 +1094,12 @@ class TestG14Aggregations:
     def test_unique_count_to_count_distinct_exact(self, compiler):
         result = compiler.compile("SELECT uniqueCount(appName) FROM Transaction")
         assert_valid_dql(result)
-        assert "countDistinctExact(service.name)" in code_lines(result.dql)
+        assert "countDistinctExact(dt.service.name)" in code_lines(result.dql)
 
     def test_uniques_to_collect_distinct(self, compiler):
         result = compiler.compile("SELECT uniques(appName) FROM Transaction")
         assert_valid_dql(result)
-        assert "collectDistinct(service.name)" in code_lines(result.dql)
+        assert "collectDistinct(dt.service.name)" in code_lines(result.dql)
 
     def test_latest_to_take_last(self, compiler):
         result = compiler.compile("SELECT latest(duration) FROM Transaction")
@@ -1205,7 +1205,7 @@ class TestG14ScalarFunctions:
     def test_concat(self, compiler):
         result = compiler.compile("SELECT concat(appName, '-', name) FROM Transaction LIMIT 10")
         assert_valid_dql(result)
-        assert "concat(service.name" in code_lines(result.dql)
+        assert "concat(dt.service.name" in code_lines(result.dql)
 
     def test_abs(self, compiler):
         result = compiler.compile("SELECT abs(duration - 1) FROM Transaction LIMIT 10")
@@ -1327,7 +1327,8 @@ class TestG14EventTypes:
         assert_valid_dql(result)
         code = code_lines(result.dql)
         assert "fetch spans" in code
-        assert "otel.status_code" in code
+        assert "request.is_failed == true" in code
+        assert "otel.status_code" not in code
 
     def test_span_to_spans(self, compiler):
         result = compiler.compile("SELECT count(*) FROM Span")
@@ -1599,22 +1600,22 @@ class TestG14Operators:
     def test_is_null(self, compiler):
         result = compiler.compile("SELECT count(*) FROM Transaction WHERE error IS NULL")
         assert_valid_dql(result)
-        assert "isNull(" in code_lines(result.dql)
+        assert "request.is_failed != true" in code_lines(result.dql)
 
     def test_is_not_null(self, compiler):
         result = compiler.compile("SELECT count(*) FROM Transaction WHERE error IS NOT NULL")
         assert_valid_dql(result)
-        assert "isNotNull(" in code_lines(result.dql)
+        assert "request.is_failed == true" in code_lines(result.dql)
 
     def test_in_list(self, compiler):
         result = compiler.compile("SELECT count(*) FROM Transaction WHERE appName IN ('a', 'b', 'c')")
         assert_valid_dql(result)
-        assert 'in(service.name, {"a", "b", "c"})' in code_lines(result.dql)
+        assert 'in(dt.service.name, {"a", "b", "c"})' in code_lines(result.dql)
 
     def test_not_in_list(self, compiler):
         result = compiler.compile("SELECT count(*) FROM Transaction WHERE appName NOT IN ('x', 'y')")
         assert_valid_dql(result)
-        assert 'not in(service.name, {"x", "y"})' in code_lines(result.dql)
+        assert 'not in(dt.service.name, {"x", "y"})' in code_lines(result.dql)
 
     def test_like_contains(self, compiler):
         result = compiler.compile("SELECT count(*) FROM Transaction WHERE name LIKE '%payment%'")
@@ -1880,7 +1881,7 @@ class TestG14RealWorldPatterns:
             "WHERE appName IN ('api-1', 'api-2', 'api-3') FACET appName TIMESERIES"
         )
         assert_valid_dql(result)
-        assert "in(service.name" in code_lines(result.dql)
+        assert "in(dt.service.name" in code_lines(result.dql)
 
     def test_subquery_trace_correlation(self, compiler):
         result = compiler.compile(
@@ -1980,7 +1981,10 @@ class TestG14Session69:
         result = compiler.compile("SELECT latest(isReady) FROM K8sPodSample WHERE clusterName = 'prod'")
         assert_valid_dql(result)
         code = code_lines(result.dql)
-        assert "entity" in code
+        assert code.startswith("smartscapeNodes K8S_DEPLOYMENT")
+        assert "readyReplicas" in code
+        assert 'k8s.cluster.name == "prod"' in code
+        assert "dt.entity" not in code
         assert "timeseries" not in code
 
 
@@ -2007,7 +2011,8 @@ class TestG14AuditFixes:
             "SELECT count(*) FROM Transaction WHERE entity.name = 'my-svc'"
         )
         assert_valid_dql(result)
-        assert "dt.entity.name" in code_lines(result.dql)
+        assert "service.name" in code_lines(result.dql)
+        assert "dt.entity" not in code_lines(result.dql)
 
     def test_percentage_simple_no_nested_agg(self, compiler):
         result = compiler.compile(
@@ -2124,7 +2129,7 @@ class TestNestedFilterInAggregation:
         )
         assert result.success
         assert "countIf(" in result.dql
-        assert "error == true" in result.dql
+        assert "request.is_failed == true" in result.dql
 
     def test_sum_with_filter(self, compiler):
         result = compiler.compile(
@@ -2325,3 +2330,35 @@ class TestShorthandLookbehindRegression:
             f"Metric identifier {metric_ident!r} is not a plain dotted name; "
             "a shorthand expansion likely leaked into it."
         )
+
+
+class TestLiveValidatedFieldMapping:
+    """Field choices verified against a live OneAgent tenant (docs/live-validation-2026-09.md)."""
+
+    def test_span_service_is_dt_service_name(self, compiler):
+        result = compiler.compile("SELECT count(*) FROM Transaction WHERE appName = 'checkout' FACET entityName")
+        code = code_lines(result.dql)
+        assert 'dt.service.name == "checkout"' in code
+        assert "by: {dt.service.name}" in code
+        assert " service.name" not in code
+
+    def test_log_service_stays_service_name(self, compiler):
+        result = compiler.compile("SELECT count(*) FROM Log WHERE appName = 'checkout'")
+        assert 'service.name == "checkout"' in code_lines(result.dql)
+        assert "dt.service.name" not in code_lines(result.dql)
+
+    def test_span_error_uses_request_is_failed(self, compiler):
+        code = code_lines(compiler.compile("SELECT count(*) FROM Transaction WHERE error IS TRUE").dql)
+        assert "request.is_failed == true" in code
+        code = code_lines(compiler.compile("SELECT count(*) FROM Transaction WHERE error IS NULL").dql)
+        assert "request.is_failed != true" in code and "isNull(" not in code
+
+    def test_mixed_and_or_keeps_parentheses(self, compiler):
+        code = code_lines(compiler.compile(
+            "SELECT count(*) FROM Transaction WHERE (appName = 'a' OR appName = 'b') AND duration > 1").dql)
+        assert '(dt.service.name == "a" or dt.service.name == "b") and duration > 1' in code
+
+    def test_same_operator_chain_has_no_extra_parentheses(self, compiler):
+        code = code_lines(compiler.compile(
+            "SELECT count(*) FROM Transaction WHERE appName = 'a' OR appName = 'b' OR appName = 'c'").dql)
+        assert "(" not in code.split("| filter", 1)[1].split("\n")[0].replace("count()", "")

@@ -17,11 +17,17 @@ Legacy (Config v1 Metric Event) behavior is preserved in
 """
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import structlog
 
-from ._workflow_utils import tasks_list_to_dict
+from ._detector_utils import alert_condition_for, dealerting_samples, metric_timeseries_query
+from ._workflow_utils import (
+    davis_problem_trigger,
+    migrated_event_filter,
+    migrated_event_name,
+    tasks_list_to_dict,
+)
 
 logger = structlog.get_logger()
 
@@ -39,7 +45,7 @@ INFRA_METRIC_MAP: Dict[str, Any] = {
     },
 }
 
-OPERATOR_MAP = {"above": "ABOVE", "below": "BELOW", "equal": "EQUALS"}
+OPERATOR_MAP = {"above": "ABOVE", "below": "BELOW"}
 
 
 @dataclass
@@ -107,9 +113,9 @@ class InfrastructureTransformer:
         threshold: float,
         samples: int,
         enabled: bool = True,
+        warnings: Optional[List[str]] = None,
+        event_type: str = "RESOURCE_CONTENTION_EVENT",
     ) -> Dict[str, Any]:
-        detector_id = f"davis-infra-{name}".lower()
-        detector_id = "".join(c if c.isalnum() or c == "-" else "-" for c in detector_id)[:180]
         # New builtin:davis.anomaly-detectors schema (v1.0.14, 2026-04-20):
         # top level is {enabled,title,description,source,executionSettings,
         # analyzer{name,input[{key,value}]},eventTemplate{properties}}.
@@ -119,32 +125,31 @@ class InfrastructureTransformer:
         return {
             "schemaId": "builtin:davis.anomaly-detectors",
             "scope": "environment",
-            "detectorId": detector_id,
             "value": {
                 "enabled": enabled,
                 "title": f"[Migrated] {name}",
                 "description": f"Migrated from New Relic infrastructure condition: {name}",
                 "source": "newrelic-migration",
-                "executionSettings": {"actor": None, "queryOffset": None},
+                "executionSettings": {},  # actor (service user) injected at import/export — D16
                 "analyzer": {
                     "name": (
                         "dt.statistics.ui.anomaly_detection"
                         ".StaticThresholdAnomalyDetectionAnalyzer"
                     ),
                     "input": [
-                        {"key": "query", "value": f"timeseries avg({metric_key})"},
+                        {"key": "query", "value": metric_timeseries_query(metric_key, warnings)},
                         {"key": "threshold", "value": str(threshold)},
                         {"key": "alertCondition", "value": alert_condition},
                         {"key": "alertOnMissingData", "value": alert_on_missing},
                         {"key": "violatingSamples", "value": str(samples)},
                         {"key": "slidingWindow", "value": str(samples)},
-                        {"key": "dealertingSamples", "value": "5"},
+                        {"key": "dealertingSamples", "value": dealerting_samples(samples)},
                     ],
                 },
                 "eventTemplate": {
                     "properties": [
-                        {"key": "event.type", "value": "RESOURCE_CONTENTION"},
-                        {"key": "event.name", "value": f"[Migrated] {name}"},
+                        {"key": "event.type", "value": event_type},
+                        {"key": "event.name", "value": migrated_event_name(name, "infra")},
                         {"key": "source.condition", "value": name},
                         {"key": "migrated.from", "value": "newrelic"},
                     ],
@@ -158,6 +163,7 @@ class InfrastructureTransformer:
         return self._base_detector(
             name=name,
             metric_key=INFRA_METRIC_MAP["host_not_reporting"],
+            event_type="AVAILABILITY_EVENT",
             alert_condition="BELOW",
             threshold=1,
             samples=max(1, duration),
@@ -177,6 +183,7 @@ class InfrastructureTransformer:
         return self._base_detector(
             name=name,
             metric_key=INFRA_METRIC_MAP["process_not_running"],
+            event_type="AVAILABILITY_EVENT",
             alert_condition="BELOW",
             threshold=1,
             samples=3,
@@ -195,15 +202,19 @@ class InfrastructureTransformer:
         if not metric_id:
             warnings.append(
                 f"Metric '{select_value}' from '{event_type}' has no direct mapping. "
-                "Using placeholder metric key."
+                "Detector uses an inert placeholder query."
             )
             metric_id = f"builtin:host.{select_value}"
 
         critical = condition.get("criticalThreshold", {}) or {}
+        condition_value = OPERATOR_MAP.get(str(comparison).lower())
+        if condition_value is None:
+            condition_value = alert_condition_for(comparison, "ABOVE", warnings)
         return self._base_detector(
             name=name,
             metric_key=metric_id,
-            alert_condition=OPERATOR_MAP.get(comparison, "ABOVE"),
+            alert_condition=condition_value,
+            warnings=warnings,
             threshold=float(critical.get("value", 0)),
             samples=max(1, int(critical.get("durationMinutes", 5))),
             enabled=bool(condition.get("enabled", True)),
@@ -228,21 +239,9 @@ class InfrastructureTransformer:
     def _workflow_for_detector(detector: Dict[str, Any], name: str) -> Dict[str, Any]:
         return {
             "title": f"[Migrated infra] {name}",
-            "description": f"Workflow shell for Davis anomaly detector '{detector['detectorId']}'.",
-            "private": False,
+            "description": f"Workflow shell for Davis anomaly detector '{detector['value']['title']}'.",
             "isPrivate": False,
-            "trigger": {
-                "event": {
-                    "active": True,
-                    "config": {
-                        "davis_event": {
-                            "eventType": "RESOURCE_CONTENTION",
-                            "detectorIds": [detector["detectorId"]],
-                            "anyEventMatches": True,
-                        }
-                    },
-                }
-            },
+            "trigger": davis_problem_trigger(migrated_event_filter(name)),
             # Gen3 Automation API requires `tasks` as a dict keyed by task id.
             "tasks": tasks_list_to_dict([
                 {

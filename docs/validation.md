@@ -3,7 +3,7 @@
 > **Last updated:** 2026-04-15 (post-Phase-24 + 3rd-pass parity)
 > **Companion:** `docs/COVERAGE.md`, `docs/architecture.md`
 
-This project ships **1183 unit + 158 legacy + 14 integration tests** that pin
+This project ships **1238 unit + 158 legacy + 13 integration tests** that pin
 *structural correctness* — every transformer's output matches a
 hand-authored expected shape. That proves the code emits what we
 believe is correct; it does **not** prove the emitted artifacts are
@@ -76,7 +76,7 @@ def ts_compile():
     def _run(nrql):
         out = subprocess.run(
             ["npx", "tsx",
-             "/Users/Shared/GitHub/PROJECTS/nrql-engine/scripts/compile-one.ts"],
+             "/Users/Shared/GitHub/PROJECTS/NewRelic/nrql-engine/scripts/compile-one.ts"],
             input=nrql, capture_output=True, text=True, check=True,
         )
         return json.loads(out.stdout)

@@ -16,7 +16,7 @@
 
 ## Overall capability (this repo, as of Phase 14)
 
-- 10 transformers, 292 compiler patterns, 920+ NRQL→DQL tests *(Phase 14 snapshot — current: 40 transformers, 309 compiler tests, 1183 unit tests; see `docs/COVERAGE.md`)*
+- 10 transformers, 292 compiler patterns, 920+ NRQL→DQL tests *(Phase 14 snapshot — current: 40 transformers, 309 compiler tests, 1238 unit tests; see `docs/COVERAGE.md`)*
 - Gen3 default (`--legacy` flag preserves Config v1 path)
 - Settings 2.0 + Document API + Automation API clients
 - Monaco v2 and Terraform HCL exporters
@@ -35,7 +35,7 @@
 | Distributed tracing config | DT (auto) | ✅ | No config needed |
 | Transaction traces | PurePath (auto) | ✅ | |
 | Apdex score | DQL `countIf()` buckets + Davis SLO target | ✅ Phase 19 — uplift detects bucketed DQL and raises to HIGH |
-| Key Transactions | SLO (`builtin:monitoring.slo`) + OpenPipeline enrichment tag + Workflow bundle | ✅ `KeyTransactionTransformer` (Phase 23) |
+| Key Transactions | Platform SLO (DQL SLI) + OpenPipeline enrichment tag + Workflow bundle | ✅ `KeyTransactionTransformer` (Phase 23) |
 | Deployment markers | Events API `CUSTOM_DEPLOYMENT` | 🔴 | `ChangeTrackingTransformer` in Phase 17 |
 | Service Map annotations | Smartscape (auto topology) | 🔴 | User-drawn map annotations don't migrate |
 | Error profiles | Davis Problems | 🟡 | Conceptual — no config migration |
@@ -209,7 +209,7 @@ Delivered as `transformers/mobile_rum_transformer.py` (Phase 16). Supports 8 pla
 
 | NR Surface | Dynatrace Target | Coverage |
 |---|---|---|
-| SLO (v1 + v2) | `builtin:monitoring.slo` | ✅ |
+| SLO (v1 + v2) | Platform SLO API (DQL SLI) | ✅ |
 | SLI query (NRQL) | SLO metric expression (DQL) | ✅ |
 | Error budget burn-rate alerts | Burn-rate metric event on SLI | 🟡 Manual config |
 

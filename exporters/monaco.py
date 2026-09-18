@@ -5,11 +5,12 @@ Produces a Monaco v2 project tree with a `manifest.yaml`, emitting:
   projects/migrated/settings/<schema-id>/<name>.{yaml,json}     -- Settings 2.0
   projects/migrated/documents/<name>.json                       -- Dashboards
   projects/migrated/workflows/<name>.{yaml,json}                -- Workflows
+  projects/migrated/slos/<name>.{yaml,json}                     -- Platform SLOs (slo-v2)
 
 The settings schemas covered by default are the Gen3 targets produced by
 the transformers: `builtin:davis.anomaly-detectors`, `builtin:segment`,
-`builtin:iam.policy`, `builtin:synthetic_test`, `builtin:monitoring.slo`,
-`builtin:openpipeline.*`. Legacy (Config v1 / Gen2 classic) emission lives
+`builtin:iam.policy`, `builtin:synthetic_test`, `builtin:openpipeline.*`.
+Platform SLOs use the Monaco `slo-v2` config type. Legacy (Config v1 / Gen2 classic) emission lives
 in `exporters/legacy/monaco_v1.py` and is reached via `--legacy`.
 """
 
@@ -22,6 +23,8 @@ from typing import Any, Dict, List
 
 import structlog
 import yaml
+
+from clients._detector_actor import DETECTOR_SCHEMA_ID, with_detector_actor
 
 logger = structlog.get_logger()
 
@@ -78,12 +81,16 @@ class MonacoExporter:
             "segments",
             "iam_policies",
             "synthetic_tests",
-            "slos",
             "openpipeline_processors",
         ):
             envelopes = transformed_data.get(key) or []
             if not envelopes:
                 continue
+            if key == "anomaly_detectors":
+                # D16: executionSettings.actor comes from the Monaco environment.
+                envelopes = [
+                    with_detector_actor(e, "{{ .detectorActor }}") for e in envelopes
+                ]
             count = self._emit_settings(envelopes, project_root)
             if count:
                 summary[key] = count
@@ -146,6 +153,35 @@ class MonacoExporter:
             summary["workflows"] = len(workflows)
             logger.info("Exported Gen3 workflows", count=len(workflows))
 
+        # ----- Platform SLOs (Monaco `slo-v2`) ---------------------------
+        slos = transformed_data.get("slos") or []
+        if slos:
+            slo_dir = project_root / "slos"
+            slo_dir.mkdir(parents=True, exist_ok=True)
+            for slo in slos:
+                name = slo.get("name", "unnamed-slo")
+                safe = self._safe_name(name)
+                (slo_dir / f"{safe}.json").write_text(json.dumps(slo, indent=2))
+                (slo_dir / f"{safe}.yaml").write_text(
+                    yaml.safe_dump(
+                        {
+                            "configs": [
+                                {
+                                    "id": f"slo-{safe}",
+                                    "type": "slo-v2",
+                                    "config": {
+                                        "name": name,
+                                        "template": f"{safe}.json",
+                                    },
+                                }
+                            ]
+                        },
+                        sort_keys=False,
+                    )
+                )
+            summary["slos"] = len(slos)
+            logger.info("Exported Gen3 Platform SLOs", count=len(slos))
+
         logger.info("Monaco Gen3 export complete", summary=summary)
         return summary
 
@@ -179,10 +215,7 @@ class MonacoExporter:
                                         "scope": env.get("scope", "environment"),
                                     }
                                 },
-                                "config": {
-                                    "name": name,
-                                    "template": f"{safe}.json",
-                                },
+                                "config": self._settings_config(name, safe, schema),
                             }
                         ]
                     },
@@ -191,6 +224,15 @@ class MonacoExporter:
             )
             count += 1
         return count
+
+    @staticmethod
+    def _settings_config(name: str, safe: str, schema: str) -> Dict[str, Any]:
+        config: Dict[str, Any] = {"name": name, "template": f"{safe}.json"}
+        if schema == DETECTOR_SCHEMA_ID:
+            config["parameters"] = {
+                "detectorActor": {"type": "environment", "name": "DYNATRACE_DETECTOR_ACTOR"}
+            }
+        return config
 
     @staticmethod
     def _safe_name(name: str) -> str:

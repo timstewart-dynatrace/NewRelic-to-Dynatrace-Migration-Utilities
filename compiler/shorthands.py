@@ -8,7 +8,7 @@ rewrites them to their canonical NRQL form **before** lexing, so the
 rest of the compiler pipeline treats them as normal calls.
 
 Mirrors `NRQLCompiler.expandNrShorthands()` in the TypeScript sibling
-(`/Users/Shared/GitHub/PROJECTS/nrql-engine/src/compiler/compiler.ts`
+(`/Users/Shared/GitHub/PROJECTS/NewRelic/nrql-engine/src/compiler/compiler.ts`
 ~line 151). Keep the list of patterns in sync across both projects.
 """
 

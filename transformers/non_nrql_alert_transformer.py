@@ -23,7 +23,18 @@ from typing import Any, Dict, List
 
 import structlog
 
-from ._workflow_utils import tasks_list_to_dict
+from ._detector_utils import (
+    alert_condition_for,
+    dealerting_samples,
+    metric_timeseries_query,
+    sample_settings,
+)
+from ._workflow_utils import (
+    davis_problem_trigger,
+    migrated_event_filter,
+    migrated_event_name,
+    tasks_list_to_dict,
+)
 
 logger = structlog.get_logger()
 
@@ -94,15 +105,18 @@ class NonNRQLAlertTransformer:
 
             terms = nr_condition.get("terms", []) or []
             threshold = 0.0
-            samples = 3
+            violating, window = 3, 3
             if terms:
                 critical = next(
                     (t for t in terms if str(t.get("priority", "")).lower() == "critical"),
                     terms[0],
                 )
                 threshold = float(critical.get("threshold", 0))
-                duration_seconds = int(critical.get("thresholdDuration", 300))
-                samples = max(1, duration_seconds // 60)
+                alert_cond = alert_condition_for(critical.get("operator"), alert_cond, warnings)
+                violating, window = sample_settings(
+                    int(critical.get("thresholdDuration", 300)),
+                    critical.get("thresholdOccurrences"),
+                )
 
             # New builtin:davis.anomaly-detectors schema (v1.0.14, 2026-04-20):
             # top level is {enabled,title,description,source,executionSettings,
@@ -110,39 +124,33 @@ class NonNRQLAlertTransformer:
             # All thresholds/conditions/samples go into analyzer.input as
             # stringified key/value pairs.
             analyzer_input = [
-                {"key": "query", "value": f"timeseries avg({metric_key})"},
+                {"key": "query", "value": metric_timeseries_query(metric_key, warnings)},
                 {"key": "threshold", "value": str(threshold)},
                 {"key": "alertCondition", "value": alert_cond},
                 {"key": "alertOnMissingData", "value": "false"},
-                {"key": "violatingSamples", "value": str(samples)},
-                {"key": "slidingWindow", "value": str(samples)},
-                {"key": "dealertingSamples", "value": "5"},
+                {"key": "violatingSamples", "value": str(violating)},
+                {"key": "slidingWindow", "value": str(window)},
+                {"key": "dealertingSamples", "value": dealerting_samples(window)},
             ]
             if ctype == "multi_location_synthetic":
+                # D19: the static threshold analyzer has no location-count parameter.
                 required = int(nr_condition.get("locationsRequired", 3))
-                analyzer_input.append(
-                    {"key": "minLocationsFailing", "value": str(required)}
-                )
                 warnings.append(
-                    f"Multi-location synthetic '{name}' requires "
-                    f"{required} locations failing — verify DT detector "
-                    "supports minLocationsFailing in the target tenant."
+                    f"Multi-location synthetic '{name}' requires {required} failing "
+                    "locations in NR; the Davis analyzer has no location-count input. "
+                    "Add a `by: {dt.synthetic.location.id}` split or use the synthetic "
+                    "monitor's own outage settings."
                 )
 
-            detector_id = f"davis-{ctype}-{name}".lower()
-            detector_id = "".join(
-                c if c.isalnum() or c == "-" else "-" for c in detector_id
-            )[:180]
             detector = {
                 "schemaId": "builtin:davis.anomaly-detectors",
                 "scope": "environment",
-                "detectorId": detector_id,
                 "value": {
                     "enabled": bool(nr_condition.get("enabled", True)),
                     "title": f"[Migrated] {name}",
                     "description": f"{note} Migrated from NR '{ctype}' condition.",
                     "source": "newrelic-migration",
-                    "executionSettings": {"actor": None, "queryOffset": None},
+                    "executionSettings": {},  # actor (service user) injected at import/export — D16
                     "analyzer": {
                         "name": (
                             "dt.statistics.ui.anomaly_detection"
@@ -153,7 +161,7 @@ class NonNRQLAlertTransformer:
                     "eventTemplate": {
                         "properties": [
                             {"key": "event.type", "value": "CUSTOM_ALERT"},
-                            {"key": "event.name", "value": f"[Migrated] {name}"},
+                            {"key": "event.name", "value": migrated_event_name(name, ctype)},
                             {"key": "source.condition", "value": name},
                             {"key": "source.type", "value": ctype},
                             {"key": "migrated.from", "value": "newrelic"},
@@ -165,19 +173,8 @@ class NonNRQLAlertTransformer:
             workflow = {
                 "title": f"[Migrated {ctype}] {name}",
                 "description": note,
-                "private": False,
-                "trigger": {
-                    "event": {
-                        "active": True,
-                        "config": {
-                            "davis_event": {
-                                "eventType": "CUSTOM_ALERT",
-                                "detectorIds": [detector_id],
-                                "anyEventMatches": True,
-                            }
-                        },
-                    }
-                },
+                "isPrivate": False,
+                "trigger": davis_problem_trigger(migrated_event_filter(name)),
                 # Gen3 Automation API requires `tasks` as a dict keyed by task id.
                 "tasks": tasks_list_to_dict([
                     {

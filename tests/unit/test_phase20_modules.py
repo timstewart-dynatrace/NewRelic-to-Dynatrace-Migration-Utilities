@@ -83,17 +83,27 @@ class TestDeleteEntity:
         c.automation.delete_workflow = MagicMock(
             return_value=DynatraceResponse(data=None, status_code=204)
         )
+        c.slos.delete_slo = MagicMock(
+            return_value=DynatraceResponse(data=None, status_code=204)
+        )
         return c
 
     def test_settings_dispatch(self):
         c = self._client()
         for entity_type in (
             "anomaly_detector", "segment", "iam_policy",
-            "synthetic_test", "slo", "openpipeline_processor",
+            "synthetic_test", "openpipeline_processor",
         ):
             r = c.delete_entity(entity_type, "abc-123")
             assert r.success, f"delete failed for {entity_type}: {r.error_message}"
             c.settings.delete_object.assert_called_with("abc-123")
+
+    def test_slo_dispatch(self):
+        c = self._client()
+        r = c.delete_entity("slo", "slo-1")
+        assert r.success
+        c.slos.delete_slo.assert_called_once_with("slo-1")
+        c.settings.delete_object.assert_not_called()
 
     def test_dashboard_dispatch(self):
         c = self._client()

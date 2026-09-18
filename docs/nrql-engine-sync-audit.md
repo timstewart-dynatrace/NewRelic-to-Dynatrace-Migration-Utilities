@@ -1,7 +1,7 @@
 # nrql-engine ↔ NewRelic-to-Dynatrace Migration Utilities Sync Audit
 
 > **Audited:** 2026-04-15
-> **Sibling repo:** `/Users/Shared/GitHub/PROJECTS/nrql-engine/` (TypeScript)
+> **Sibling repo:** `/Users/Shared/GitHub/PROJECTS/NewRelic/nrql-engine/` (TypeScript)
 > **This repo:** `/Users/Shared/GitHub/PROJECTS/NewRelic-to-Dynatrace-Migration-Utilities/` (Python)
 
 The two projects are meant to stay feature-synced. This doc catalogs
@@ -140,7 +140,7 @@ will be tracked in a new phase.
 
 ## Third-pass audit (2026-04-15, post-Phase-24)
 
-Full enumeration of `/Users/Shared/GitHub/PROJECTS/nrql-engine/src/transformers/*.transformer.ts`
+Full enumeration of `/Users/Shared/GitHub/PROJECTS/NewRelic/nrql-engine/src/transformers/*.transformer.ts`
 (53 files) diffed against Python `transformers/*_transformer.py` +
 `transformers/*_translator.py` (40 files after Phase 24).
 
@@ -186,3 +186,18 @@ This is the recommended **parity-baseline** snapshot — future drift
 should be caught by `tests/unit/test_phase19b_engine_parity.py` (the
 fixer-method + shorthand pin-down suite in CI) and the
 `nrql-engine-parity` GitHub Actions job.
+
+
+## 2026-09-16 — Smartscape-first DQL (both repos)
+
+Emitter, converter, and fixer moved off deprecated `dt.entity.*` in lockstep
+(`feat/smartscape-dql` in both repos). New fixer rule
+`_fix_classic_entity_references` / `fixClassicEntityReferences` (25 rules each).
+Parity pinned by `tests/unit/test_phase19b_engine_parity.py::TestSmartscapeParity`
++ `::TestK8sOverridesParity` and TS `tests/compiler/smartscape-parity.test.ts`
+(identical inputs and expected strings).
+
+**Known drift found during this work (not fixed):** nrql-engine's Gen3-default
+`AlertTransformer` and `NonNrqlAlertConditionTransformer` still emit Gen2
+`builtin:anomaly-detection.metric-events`; Python moved both to
+`builtin:davis.anomaly-detectors` in PRs #16–22.

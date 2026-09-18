@@ -1,48 +1,60 @@
 """
 SLO Transformer — Gen3 target.
 
-Emits Settings 2.0 payloads targeting schema `builtin:monitoring.slo`. The
-SLO body is wrapped in the `{schemaId, scope, value}` Settings 2.0
-envelope expected by `settingsObjectsClient.postSettingsObjects` and by
-the `dynatrace_slo_v2` Terraform resource.
+Emits Platform SLO API request bodies (`POST /platform/slo/v1/slos`) with a
+DQL `customSli.indicator` grouped by `dt.smartscape.service`. The same body
+is the Monaco `slo-v2` template and maps 1:1 onto the Terraform
+`dynatrace_platform_slo` resource.
 
+Classic `builtin:monitoring.slo` (metric-selector SLOs) is no longer emitted.
 Legacy (Config v1 `/slo`) behavior is preserved in
 `transformers/legacy/slo_transformer_v1.py`.
 """
 
+import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 import structlog
 
+from ._slo_utils import (
+    DEFAULT_LATENCY_THRESHOLD_MS,
+    availability_indicator,
+    build_platform_slo,
+    latency_indicator,
+)
 from .mapping_rules import SLO_TIME_UNIT_MAP
 
 logger = structlog.get_logger()
 
+_SERVICE_NAME_RE = re.compile(
+    r"\b(?:appName|entityName|entity\.name|service\.name)\s*=\s*'([^']+)'", re.IGNORECASE
+)
+_DURATION_THRESHOLD_RE = re.compile(r"\bduration\s*<=?\s*([\d.]+)", re.IGNORECASE)
+
 
 @dataclass
 class SLOTransformResult:
-    """Result of SLO transformation (Gen3 builtin:monitoring.slo)."""
+    """Result of SLO transformation (Gen3 Platform SLO)."""
 
     success: bool
-    slo: Optional[Dict[str, Any]] = None  # Settings 2.0 envelope
+    slo: Optional[Dict[str, Any]] = None  # Platform SLO API request body
     warnings: List[str] = field(default_factory=list)
     errors: List[str] = field(default_factory=list)
 
 
 class SLOTransformer:
     """
-    Transforms New Relic Service Level Objectives to Dynatrace SLOs.
+    Transforms New Relic Service Level Objectives to Dynatrace Platform SLOs.
 
     New Relic SLO concepts:
     - SLI (Service Level Indicator): Defined by good/valid events queries
     - SLO: Target percentage over a time window
     - Time Window: Rolling period (days, weeks, months)
 
-    Dynatrace SLO concepts:
-    - SLO: Combined indicator and objective
-    - Metric Expression: Defines the success rate calculation
-    - Evaluation Type: Rolling or calendar-based
+    Dynatrace Platform SLO concepts:
+    - customSli.indicator: DQL producing an `sli` percentage series
+    - criteria: target / warning over a relative timeframe
     """
 
     def __init__(self):
@@ -50,33 +62,28 @@ class SLOTransformer:
 
     def transform(self, nr_slo: Dict[str, Any]) -> SLOTransformResult:
         """Transform a New Relic SLO to Dynatrace format."""
-        warnings = []
-        errors = []
+        warnings: List[str] = []
+        errors: List[str] = []
 
         try:
             slo_name = nr_slo.get("name", "Unnamed SLO")
             description = nr_slo.get("description", "")
 
-            # Get objectives (targets)
             objectives = nr_slo.get("objectives", [])
             if not objectives:
                 errors.append(f"SLO '{slo_name}' has no objectives defined")
                 return SLOTransformResult(success=False, errors=errors)
 
-            # Use the first objective
             objective = objectives[0]
             target = objective.get("target", 99.0)
 
-            # Get time window
             time_window = objective.get("timeWindow", {})
             rolling = time_window.get("rolling", {})
             window_count = rolling.get("count", 7)
             window_unit = rolling.get("unit", "DAY")
 
-            # Get events (SLI definition)
             events = nr_slo.get("events", {})
 
-            # Build Dynatrace SLO
             dt_slo = self._build_dynatrace_slo(
                 name=slo_name,
                 description=description,
@@ -84,20 +91,13 @@ class SLOTransformer:
                 window_count=window_count,
                 window_unit=window_unit,
                 events=events,
-                warnings=warnings
+                warnings=warnings,
+                guid=nr_slo.get("guid") or nr_slo.get("id"),
             )
 
-            logger.info(
-                "Transformed SLO",
-                name=slo_name,
-                target=target
-            )
+            logger.info("Transformed SLO", name=slo_name, target=target)
 
-            return SLOTransformResult(
-                success=True,
-                slo=dt_slo,
-                warnings=warnings
-            )
+            return SLOTransformResult(success=True, slo=dt_slo, warnings=warnings)
 
         except Exception as e:
             logger.error("SLO transformation failed", error=str(e))
@@ -114,101 +114,106 @@ class SLOTransformer:
         window_count: int,
         window_unit: str,
         events: Dict[str, Any],
-        warnings: List[str]
+        warnings: List[str],
+        guid: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Build a Dynatrace SLO configuration."""
-        # Map time window unit
-        dt_time_unit = SLO_TIME_UNIT_MAP.get(window_unit, "DAY")
+        """Build a Platform SLO request body."""
+        timeframe_from = self._build_timeframe(
+            window_count, SLO_TIME_UNIT_MAP.get(window_unit, "DAY"), warnings
+        )
+        indicator = self._build_indicator(events, warnings)
 
-        # Calculate timeframe string
-        timeframe = self._build_timeframe(window_count, dt_time_unit)
+        original = self._original_nrql(events)
+        full_description = description or "Migrated from New Relic"
+        if original:
+            full_description += f"\n\n--- Original NR SLI ---\n{original}"
 
-        # Build metric expression from events
-        metric_expression = self._build_metric_expression(events, warnings)
+        return build_platform_slo(
+            name=f"[Migrated] {name}",
+            description=full_description,
+            target=target,
+            indicator=indicator,
+            timeframe_from=timeframe_from,
+            tags=["MigratedFromNR:true"],
+            external_id=f"nr-slo-{guid}" if guid else None,
+        )
 
-        inner = {
-            "name": f"[Migrated] {name}",
-            "description": description or "Migrated from New Relic",
-            "metricName": self._sanitize_metric_name(name),
-            "metricExpression": metric_expression,
-            "evaluationType": "AGGREGATE",
-            "filter": "",
-            "target": target,
-            "warning": target - 1.0,  # Warning at 1% below target
-            "timeframe": timeframe,
-            "enabled": True,
-        }
+    def _build_timeframe(self, count: int, unit: str, warnings: List[str]) -> str:
+        """Relative DQL timeframe for the SLO criteria."""
+        if unit == "WEEK":
+            return f"now-{count}w"
+        if unit == "MONTH":
+            warnings.append(
+                f"NR SLO window of {count} month(s) approximated as {count * 30} days."
+            )
+            return f"now-{count * 30}d"
+        return f"now-{count}d"
 
-        return {
-            "schemaId": "builtin:monitoring.slo",
-            "scope": "environment",
-            "value": inner,
-        }
+    def _build_indicator(self, events: Dict[str, Any], warnings: List[str]) -> str:
+        """DQL SLI from the NR good/valid events definition."""
+        valid_query = (events.get("validEvents") or {}).get("where", "") or ""
+        good_query = (events.get("goodEvents") or {}).get("where", "") or ""
+        bad_query = (events.get("badEvents") or {}).get("where", "") or ""
+        all_where = " ".join((valid_query, good_query, bad_query))
 
-    def _build_timeframe(self, count: int, unit: str) -> str:
-        """Build Dynatrace timeframe string."""
-        # Dynatrace uses ISO 8601 duration format or relative strings
-        unit_map = {
-            "DAY": "d",
-            "WEEK": "w",
-            "MONTH": "M"
-        }
+        service_name = self._extract_service_name(all_where)
+        if not service_name:
+            warnings.append(
+                "Could not determine the service from the NR SLI; the indicator covers "
+                "all services. Add a filter (e.g. contains(entityName, \"<service>\"))."
+            )
 
-        suffix = unit_map.get(unit, "d")
-        return f"-{count}{suffix}"
-
-    def _build_metric_expression(
-        self,
-        events: Dict[str, Any],
-        warnings: List[str]
-    ) -> str:
-        """
-        Build Dynatrace metric expression from New Relic events.
-
-        New Relic SLI is typically: (good events / valid events) * 100
-
-        Dynatrace metric expressions use DQL-like syntax.
-        """
-        valid_events = events.get("validEvents", {})
-        good_events = events.get("goodEvents", {})
-        bad_events = events.get("badEvents", {})
-
-        valid_query = valid_events.get("where", "")
-        good_query = good_events.get("where", "")
-        bad_query = bad_events.get("where", "")
-
-        # Analyze the queries to determine SLO type
         slo_type = self._detect_slo_type(valid_query, good_query)
 
-        if slo_type == "availability":
-            # Service availability SLO
+        if slo_type in ("availability", "error_rate"):
             warnings.append(
-                "SLO appears to be availability-based. Using builtin service availability metric."
+                f"SLO appears to be {slo_type.replace('_', '-')} based. "
+                "Using service success-rate SLI (dt.service.request.count / failure_count)."
             )
-            return "(100)*(builtin:service.availability:filter(and(in(\"dt.entity.service\",entitySelector(\"type(service)\")))))"
+            return availability_indicator(service_name)
 
-        elif slo_type == "error_rate":
-            # Error-based SLO
-            warnings.append(
-                "SLO appears to be error-rate based. Using builtin service error rate metric."
-            )
-            return "(100)*(builtin:service.errors.total.successRate:filter(and(in(\"dt.entity.service\",entitySelector(\"type(service)\")))))"
+        if slo_type == "latency":
+            threshold_ms = self._extract_latency_threshold_ms(good_query)
+            if threshold_ms is None:
+                threshold_ms = DEFAULT_LATENCY_THRESHOLD_MS
+                warnings.append(
+                    f"SLO appears to be latency-based but no duration threshold was found; "
+                    f"defaulted to {threshold_ms}ms."
+                )
+            else:
+                warnings.append(
+                    f"SLO appears to be latency-based. Using {threshold_ms}ms response-time threshold."
+                )
+            return latency_indicator(threshold_ms, service_name)
 
-        elif slo_type == "latency":
-            # Latency-based SLO
-            warnings.append(
-                "SLO appears to be latency-based. Manual configuration recommended for specific thresholds."
-            )
-            return "(100)*((builtin:service.response.time:avg:partition(\"latency\",value(\"good\",lt(1000000))):filter(and(in(\"dt.entity.service\",entitySelector(\"type(service)\"))))):splitBy():count:default(0))/(builtin:service.requestCount.total:filter(and(in(\"dt.entity.service\",entitySelector(\"type(service)\"))))):splitBy():sum)"
+        warnings.append(
+            f"Could not automatically determine SLO type. "
+            f"Original queries - Valid: {valid_query[:50]}..., Good: {good_query[:50]}... "
+            "Defaulted to service success-rate SLI; manual review required."
+        )
+        return availability_indicator(service_name)
 
-        else:
-            # Generic placeholder
-            warnings.append(
-                f"Could not automatically determine SLO metric type. "
-                f"Original queries - Valid: {valid_query[:50]}..., Good: {good_query[:50]}... "
-                "Manual configuration required."
-            )
-            return "(100)*(builtin:service.availability)"
+    @staticmethod
+    def _extract_service_name(where: str) -> Optional[str]:
+        match = _SERVICE_NAME_RE.search(where)
+        return match.group(1) if match else None
+
+    @staticmethod
+    def _extract_latency_threshold_ms(good_query: str) -> Optional[int]:
+        """NR `duration` is in seconds."""
+        match = _DURATION_THRESHOLD_RE.search(good_query)
+        if not match:
+            return None
+        return int(round(float(match.group(1)) * 1000))
+
+    @staticmethod
+    def _original_nrql(events: Dict[str, Any]) -> str:
+        lines = []
+        for key, label in (("validEvents", "Valid"), ("goodEvents", "Good"), ("badEvents", "Bad")):
+            ev = events.get(key) or {}
+            if ev.get("from") or ev.get("where"):
+                lines.append(f"{label}: FROM {ev.get('from', '?')} WHERE {ev.get('where') or 'N/A'}")
+        return "\n".join(lines)
 
     def _detect_slo_type(self, valid_query: str, good_query: str) -> str:
         """Detect the type of SLO based on queries."""
@@ -222,14 +227,6 @@ class SLOTransformer:
             return "availability"
         else:
             return "unknown"
-
-    def _sanitize_metric_name(self, name: str) -> str:
-        """Sanitize SLO name for use as metric name."""
-        # Replace spaces and special characters
-        sanitized = name.lower()
-        sanitized = sanitized.replace(" ", "_")
-        sanitized = "".join(c if c.isalnum() or c == "_" else "" for c in sanitized)
-        return f"slo.migrated.{sanitized}"
 
     def transform_all(
         self,

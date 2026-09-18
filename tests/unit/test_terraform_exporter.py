@@ -65,18 +65,15 @@ def gen3_data():
         ],
         "slos": [
             {
-                "schemaId": "builtin:monitoring.slo",
-                "scope": "environment",
-                "value": {
-                    "name": "checkout-slo",
-                    "enabled": True,
-                    "metricExpression": "(100)*(builtin:service.availability)",
-                    "evaluationType": "AGGREGATE",
-                    "timeframe": "-7d",
-                    "filter": "",
-                    "target": 99.9,
-                    "warning": 99.5,
+                "name": "checkout-slo",
+                "description": "Migrated from New Relic",
+                "criteria": [
+                    {"target": 99.9, "warning": 99.95, "timeframeFrom": "now-7d", "timeframeTo": "now"}
+                ],
+                "customSli": {
+                    "indicator": "timeseries {\n  total=sum(dt.service.request.count),\n  failures=sum(dt.service.request.failure_count)\n}, by: { dt.smartscape.service }\n| fieldsAdd sli=(((total[]-failures[])/total[])*(100))"
                 },
+                "tags": ["MigratedFromNR:true"],
             }
         ],
         "openpipeline_processors": [
@@ -128,11 +125,15 @@ class TestTerraformGen3Output:
         assert 'resource "dynatrace_iam_policy"' in hcl
         assert "statement_query" in hcl
 
-    def test_slos_emit_dynatrace_slo_v2(self, exporter, gen3_data, tmp_path):
+    def test_slos_emit_dynatrace_platform_slo(self, exporter, gen3_data, tmp_path):
         exporter.export(gen3_data, tmp_path)
         hcl = (tmp_path / "slos.tf").read_text()
-        assert 'resource "dynatrace_slo_v2"' in hcl
-        assert "target_success    = 99.9" in hcl
+        assert 'resource "dynatrace_platform_slo"' in hcl
+        assert "dynatrace_slo_v2" not in hcl
+        assert "criteria_detail {" in hcl
+        assert "target         = 99.9" in hcl
+        assert "custom_sli {" in hcl
+        assert "by: { dt.smartscape.service }" in hcl
 
     def test_synthetic_tests_use_generic_setting(self, exporter, gen3_data, tmp_path):
         exporter.export(gen3_data, tmp_path)

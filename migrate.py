@@ -294,7 +294,7 @@ class MigrationOrchestrator:
             "workflows": [],             # Automation API workflow JSON
             "anomaly_detectors": [],     # builtin:davis.anomaly-detectors envelopes
             "synthetic_tests": [],       # builtin:synthetic_test envelopes
-            "slos": [],                  # builtin:monitoring.slo envelopes
+            "slos": [],                  # Platform SLO API bodies (/platform/slo/v1/slos)
             "segments": [],              # builtin:segment envelopes
             "iam_policies": [],          # builtin:iam.policy envelopes
             "openpipeline_processors": [],  # builtin:openpipeline.* envelopes
@@ -366,8 +366,11 @@ class MigrationOrchestrator:
                     )
                     for (idx, item), result in zip(items_to_transform, results):
                         if result.success:
-                            if result.workflow:
-                                transformed_data["workflows"].append(result.workflow)
+                            # D5: severity fanout can emit several workflows per policy.
+                            transformed_data["workflows"].extend(
+                                getattr(result, "workflows", None)
+                                or ([result.workflow] if result.workflow else [])
+                            )
                             transformed_data["anomaly_detectors"].extend(
                                 result.anomaly_detectors or []
                             )
@@ -703,7 +706,7 @@ class MigrationOrchestrator:
             #   anomaly_detectors   -> Settings 2.0 (builtin:davis.anomaly-detectors)
             #   workflows           -> Automation API
             #   synthetic_tests     -> Settings 2.0 (builtin:synthetic_test)
-            #   slos                -> Settings 2.0 (builtin:monitoring.slo)
+            #   slos                -> Platform SLO API (/platform/slo/v1/slos)
             #   segments            -> Settings 2.0 (builtin:segment)
             #   iam_policies        -> Settings 2.0 (builtin:iam.policy)
             #   openpipeline_*      -> Settings 2.0 (builtin:openpipeline.*)
@@ -883,7 +886,7 @@ class MigrationOrchestrator:
             ("Workflows", "workflows", "title"),
             ("Davis Anomaly Detectors", "anomaly_detectors", "value.name"),
             ("Synthetic Tests", "synthetic_tests", "value.name"),
-            ("SLOs", "slos", "value.name"),
+            ("SLOs", "slos", "name"),
             ("Segments", "segments", "value.name"),
             ("IAM Policies", "iam_policies", "value.name"),
             ("OpenPipeline Processors", "openpipeline_processors", "value.name"),
@@ -1180,7 +1183,13 @@ def main(
             dt_client = DynatraceClient(
                 environment_url=settings.dynatrace.environment_url,
                 api_token=settings.dynatrace.api_token,
+                detector_actor=settings.dynatrace.detector_actor,
             )
+            if (not components or "alerts" in components) and not settings.dynatrace.detector_actor:
+                console.print(
+                    "[yellow]DYNATRACE_DETECTOR_ACTOR is not set — Davis anomaly detectors "
+                    "will fail to import (executionSettings.actor must be a service-user UUID).[/yellow]"
+                )
 
         # Validate Dynatrace connection
         if not dt_client.validate_connection():
@@ -1930,6 +1939,12 @@ def preflight():
             ", ".join(check.scopes_min),
         )
     console.print(table)
+    if not settings.dynatrace.detector_actor:
+        console.print(
+            "[yellow]DYNATRACE_DETECTOR_ACTOR is not set.[/yellow] Davis anomaly detectors "
+            "(migrated alerts) require executionSettings.actor = the UUID of a service user "
+            "on this tenant; detector import fails without it."
+        )
 
     for check in checks:
         header = (

@@ -7,7 +7,7 @@ Transactions carry an apdex T-value, an entity tag, and often a
 dedicated alert. The DT equivalent is a *bundle*:
 
   NR Key Transaction
-    -> DT SLO         (builtin:monitoring.slo) using the apdex T-value
+    -> DT SLO         (Platform SLO API, DQL SLI) using the apdex T-value
     -> OpenPipeline   enrichment tagging the service with
                       `key_transaction=true`
     -> DT Workflow    (Automation API) triggered by Davis events on the
@@ -24,7 +24,8 @@ from typing import Any, Dict, List, Optional
 
 import structlog
 
-from ._workflow_utils import tasks_list_to_dict
+from ._slo_utils import build_platform_slo, latency_indicator
+from ._workflow_utils import davis_problem_trigger, tasks_list_to_dict
 
 logger = structlog.get_logger()
 
@@ -32,7 +33,7 @@ logger = structlog.get_logger()
 @dataclass
 class KeyTransactionResult:
     success: bool
-    slo_envelope: Optional[Dict[str, Any]] = None
+    slo: Optional[Dict[str, Any]] = None  # Platform SLO API request body
     enrichment_processor: Optional[Dict[str, Any]] = None
     workflow: Optional[Dict[str, Any]] = None
     warnings: List[str] = field(default_factory=list)
@@ -55,29 +56,18 @@ class KeyTransactionTransformer:
             service_slug = _slug(service_name) if service_name else "unknown-service"
 
             # --- SLO ---
-            metric_expression = (
-                "(100)*(countIf(duration < "
-                f"{duration_threshold_ms}ms)/count())"
+            slo = build_platform_slo(
+                name=f"[Migrated KT] {name}",
+                description=(
+                    f"Key Transaction SLO migrated from New Relic. "
+                    f"Apdex target: {apdex_t}s response-time threshold."
+                ),
+                target=95.0,
+                warning=97.5,
+                indicator=latency_indicator(duration_threshold_ms, service_name or None),
+                timeframe_from="now-7d",
+                tags=["MigratedFromNR:true", f"key_transaction:{slug}"],
             )
-            slo_envelope = {
-                "schemaId": "builtin:monitoring.slo",
-                "scope": "environment",
-                "value": {
-                    "name": f"[Migrated KT] {name}",
-                    "description": (
-                        f"Key Transaction SLO migrated from New Relic. "
-                        f"Apdex target: {apdex_t}s response-time threshold."
-                    ),
-                    "metricName": f"slo.migrated.kt.{slug}",
-                    "metricExpression": metric_expression,
-                    "evaluationType": "AGGREGATE",
-                    "filter": f'type("SERVICE") AND tag("key_transaction:{slug}")',
-                    "target": 95.0,
-                    "warning": 90.0,
-                    "timeframe": "-7d",
-                    "enabled": True,
-                },
-            }
 
             # --- OpenPipeline enrichment — tag the service so other ---
             # --- migrated artifacts can reference the Key Transaction ---
@@ -107,25 +97,15 @@ class KeyTransactionTransformer:
                 },
             }
 
-            # --- Workflow — Davis-event trigger filtered to this KT's tag ---
-            detector_id = f"davis-kt-{slug}"
+            # --- Workflow — Davis-problem trigger filtered to this KT's entity tag ---
             workflow = {
                 "title": f"[Migrated KT] {name}",
-                "description": f"Workflow for Key Transaction '{name}'.",
-                "private": False,
-                "trigger": {
-                    "event": {
-                        "active": True,
-                        "config": {
-                            "davis_event": {
-                                "eventType": "CUSTOM_ALERT",
-                                "entityTagsMatch": "all",
-                                "entityTags": {"key_transaction": slug},
-                                "anyEventMatches": True,
-                            }
-                        },
-                    }
-                },
+                "description": (
+                    f"Workflow for Key Transaction '{name}' "
+                    f"(apdex T {apdex_t}s; migrated from newrelic.key_transaction)."
+                ),
+                "isPrivate": False,
+                "trigger": davis_problem_trigger(entity_tags={"key_transaction": slug}),
                 # Gen3 Automation API requires `tasks` as a dict keyed by task id.
                 "tasks": tasks_list_to_dict([
                     {
@@ -140,14 +120,6 @@ class KeyTransactionTransformer:
                         "position": {"x": 0, "y": 1},
                     }
                 ]),
-                # Metadata links the three artifacts so post-migration audit
-                # can identify which SLO/enrichment/workflow are a set.
-                "migratedFrom": {
-                    "type": "newrelic.key_transaction",
-                    "name": name,
-                    "detectorId": detector_id,
-                    "apdexT": apdex_t,
-                },
             }
 
             if not service_name:
@@ -165,7 +137,7 @@ class KeyTransactionTransformer:
             )
             return KeyTransactionResult(
                 success=True,
-                slo_envelope=slo_envelope,
+                slo=slo,
                 enrichment_processor=enrichment_processor,
                 workflow=workflow,
                 warnings=warnings,

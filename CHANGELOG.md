@@ -7,7 +7,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed (live-validated Gen3 defects — see docs/live-validation-2026-09.md)
+- **Detectors would not create or would never alert.** Queries are always timeseries
+  (`summarize` → `makeTimeseries`), unconverted queries use a valid inert placeholder,
+  classic `builtin:*` metric keys map to Grail keys, `executionSettings.actor` comes from
+  the new `DYNATRACE_DETECTOR_ACTOR` setting, `dealertingSamples` ≤ `slidingWindow`, valid
+  Davis `event.type` values, and non-existent analyzer inputs (`minLocationsFailing`,
+  `learningPeriodDays`, `dimensions`) removed. Every emitter passes the tenant's Settings
+  validator (`scripts/validate_detectors_live.py`). The non-schema `detectorId` field is gone.
+- **Workflows would never fire.** Triggers use the real
+  `eventTrigger.triggerConfiguration` `davis-problem` shape, linked to detectors by
+  `matchesValue(event.name, "[Migrated] <policy> | *")`; `private` / `migratedFrom` removed;
+  every severity-fanout workflow is kept; NR operator and `AT_LEAST_ONCE` honoured.
+- **Span queries returned no data on OneAgent services.** `appName` / `entityName` →
+  `dt.service.name`, `error` → `request.is_failed`; mixed AND/OR keeps parentheses.
+- Segments filter `_all_entities` by `type` / `id` / `name` with AND grouping.
+- AIOps enrichment tasks no longer embed raw NRQL in `dql-query` tasks.
+- SLO and Document deletes use the `optimistic-locking-version` query param; SLO auditor
+  updates send it.
+
+### Added
+- `DYNATRACE_DETECTOR_ACTOR` (service-user UUID) — required to import Davis anomaly detectors.
+
 ### Changed
+- **BREAKING (output): SLOs now target the Platform SLO API** (`POST /platform/slo/v1/slos`)
+  instead of classic Settings 2.0 `builtin:monitoring.slo` metric-selector SLOs.
+  `SLOTransformer` and `KeyTransactionTransformer` emit a DQL `customSli.indicator`
+  grouped by `dt.smartscape.service`; the service is taken from `appName` /
+  `entityName` in the NR SLI and latency thresholds from `duration < N`.
+  `KeyTransactionResult.slo_envelope` is renamed `slo`. New `clients/slo_client.py`
+  (create / list / delete with optimistic-locking version); `DynatraceClient.create_slo`,
+  rollback, backup, and `preflight` (`slo_api`, `slo:slos:read|write`) use it.
+  Monaco export emits `type: slo-v2`; Terraform emits `dynatrace_platform_slo`.
+  Shared builder in `transformers/_slo_utils.py` (also used by the converter).
+- **Smartscape-first DQL emission.** Classic `dt.entity.*` is deprecated per
+  Dynatrace's `dt-dql-essentials` / `dt-migration` skills (see
+  `.claude/rules/gen3-apis.md` §7). Mirrored in nrql-engine.
+  - `entityName` / `entity.name` emit a raw dimension by context:
+    `service.name` (spans/logs), `host.name` (System/Process/Network/StorageSample),
+    `dt.service.name` (Metric), `k8s.workload.name` + warning (K8s samples).
+    Previously `dt.entity.name` (not a Grail field) or `entity.name`.
+  - `entityGuid` -> `dt.smartscape.service`.
+  - K8s `isReady` / `status` / `isScheduled` -> `smartscapeNodes` +
+    `parse k8s.object` (was `fetch dt.entity.cloud_application[_instance]`).
+  - Platform SLO `customSli.indicator` groups `by: {dt.smartscape.service}`
+    with `getNodeName()`.
+  - Resolved NR GUIDs filter on `host.name` / `service.name` (was `dt.entity.name`).
+  - Baseline outlier detectors default to `dt.smartscape.service`.
+- **Added** `DQLValidator._fix_classic_entity_references` (fixer rule #25) and
+  `validators/smartscape_map.py`: rewrites 1:1 classic references
+  (`dt.entity.X` -> `dt.smartscape.Y`, `fetch dt.entity.X` -> `smartscapeNodes`,
+  `entityName()` -> `getNodeName()`, classic IDs -> `toSmartscapeId()`);
+  annotates 1:N types, removed group types, `classicEntitySelector`, `entityAttr`.
 - `migrate.py preflight` now reports WHY each Gen3 API check fails and HOW
   to fix it. Each API row shows the endpoint probed, HTTP status, minimum
   scopes (for the probe) and recommended scopes (for a full migrate run).

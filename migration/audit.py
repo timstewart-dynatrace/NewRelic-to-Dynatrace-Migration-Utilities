@@ -102,7 +102,7 @@ _BUCKET_MAP = {
     "segments": ("segments", "objectId", "value.name"),
     "iam_policies": ("iam_policies", "objectId", "value.name"),
     "synthetic_tests": ("synthetic_tests", "objectId", "value.name"),
-    "slos": ("slos", "objectId", "value.name"),
+    "slos": ("slos", "id", "name"),
     "openpipeline_processors": ("openpipeline_logs", "objectId", "value.name"),
     "dashboards": ("dashboards", "id", "name"),
     "workflows": ("workflows", "id", "title"),

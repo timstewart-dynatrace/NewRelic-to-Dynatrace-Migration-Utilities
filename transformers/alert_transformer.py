@@ -5,12 +5,13 @@ Converts New Relic alert policies + conditions to Dynatrace Gen3 objects:
 
   NR Alert Policy       -> DT Automation Workflow (one per policy)
   NR NRQL Condition     -> DT Davis Anomaly Detector (builtin:davis.anomaly-detectors)
-                           + Workflow trigger on the detector's Davis event
+                           + Workflow davis-problem trigger on the detector's events
   NR Notification Ch.   -> Workflow action task (email / slack / webhook /
                            pagerduty via dynatrace.pagerduty connector)
 
-The workflow's `trigger.event.config.davis_event` block filters Davis events
-emitted by the anomaly detectors produced from the policy's conditions. All
+Each detector names its events `[Migrated] <policy> | <condition>`; the policy's
+workflow uses a `davis-problem` trigger whose customFilter matches that prefix
+(`_workflow_utils.migrated_event_filter`). All
 routing happens through Workflow task nodes — no Alerting Profile, no Problem
 Notification, no Config-v1 Metric Event.
 
@@ -23,9 +24,14 @@ from typing import Any, Dict, List, Optional
 
 import structlog
 
-from ._detector_utils import nrql_to_analyzer_query
-from ._workflow_utils import tasks_list_to_dict
-from .mapping_rules import OPERATOR_MAP, EntityMapper
+from ._detector_utils import alert_condition_for, dealerting_samples, nrql_to_analyzer_query
+from ._workflow_utils import (
+    davis_problem_trigger,
+    migrated_event_filter,
+    migrated_event_name,
+    tasks_list_to_dict,
+)
+from .mapping_rules import EntityMapper
 
 logger = structlog.get_logger()
 
@@ -35,7 +41,8 @@ class AlertTransformResult:
     """Result of alert transformation (Gen3)."""
 
     success: bool
-    workflow: Optional[Dict[str, Any]] = None
+    workflow: Optional[Dict[str, Any]] = None  # first of `workflows` (backward compat)
+    workflows: List[Dict[str, Any]] = field(default_factory=list)  # all, incl. severity fanout
     anomaly_detectors: List[Dict[str, Any]] = field(default_factory=list)
     warnings: List[str] = field(default_factory=list)
     errors: List[str] = field(default_factory=list)
@@ -58,27 +65,24 @@ class AlertTransformer:
             conditions = nr_policy.get("conditions", []) or []
 
             anomaly_detectors: List[Dict[str, Any]] = []
-            detector_ids: List[str] = []
 
             for condition in conditions:
                 det = self._build_anomaly_detector(condition, policy_name, warnings)
                 if det is None:
                     continue
                 anomaly_detectors.append(det)
-                detector_ids.append(det["detectorId"])
 
             # Phase 25: detect severity-ladder delays → fan out Workflows.
             severity_rules = nr_policy.get("severityRules", []) or []
             workflows = self._build_workflows(
                 policy_name=policy_name,
                 policy_id=policy_id,
-                detector_ids=detector_ids,
                 notifications=nr_policy.get("notificationChannels", []) or [],
                 severity_rules=severity_rules,
                 warnings=warnings,
             )
             # Backward compat: `.workflow` is the first (or only) Workflow;
-            # `.all_workflows` carries the full list when fanout occurred.
+            # `.workflows` carries the full list when severity fanout occurred.
             workflow = workflows[0]
 
             logger.info(
@@ -91,6 +95,7 @@ class AlertTransformer:
             return AlertTransformResult(
                 success=True,
                 workflow=workflow,
+                workflows=workflows,
                 anomaly_detectors=anomaly_detectors,
                 warnings=warnings,
                 errors=errors,
@@ -130,11 +135,8 @@ class AlertTransformer:
         signal = condition.get("signal", {}) or {}
         aggregation_window = int(signal.get("aggregationWindow", 60))
 
-        threshold, operator_dt, samples, violating = self._resolve_threshold(terms)
+        threshold, operator_dt, samples, violating = self._resolve_threshold(terms, warnings)
 
-        detector_id = f"davis-detector-{policy_name}-{condition_name}".lower().replace(
-            " ", "-"
-        )[:180]
 
         # builtin:davis.anomaly-detectors schema v1.0.14 (verified 2026-04-20
         # against sprint tenant). Top-level is {enabled,title,description,
@@ -158,12 +160,12 @@ class AlertTransformer:
             {"key": "alertOnMissingData", "value": "false"},
             {"key": "violatingSamples", "value": str(violating)},
             {"key": "slidingWindow", "value": str(samples)},
-            {"key": "dealertingSamples", "value": "5"},
+            {"key": "dealertingSamples", "value": dealerting_samples(samples)},
         ]
 
         event_properties = [
             {"key": "event.type", "value": "CUSTOM_ALERT"},
-            {"key": "event.name", "value": f"[Migrated] {condition_name}"},
+            {"key": "event.name", "value": migrated_event_name(policy_name, condition_name)},
             {"key": "source.policy", "value": policy_name},
             {"key": "source.condition", "value": condition_name},
             {"key": "migrated.from", "value": "newrelic"},
@@ -185,7 +187,6 @@ class AlertTransformer:
         detector: Dict[str, Any] = {
             "schemaId": "builtin:davis.anomaly-detectors",
             "scope": "environment",
-            "detectorId": detector_id,
             "value": {
                 "enabled": enabled,
                 "title": f"[Migrated] {condition_name}",
@@ -193,7 +194,7 @@ class AlertTransformer:
                 or f"Migrated from New Relic policy '{policy_name}'. "
                    f"Original NRQL: {query[:200]}",
                 "source": "newrelic-migration",
-                "executionSettings": {"actor": None, "queryOffset": None},
+                "executionSettings": {},  # actor (service user) injected at import/export — D16
                 "analyzer": {
                     "name": (
                         "dt.statistics.ui.anomaly_detection"
@@ -210,7 +211,7 @@ class AlertTransformer:
         return detector
 
     @staticmethod
-    def _resolve_threshold(terms: List[Dict[str, Any]]):
+    def _resolve_threshold(terms: List[Dict[str, Any]], warnings: Optional[List[str]] = None):
         """Pick the critical term (fallback: warning) and translate to DT fields."""
         operator_dt = "ABOVE"
         threshold = 0.0
@@ -230,7 +231,9 @@ class AlertTransformer:
         )
         active = critical or warning or terms[0]
 
-        operator_dt = OPERATOR_MAP.get(active.get("operator", "ABOVE"), "ABOVE")
+        # D23: the analyzer only accepts ABOVE / BELOW (verified live); inclusive and
+        # EQUALS operators are mapped or defaulted with a warning.
+        operator_dt = alert_condition_for(active.get("operator", "ABOVE"), "ABOVE", warnings)
         threshold = float(active.get("threshold", 0))
         duration_seconds = int(active.get("thresholdDuration", 300))
         samples = max(1, duration_seconds // 60)
@@ -259,7 +262,6 @@ class AlertTransformer:
         self,
         policy_name: str,
         policy_id: str,
-        detector_ids: List[str],
         notifications: List[Dict[str, Any]],
         severity_rules: List[Dict[str, Any]],
         warnings: List[str],
@@ -277,7 +279,7 @@ class AlertTransformer:
         unique_delays = set(delays.values())
         if len(unique_delays) <= 1 or not severity_rules:
             return [self._build_single_workflow(
-                policy_name, policy_id, detector_ids, notifications,
+                policy_name, policy_id, notifications,
                 None, warnings,
             )]
 
@@ -286,17 +288,11 @@ class AlertTransformer:
             wf = self._build_single_workflow(
                 policy_name=f"{policy_name} [{severity}]",
                 policy_id=policy_id,
-                detector_ids=detector_ids,
                 notifications=notifications,
                 severity_filter=severity,
                 warnings=warnings,
                 delay_minutes=delay,
             )
-            wf["migratedFrom"] = {
-                "type": "newrelic.severity_ladder",
-                "severity": severity,
-                "delayMinutes": delay,
-            }
             workflows.append(wf)
         warnings.append(
             f"Policy '{policy_name}' has non-uniform severity delays "
@@ -309,7 +305,6 @@ class AlertTransformer:
         self,
         policy_name: str,
         policy_id: str,
-        detector_ids: List[str],
         notifications: List[Dict[str, Any]],
         severity_filter: Optional[str],
         warnings: List[str],
@@ -341,29 +336,25 @@ class AlertTransformer:
                 }
             )
 
-        trigger_config: Dict[str, Any] = {
-            "eventType": "CUSTOM_ALERT",
-            "detectorIds": detector_ids,
-            "anyEventMatches": True,
-        }
+        # Detector events carry the base policy name, so link on it even when this
+        # workflow is one severity of a fanout ("<policy> [SEVERITY]").
+        base_policy = policy_name.rsplit(" [", 1)[0] if severity_filter else policy_name
+        description = f"Migrated from New Relic alert policy '{base_policy}' (id={policy_id})."
         if severity_filter:
-            trigger_config["eventProperties"] = {
-                "event.severity": severity_filter,
-            }
+            description += (
+                f" Severity-ladder workflow for {severity_filter}"
+                f" (delay {delay_minutes} min)."
+            )
 
         return {
             "title": f"[Migrated] {policy_name}",
-            "description": (
-                f"Migrated from New Relic alert policy '{policy_name}' (id={policy_id})."
-            ),
-            "private": False,
+            "description": description,
             "isPrivate": False,
-            "trigger": {
-                "event": {
-                    "active": True,
-                    "config": {"davis_event": trigger_config},
-                }
-            },
+            "trigger": davis_problem_trigger(
+                migrated_event_filter(base_policy),
+                severity=severity_filter or "",
+                warnings=warnings,
+            ),
             # Gen3 Automation API requires `tasks` as a dict keyed by task id.
             "tasks": tasks_list_to_dict(tasks),
         }

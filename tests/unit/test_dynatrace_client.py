@@ -22,6 +22,7 @@ from clients.automation_client import AutomationClient
 from clients.document_client import DocumentClient
 from clients.dynatrace_client import DynatraceClient
 from clients.settings_v2_client import SettingsV2Client
+from transformers._detector_utils import FALLBACK_QUERY, ensure_timeseries
 
 ENV = "https://abc12345.live.dynatrace.com"
 
@@ -316,11 +317,15 @@ class TestPreflightGen3:
             "/api/v2/settings/schemas": DynatraceResponse(data={}, status_code=200),
             "/platform/document/v1/documents": DynatraceResponse(data={}, status_code=200),
             "/platform/automation/v1/workflows": DynatraceResponse(data={}, status_code=200),
+            "/platform/slo/v1/slos": DynatraceResponse(data={}, status_code=200),
         })
         checks = c.preflight_gen3()
         assert [ch.api for ch in checks] == [
-            "settings_v2", "document_api", "automation_api"
+            "settings_v2", "document_api", "automation_api", "slo_api"
         ]
+        slo = checks[-1]
+        assert slo.scopes_min == ["slo:slos:read"]
+        assert "slo:slos:write" in slo.scopes_recommended
         assert all(ch.reachable for ch in checks)
         assert all(ch.status_code == 200 for ch in checks)
         assert all(ch.remediation == [] for ch in checks)
@@ -791,4 +796,452 @@ class TestAnalyzerInputQueryIsDql:
         assert "gibberish" in out and "NoSuchEvent" in out
         # Must still end with a valid DQL placeholder so the payload
         # server-validates.
-        assert "timeseries count()" in out
+        assert out.endswith(FALLBACK_QUERY)
+        assert "timeseries count()" not in out  # D11: count() without metric is invalid
+
+
+class TestPlatformSloWire:
+    """Platform SLO requests as the tenant sees them (`/platform/slo/v1/slos`)."""
+
+    def _run(self, transport, caller, responses):
+        import requests
+
+        sent = []
+
+        def fake_send(req, **kwargs):
+            sent.append({"method": req.method, "url": req.url,
+                         "headers": dict(req.headers), "body": req.body})
+            status, content = responses[len(sent) - 1]
+            r = requests.Response()
+            r.status_code = status
+            r._content = content
+            return r
+
+        with patch.object(transport.session, "send", side_effect=fake_send):
+            result = caller()
+        return sent, result
+
+    def _slo(self):
+        from transformers.slo_transformer import SLOTransformer
+
+        return SLOTransformer().transform({
+            "name": "checkout availability",
+            "guid": "MXxTRVJWSUNFX0xFVkVMfDE",
+            "objectives": [{"target": 99.5, "timeWindow": {"rolling": {"count": 7, "unit": "DAY"}}}],
+            "events": {"validEvents": {"from": "Transaction", "where": "appName = 'checkout'"},
+                       "goodEvents": {"from": "Transaction", "where": "appName = 'checkout' AND error IS FALSE"}},
+        }).slo
+
+    def test_create_posts_platform_slo_json_with_bearer(self):
+        import json
+
+        from clients.slo_client import SloClient
+
+        transport = HttpTransport(api_token="dt0s16.test")
+        client = SloClient("https://abc12345.apps.dynatrace.com", transport)
+        sent, result = self._run(
+            transport, lambda: client.create_slo(self._slo()),
+            [(201, b'{"id": "slo-1", "version": "v1"}')],
+        )
+        req = sent[0]
+        assert req["method"] == "POST"
+        assert req["url"] == "https://abc12345.apps.dynatrace.com/platform/slo/v1/slos"
+        assert req["headers"]["Authorization"] == "Bearer dt0s16.test"
+        assert req["headers"]["Content-Type"] == "application/json"
+        body = json.loads(req["body"])
+        assert "schemaId" not in body and "value" not in body
+        assert body["name"] == "[Migrated] checkout availability"
+        assert body["criteria"] == [{"target": 99.5, "warning": 99.75,
+                                     "timeframeFrom": "now-7d", "timeframeTo": "now"}]
+        indicator = body["customSli"]["indicator"]
+        assert "by: { dt.smartscape.service }" in indicator
+        assert 'contains(entityName, "checkout")' in indicator
+        assert "sli=" in indicator and "dt.entity" not in indicator
+        assert body["externalId"] == "nr-slo-MXxTRVJWSUNFX0xFVkVMfDE"
+        assert result.success and result.dynatrace_id == "slo-1"
+
+    def test_live_host_is_mapped_to_apps_platform_host(self):
+        from clients.slo_client import SloClient
+
+        client = SloClient(ENV, HttpTransport(api_token="dt0s16.test"))
+        assert client.base.endswith("/platform/slo/v1/slos")
+        assert ".live." not in client.base
+
+    def test_delete_looks_up_optimistic_locking_version(self):
+        from clients.slo_client import SloClient
+
+        transport = HttpTransport(api_token="dt0s16.test")
+        client = SloClient("https://abc12345.apps.dynatrace.com", transport)
+        sent, result = self._run(
+            transport, lambda: client.delete_slo("slo-1"),
+            [(200, b'{"id": "slo-1", "version": "v7"}'), (204, b"")],
+        )
+        assert [s["method"] for s in sent] == ["GET", "DELETE"]
+        assert sent[1]["url"] == (
+            "https://abc12345.apps.dynatrace.com/platform/slo/v1/slos/slo-1"
+            "?optimistic-locking-version=v7"  # D22: verified against dtctl's live request
+        )
+        assert result.is_success
+
+
+class TestDetectorQueryIsTimeseries:
+    """D1/D11 (docs/live-validation-2026-09.md): analyzers require timeseries results.
+    Each expected output below was accepted by the live StaticThreshold analyzer."""
+
+    def test_summarize_becomes_make_timeseries(self):
+        dql = 'fetch spans\n| filter dt.service.name == "x"\n| summarize avg(duration), by: {span.name}'
+        assert ensure_timeseries(dql) == (
+            'fetch spans\n| filter dt.service.name == "x"\n| makeTimeseries avg(duration), by: {span.name}'
+        )
+
+    def test_percentage_arithmetic_is_split_into_series(self):
+        dql = "fetch spans\n| summarize (100.0 * countIf(request.is_failed == true) / count())"
+        assert ensure_timeseries(dql) == (
+            "fetch spans\n| makeTimeseries { nr_agg0 = countIf(request.is_failed == true), nr_agg1 = count() }"
+            "\n| fieldsAdd value0 = (100.0 * nr_agg0[] / nr_agg1[])\n| fieldsRemove nr_agg0, nr_agg1"
+        )
+
+    def test_comments_and_timeseries_pass_through(self):
+        dql = "// Original NRQL: x\ntimeseries avg(dt.host.cpu.usage), by: {host.name}"
+        assert ensure_timeseries(dql) == dql
+
+    def test_non_timeseries_shapes_are_rejected(self):
+        assert ensure_timeseries("smartscapeNodes K8S_POD | fields name") is None
+        assert ensure_timeseries("fetch spans\n| summarize count()\n| fieldsAdd x = 1") is None
+        assert ensure_timeseries("fetch spans\n| fields span.name") is None
+
+    def test_detector_query_never_summarize(self):
+        from transformers._detector_utils import nrql_to_analyzer_query
+
+        for nrql in ("SELECT count(*) FROM Transaction WHERE appName = 'a'",
+                     "SELECT latest(isReady) FROM K8sDeploymentSample", ""):
+            code = "\n".join(l for l in nrql_to_analyzer_query(nrql).splitlines() if not l.startswith("//"))
+            assert code.startswith(("timeseries", "fetch")) and "summarize" not in code
+            assert "makeTimeseries" in code or code.startswith("timeseries")
+
+
+class TestNonNrqlDetectorQueries:
+    """D2/D6 (docs/live-validation-2026-09.md): Grail metric keys, operator + occurrences."""
+
+    @staticmethod
+    def _inputs(detector):
+        return {i["key"]: i["value"] for i in detector["value"]["analyzer"]["input"]}
+
+    def test_no_classic_builtin_keys_in_any_detector_query(self):
+        from transformers.infrastructure_transformer import InfrastructureTransformer
+        from transformers.non_nrql_alert_transformer import _CONDITION_METRIC_MAP, NonNRQLAlertTransformer
+
+        detectors = []
+        for ctype in _CONDITION_METRIC_MAP:
+            detectors += NonNRQLAlertTransformer().transform({"type": ctype, "name": ctype}).anomaly_detectors
+        for cond in (
+            {"type": "host_not_reporting", "name": "h"},
+            {"type": "process_not_running", "name": "p"},
+            {"type": "infra_metric", "name": "m", "select_value": "diskUsedPercent"},
+            {"type": "infra_metric", "name": "u", "select_value": "someUnknownMetric"},
+        ):
+            detectors += InfrastructureTransformer().transform(cond).anomaly_detectors
+        assert detectors
+        for det in detectors:
+            code = "\n".join(
+                l for l in self._inputs(det)["query"].splitlines() if not l.startswith("//")
+            )
+            assert "builtin:" not in code, code
+            assert code.startswith("timeseries ")
+
+    def test_operator_and_at_least_once_are_honoured(self):
+        from transformers.non_nrql_alert_transformer import NonNRQLAlertTransformer
+
+        det = NonNRQLAlertTransformer().transform({
+            "type": "synthetic", "name": "ping",
+            "terms": [{"priority": "critical", "threshold": 95, "operator": "ABOVE",
+                       "thresholdDuration": 600, "thresholdOccurrences": "AT_LEAST_ONCE"}],
+        }).anomaly_detectors[0]
+        inputs = self._inputs(det)
+        assert inputs["alertCondition"] == "ABOVE"  # overrides the synthetic default BELOW
+        assert (inputs["violatingSamples"], inputs["slidingWindow"]) == ("1", "10")
+        assert inputs["query"] == "timeseries avg(dt.synthetic.http.availability)"
+
+    def test_unsupported_operator_warns(self):
+        from transformers.infrastructure_transformer import InfrastructureTransformer
+
+        r = InfrastructureTransformer().transform({
+            "type": "infra_metric", "name": "m", "select_value": "cpuPercent", "comparison": "equal",
+            "criticalThreshold": {"value": 90, "durationMinutes": 5},
+        })
+        assert self._inputs(r.anomaly_detectors[0])["alertCondition"] == "ABOVE"
+        assert any("not supported" in w for w in r.warnings)
+
+
+class TestSeverityFanoutWorkflowsKept:
+    """D5: per-severity workflows were built but only the first was returned."""
+
+    def test_all_fanout_workflows_returned(self):
+        from transformers.alert_transformer import AlertTransformer
+
+        r = AlertTransformer().transform({
+            "name": "tiered", "conditions": [],
+            "severityRules": [{"severity": "ERROR", "delayMinutes": 0},
+                              {"severity": "AVAILABILITY", "delayMinutes": 10}],
+        })
+        assert r.success
+        assert len(r.workflows) == 2
+        assert r.workflow is r.workflows[0]
+
+    def test_single_workflow_still_listed(self):
+        from transformers.alert_transformer import AlertTransformer
+
+        r = AlertTransformer().transform({"name": "flat", "conditions": []})
+        assert len(r.workflows) == 1 and r.workflow is r.workflows[0]
+
+
+class TestWorkflowTriggerAndEnvelopeShape:
+    """D3/D4 (docs/live-validation-2026-09.md): no detectorId in Settings envelopes;
+    workflows use the eventTrigger.triggerConfiguration davis-problem shape and
+    link to detectors by event-name prefix."""
+
+    @staticmethod
+    def _all_outputs():
+        from transformers.aiops_transformer import AIOpsTransformer
+        from transformers.alert_transformer import AlertTransformer
+        from transformers.baseline_alert_transformer import BaselineAlertTransformer
+        from transformers.infrastructure_transformer import InfrastructureTransformer
+        from transformers.key_transaction_transformer import KeyTransactionTransformer
+        from transformers.non_nrql_alert_transformer import NonNRQLAlertTransformer
+
+        detectors, workflows = [], []
+        r = AlertTransformer().transform({"name": "Checkout", "conditions": [
+            {"name": "High errors", "nrql": {"query": "SELECT count(*) FROM TransactionError"},
+             "terms": [{"threshold": 5, "priority": "critical"}]}]})
+        detectors += r.anomaly_detectors
+        workflows += r.workflows
+        r = NonNRQLAlertTransformer().transform({"type": "synthetic", "name": "ping"})
+        detectors += r.anomaly_detectors
+        workflows += r.workflows
+        r = InfrastructureTransformer().transform({"type": "infra_metric", "name": "cpu", "select_value": "cpuPercent"})
+        detectors += r.anomaly_detectors
+        workflows += r.workflows
+        detectors += BaselineAlertTransformer().transform(
+            {"name": "b", "conditionType": "baseline", "nrql": {"query": "SELECT count(*) FROM Transaction"}}
+        ).anomaly_detectors
+        workflows.append(KeyTransactionTransformer().transform({"name": "kt", "applicationName": "svc"}).workflow)
+        r = AIOpsTransformer().transform({"workflows": [{"name": "w"}], "anomalySettings": [{"name": "a"}]})
+        detectors += getattr(r, "anomaly_detectors", []) or []
+        workflows += getattr(r, "workflows", []) or []
+        return detectors, workflows
+
+    def test_detector_envelopes_have_only_settings_fields(self):
+        detectors, _ = self._all_outputs()
+        assert len(detectors) >= 4
+        for det in detectors:
+            assert set(det) == {"schemaId", "scope", "value"}, set(det)
+            name = {p["key"]: p["value"] for p in det["value"]["eventTemplate"]["properties"]}["event.name"]
+            assert name.startswith("[Migrated] ") and " | " in name
+
+    def test_workflows_use_davis_problem_event_trigger(self):
+        _, workflows = self._all_outputs()
+        assert len(workflows) >= 4
+        for wf in workflows:
+            assert not {"private", "migratedFrom", "detectorIds"} & set(wf)
+            config = wf["trigger"]["eventTrigger"]["triggerConfiguration"]
+            assert config["type"] == "davis-problem"
+            assert set(config["value"]) >= {"categories", "customFilter", "entityTags", "entityTagsMatch"}
+            assert isinstance(wf["tasks"], dict)
+
+    def test_alert_workflow_filter_matches_its_detector_event_names(self):
+        import re as _re
+
+        from transformers.alert_transformer import AlertTransformer
+
+        r = AlertTransformer().transform({"name": "Prod \"EU\" alerts", "conditions": [
+            {"name": "c1", "nrql": {"query": "SELECT count(*) FROM Transaction"}}]})
+        custom = r.workflow["trigger"]["eventTrigger"]["triggerConfiguration"]["value"]["customFilter"]
+        pattern = _re.match(r'matchesValue\(event\.name, "(.*)"\)$', custom).group(1)
+        assert pattern.endswith("*")
+        prefix = pattern[:-1].replace('\\"', '"').replace("\\\\", "\\")
+        event_name = {p["key"]: p["value"] for p in
+                      r.anomaly_detectors[0]["value"]["eventTemplate"]["properties"]}["event.name"]
+        assert event_name.startswith(prefix)
+
+
+class TestDetectorActorWire:
+    """D16: builtin:davis.anomaly-detectors rejects a null/missing executionSettings.actor."""
+
+    ACTOR = "12345678-1234-1234-1234-123456789abc"
+
+    @staticmethod
+    def _detector():
+        from transformers.alert_transformer import AlertTransformer
+
+        return AlertTransformer().transform({"name": "p", "conditions": [
+            {"name": "c", "nrql": {"query": "SELECT count(*) FROM Transaction"}}]}).anomaly_detectors[0]
+
+    def test_transformers_emit_no_null_execution_settings(self):
+        assert self._detector()["value"]["executionSettings"] == {}
+
+    def test_actor_injected_into_request_body(self):
+        import json
+
+        import requests
+
+        client = DynatraceClient(environment_url="https://abc12345.apps.dynatrace.com",
+                                 api_token="dt0s16.test", detector_actor=self.ACTOR)
+        captured = {}
+
+        def fake_send(req, **kw):
+            captured["body"] = json.loads(req.body)
+            r = requests.Response()
+            r.status_code = 200
+            r._content = b'[{"objectId": "obj-1"}]'
+            return r
+
+        with patch.object(client.transport.session, "send", side_effect=fake_send):
+            result = client.create_anomaly_detector(self._detector())
+        assert result.success
+        body = captured["body"][0] if isinstance(captured["body"], list) else captured["body"]
+        assert body["value"]["executionSettings"] == {"actor": self.ACTOR}
+
+    def test_missing_actor_fails_without_http_call(self):
+        client = DynatraceClient(environment_url="https://abc12345.apps.dynatrace.com", api_token="dt0s16.test")
+        with patch.object(client.transport.session, "send") as send:
+            result = client.create_anomaly_detector(self._detector())
+        send.assert_not_called()
+        assert not result.success and "DYNATRACE_DETECTOR_ACTOR" in result.error_message
+
+    def test_exporters_parameterise_actor(self, tmp_path):
+        from exporters.monaco import MonacoExporter
+        from exporters.terraform import TerraformExporter
+
+        data = {"anomaly_detectors": [self._detector()]}
+        TerraformExporter().export(data, tmp_path / "tf")
+        hcl = (tmp_path / "tf" / "anomaly_detectors.tf").read_text()
+        assert '"actor":var.detector_actor' in hcl.replace(" ", "")
+        assert 'variable "detector_actor"' in (tmp_path / "tf" / "provider.tf").read_text()
+
+        MonacoExporter().export(data, tmp_path / "mn")
+        jsons = list((tmp_path / "mn").rglob("*.json"))
+        yamls = list((tmp_path / "mn").rglob("*.yaml"))
+        assert any('"{{ .detectorActor }}"' in p.read_text() for p in jsons)
+        assert any("DYNATRACE_DETECTOR_ACTOR" in p.read_text() for p in yamls if p.name != "manifest.yaml")
+
+
+def test_detector_actor_setting_must_be_uuid(monkeypatch):
+    from config.settings import DynatraceConfig
+
+    monkeypatch.setenv("DYNATRACE_API_TOKEN", "dt0s16.x")
+    monkeypatch.setenv("DYNATRACE_ENVIRONMENT_URL", "https://abc.apps.dynatrace.com")
+    monkeypatch.setenv("DYNATRACE_DETECTOR_ACTOR", "not-a-uuid")
+    with pytest.raises(Exception):
+        DynatraceConfig()
+    monkeypatch.setenv("DYNATRACE_DETECTOR_ACTOR", TestDetectorActorWire.ACTOR)
+    assert DynatraceConfig().detector_actor == TestDetectorActorWire.ACTOR
+
+
+class TestDetectorInputsAcceptedBySettingsValidator:
+    """D17-D21: inputs rejected by live `dtctl create settings --validate-only`."""
+
+    @staticmethod
+    def _inputs(det):
+        return {i["key"]: i["value"] for i in det["value"]["analyzer"]["input"]}
+
+    def test_dealerting_never_exceeds_sliding_window(self):
+        from transformers.alert_transformer import AlertTransformer
+        from transformers.infrastructure_transformer import InfrastructureTransformer
+        from transformers.non_nrql_alert_transformer import NonNRQLAlertTransformer
+
+        dets = AlertTransformer().transform({"name": "p", "conditions": [
+            {"name": "c", "nrql": {"query": "SELECT count(*) FROM Transaction"},
+             "terms": [{"threshold": 1, "thresholdDuration": 120}]}]}).anomaly_detectors
+        dets += NonNRQLAlertTransformer().transform({"type": "synthetic", "name": "s"}).anomaly_detectors
+        dets += InfrastructureTransformer().transform({"type": "infra_metric", "name": "m", "select_value": "cpuPercent",
+                                                       "criticalThreshold": {"value": 1, "durationMinutes": 2}}).anomaly_detectors
+        for det in dets:
+            inputs = self._inputs(det)
+            assert int(inputs["dealertingSamples"]) <= int(inputs["slidingWindow"])
+
+    def test_event_types_are_valid_davis_event_types(self):
+        from transformers.infrastructure_transformer import InfrastructureTransformer
+
+        valid = {"AVAILABILITY_EVENT", "CUSTOM_ALERT", "CUSTOM_INFO", "ERROR_EVENT",
+                 "PERFORMANCE_EVENT", "RESOURCE_CONTENTION_EVENT"}
+        for cond in ({"type": "host_not_reporting", "name": "h"}, {"type": "process_not_running", "name": "p"},
+                     {"type": "infra_metric", "name": "m", "select_value": "cpuPercent"}):
+            det = InfrastructureTransformer().transform(cond).anomaly_detectors[0]
+            props = {p["key"]: p["value"] for p in det["value"]["eventTemplate"]["properties"]}
+            assert props["event.type"] in valid
+
+    def test_no_nonexistent_analyzer_parameters(self):
+        from transformers.baseline_alert_transformer import BaselineAlertTransformer
+        from transformers.non_nrql_alert_transformer import NonNRQLAlertTransformer
+
+        dets = NonNRQLAlertTransformer().transform(
+            {"type": "multi_location_synthetic", "name": "m", "locationsRequired": 2}).anomaly_detectors
+        dets += BaselineAlertTransformer().transform(
+            {"name": "o", "conditionType": "outlier", "learningPeriodDays": 14, "facet": "dt.service.name",
+             "nrql": {"query": "SELECT average(duration) FROM Transaction"}}).anomaly_detectors
+        for det in dets:
+            assert not {"minLocationsFailing", "learningPeriodDays", "dimensions"} & set(self._inputs(det))
+
+
+class TestDocumentDeleteLockingParamWire:
+    """D22: Document API DELETE uses the kebab-case optimistic-locking-version param."""
+
+    def test_document_delete_query_param(self):
+        import requests
+
+        transport = HttpTransport(api_token="dt0s16.test")
+        client = DocumentClient("https://abc12345.apps.dynatrace.com", transport)
+        captured = {}
+
+        def fake_send(req, **kw):
+            captured["url"] = req.url
+            r = requests.Response()
+            r.status_code = 204
+            r._content = b""
+            return r
+
+        with patch.object(transport.session, "send", side_effect=fake_send):
+            client.delete_document("doc-1", optimistic_version="3")
+        assert captured["url"].endswith("/platform/document/v1/documents/doc-1?optimistic-locking-version=3")
+
+
+def test_slo_auditor_update_sends_locking_version():
+    from unittest.mock import patch as _patch
+
+    from registry.slo_auditor import SLOAuditor
+
+    auditor = SLOAuditor.__new__(SLOAuditor)
+    auditor.platform_url = "https://abc12345.apps.dynatrace.com"
+    calls = []
+
+    def fake_request(url, method="GET", data=None):
+        calls.append((method, url))
+        return {"version": "v9"} if method == "GET" else {}
+
+    with _patch.object(auditor, "_platform_request", side_effect=fake_request):
+        assert auditor.update_slo("slo-1", {"name": "x"})
+    assert calls[-1] == ("PUT", "https://abc12345.apps.dynatrace.com/platform/slo/v1/slos/slo-1?optimistic-locking-version=v9")
+
+
+class TestLiveRejectedEnumsAndActions:
+    """D23/D24: values rejected by / absent from a live tenant."""
+
+    def test_nrql_alert_condition_is_above_or_below(self):
+        from transformers.alert_transformer import AlertTransformer
+
+        for op, expected in (("ABOVE_OR_EQUALS", "ABOVE"), ("BELOW_OR_EQUALS", "BELOW"), ("EQUALS", "ABOVE")):
+            r = AlertTransformer().transform({"name": "p", "conditions": [
+                {"name": "c", "nrql": {"query": "SELECT count(*) FROM Transaction"},
+                 "terms": [{"threshold": 1, "operator": op, "priority": "critical"}]}]})
+            inputs = {i["key"]: i["value"] for i in r.anomaly_detectors[0]["value"]["analyzer"]["input"]}
+            assert inputs["alertCondition"] == expected
+            assert r.warnings
+
+    def test_dql_task_uses_execute_dql_query_action(self):
+        from transformers.aiops_transformer import AIOpsTransformer
+
+        r = AIOpsTransformer().transform({"workflows": [
+            {"name": "w", "enrichments": [{"name": "e", "nrql": "SELECT count(*) FROM Transaction"}]}]})
+        actions = [t["action"] for wf in r.workflows for t in wf["tasks"].values()]
+        assert "dynatrace.automations:execute-dql-query" in actions
+        assert "dynatrace.automations:dql-query" not in actions

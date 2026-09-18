@@ -16,7 +16,7 @@ background reference.
 
 | Token type | Prefix | Used for | Recommended for |
 |------------|--------|----------|-----------------|
-| **Platform Token** | `dt0s16.` | Gen3 Platform APIs (Settings 2.0, Documents, Automation, Grail storage) | **Default** — all new migrations |
+| **Platform Token** | `dt0s16.` | Gen3 Platform APIs (Settings 2.0, Documents, Automation, SLOs, Grail storage) | **Default** — all new migrations |
 | **Classic API Token** | `dt0c01.` | Config v1 APIs only (alerting profiles, metric events, management zones, classic dashboards) | `--legacy` runs against tenants not yet upgraded to Gen3 |
 | **OAuth2 client credentials** | *(not a token)* | Same Gen3 surfaces as Platform Token, required for inter-account flows | Account admins automating at scale |
 
@@ -36,6 +36,7 @@ the command read access to each Gen3 surface so it can report reachability.
 | `settings_v2` | `GET /api/v2/settings/schemas` | `settings:schemas:read`, `settings:objects:read` |
 | `document_api` | `GET /platform/document/v1/documents` | `document:documents:read` |
 | `automation_api` | `GET /platform/automation/v1/workflows` | `automation:workflows:read` |
+| `slo_api` | `GET /platform/slo/v1/slos` | `slo:slos:read` |
 
 Provision these first, then run `python3 migrate.py preflight`. The command
 exits 0 only when all three are reachable.
@@ -52,6 +53,7 @@ access** on every surface migrate creates entities on.
 | `settings_v2` | `settings:schemas:read`, `settings:objects:read`, `settings:objects:write` |
 | `document_api` | `document:documents:read`, `document:documents:write` |
 | `automation_api` | `automation:workflows:read`, `automation:workflows:write`, `automation:workflows:run` |
+| `slo_api` | `slo:slos:read`, `slo:slos:write` |
 | Grail (read) | `storage:logs:read`, `storage:events:read`, `storage:metrics:read`, `storage:spans:read`, `storage:entities:read`, `storage:buckets:read` |
 
 Grail read scopes are used during transform and validation (log obfuscation
@@ -167,6 +169,7 @@ curl -sS -H "Authorization: Bearer $DT_TOKEN" \
 |---------|--------------|-----|
 | `preflight` shows `settings_v2: no` (403) | Token missing `settings:schemas:read` or `settings:objects:read` | Add both scopes in the UI |
 | `preflight` shows `document_api: no` (403) | Token missing `document:documents:read` | Add the scope |
+| `preflight` shows `slo_api: no` (403) | Token missing `slo:slos:read` | Add `slo:slos:read` (and `slo:slos:write` for migrate) |
 | `preflight` shows `automation_api: no` (404) | Tenant is Classic/Managed without Gen3 | Run `migrate --legacy` until the tenant is upgraded |
 | `preflight` shows all three `no` (0/network) | `DYNATRACE_ENVIRONMENT_URL` wrong or unreachable | Confirm the URL is the SaaS `.live.dynatrace.com` host and reachable from your machine |
 | 401 "Unsupported authorization scheme" in curl or logs | Used `Api-Token` with a `dt0s16.*` Platform Token (or `Bearer` with a `dt0c01.*` Classic token) | Match scheme to prefix — see "Authorization Scheme" table. `migrate.py` does this automatically; raw curl does not |

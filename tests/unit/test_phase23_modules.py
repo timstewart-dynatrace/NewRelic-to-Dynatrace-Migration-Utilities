@@ -33,22 +33,26 @@ class TestKeyTransaction:
             "apdexTarget": 0.5,
         })
         assert r.success
-        assert r.slo_envelope["schemaId"] == "builtin:monitoring.slo"
+        assert "schemaId" not in r.slo
+        assert r.slo["customSli"]["indicator"].startswith("timeseries")
+        assert "dt.entity" not in r.slo["customSli"]["indicator"]
         assert r.enrichment_processor["schemaId"] == (
             "builtin:openpipeline.logs.pipelines"
         )
-        assert r.workflow["trigger"]["event"]["config"]["davis_event"][
-            "entityTags"
-        ] == {"key_transaction": "checkout-flow"}
+        config = r.workflow["trigger"]["eventTrigger"]["triggerConfiguration"]
+        assert config["type"] == "davis-problem"
+        assert config["value"]["entityTags"] == {"key_transaction": "checkout-flow"}
 
-    def test_slo_metric_expression_uses_duration_threshold(self):
+    def test_slo_indicator_uses_duration_threshold(self):
         r = KeyTransactionTransformer().transform({
             "name": "Fast Path",
             "applicationName": "svc",
             "apdexTarget": 0.25,  # 250ms
         })
-        # countIf(duration < 250ms)
-        assert "countIf(duration < 250ms)" in r.slo_envelope["value"]["metricExpression"]
+        # 250ms -> 250000us (dt.service.request.response_time is microseconds)
+        indicator = r.slo["customSli"]["indicator"]
+        assert "total[] <= 250000" in indicator
+        assert 'contains(entityName, "svc")' in indicator
 
     def test_missing_service_warns(self):
         r = KeyTransactionTransformer().transform({
@@ -60,7 +64,9 @@ class TestKeyTransaction:
         r = KeyTransactionTransformer().transform({
             "name": "X", "applicationName": "svc",
         })
-        assert r.workflow["migratedFrom"]["type"] == "newrelic.key_transaction"
+        # Automation workflows have no migratedFrom field; provenance lives in description.
+        assert "migratedFrom" not in r.workflow
+        assert "newrelic.key_transaction" in r.workflow["description"]
 
 
 # ---------------------------------------------------------------------------

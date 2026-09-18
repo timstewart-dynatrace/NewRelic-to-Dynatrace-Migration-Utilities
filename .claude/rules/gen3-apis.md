@@ -46,14 +46,38 @@ Subtle gotcha the transport already handles: `HttpTransport.request(..., files=.
 
 All five workflow emitters (`alert_transformer`, `aiops_transformer`, `infrastructure_transformer`, `non_nrql_alert_transformer`, `key_transaction_transformer`) already call it. Any new workflow emitter must too.
 
+### 4a. Workflow trigger shape and detector linkage [MUST]
+
+Verified against live workflows (docs/live-validation-2026-09.md, D3/D4). The trigger is:
+
+```
+trigger.eventTrigger {
+  isActive,
+  triggerConfiguration: { type: "davis-problem" | "davis-event" | "event", value: {...} }
+}
+```
+
+There is no `trigger.event.config.davis_event`, no `detectorIds`, and no top-level `private` / `migratedFrom` on a workflow (`isPrivate` is the field). Settings envelopes carry only `schemaId`, `scope`, `value` — no `detectorId`.
+
+Migrated alert workflows use `davis-problem` (`_workflow_utils.davis_problem_trigger`). Problem records do not carry detector `eventTemplate.properties`, but a problem's `event.name` equals its detector event's name, so linkage is by name:
+
+- detectors set `event.name` = `migrated_event_name(group, item)` → `[Migrated] <policy> | <condition>`
+- the workflow's `customFilter` = `migrated_event_filter(group)` → `matchesValue(event.name, "[Migrated] <policy> | *")`
+
+Workflow `customFilter` is an OpenPipeline matcher: `startsWith()` is not enabled and `*` cannot be escaped (group names have `*` replaced). Validate new filters with `dtctl verify openpipeline-matcher`.
+
 ## 5. `analyzer.input[query].value` is DQL, server-validated [MUST]
 
 Passing raw NRQL produces `400 "Invalid DQL query. 'FROM' isn't allowed here."` Use `transformers._detector_utils.nrql_to_analyzer_query(nrql, warnings=...)`:
 
-- HIGH/MEDIUM conversion → converter's DQL
-- Empty/LOW/failure → `// UNCONVERTED NRQL: <orig>\ntimeseries count()` (preserves the NRQL as a comment; trailing placeholder keeps the payload server-validatable so the detector still creates)
+- HIGH/MEDIUM conversion → converter's DQL, normalised by `ensure_timeseries()`: the analyzer only accepts timeseries results, so `fetch … | summarize …` becomes `makeTimeseries` (arithmetic over aggregations such as percentages is split into named series + `fieldsAdd`)
+- Empty/LOW/failure, or DQL that cannot be made a timeseries → `// UNCONVERTED NRQL: <orig>\n` + `FALLBACK_QUERY`, an inert timeseries that matches no data so the detector creates but never fires
 
-## 6. `builtin:davis.anomaly-detectors` canonical shape (v1.0.14) [MUST]
+Verified live (`dtctl exec analyzer`, docs/live-validation-2026-09.md): `summarize` output fails with "No valid time series records found", and the old placeholder `timeseries count()` is invalid (count() needs a metric key). Metric-based detectors must use Grail keys (`transformers._detector_utils.GRAIL_METRIC_KEYS`) — `timeseries avg(builtin:…)` is a DQL syntax error.
+
+Span fields verified on OneAgent data: service identity is `dt.service.name` (`service.name` is empty on spans; logs keep `service.name`), and failures are `request.is_failed` (`otel.status_code` is unset).
+
+## 6. `builtin:davis.anomaly-detectors` canonical shape (v1.0.14; live tenants report v1.0.16, which adds `executionSettings.delay`) [MUST]
 
 All five emitters (`alert_transformer`, `aiops_transformer`, `baseline_alert_transformer`, `non_nrql_alert_transformer`, `infrastructure_transformer`) must emit:
 
@@ -76,6 +100,15 @@ value {
 
 Forbidden (emission triggers validator errors): `name`, `strategy`, `eventTemplate.title`, `eventTemplate.description`, `eventTemplate.eventType`, `eventTemplate.davisMerge`.
 
+Also rejected by the live Settings validator (docs/live-validation-2026-09.md, D16–D21):
+
+- `executionSettings.actor` null / missing / not a service user → set from `DYNATRACE_DETECTOR_ACTOR` at import (`clients/_detector_actor.py`); transformers emit `executionSettings: {}`
+- `dealertingSamples` greater than `slidingWindow` → use `_detector_utils.dealerting_samples()`
+- `event.type` must be a Davis event type (`CUSTOM_ALERT`, `AVAILABILITY_EVENT`, `ERROR_EVENT`, `PERFORMANCE_EVENT`, `RESOURCE_CONTENTION_EVENT`, `CUSTOM_INFO`, …)
+- analyzer inputs `minLocationsFailing`, `learningPeriodDays`, `dimensions` do not exist → splits go in the query `by:` (`add_split_dimension()`)
+
+Before changing any detector emitter run `DYNATRACE_DETECTOR_ACTOR=<uuid> PYTHONPATH=. python scripts/validate_detectors_live.py` (uses `dtctl … --validate-only`; creates nothing).
+
 Canonical analyzer names:
 
 - `dt.statistics.ui.anomaly_detection.StaticThresholdAnomalyDetectionAnalyzer`
@@ -89,6 +122,69 @@ grep -rn '"schemaId": "builtin:davis.anomaly-detectors"' transformers/
 ```
 
 All five sites must move in lockstep. PR #20 missed `alert_transformer.py` this way; PR #21 cleaned it up.
+
+`dt-alerting/references/anomaly-detectors.md` also documents `RecordAnomalyDetectionAnalyzer` (rows-returned = violations); no emitter uses it yet.
+
+## 7. Emitted DQL is Smartscape-first, not classic entity [MUST]
+
+Source: Dynatrace-maintained `dt-dql-essentials` and `dt-migration` skills (`dynatrace-for-ai` v8.0.0). `dt.entity.*` is deprecated for new queries. Anything the compiler, converter, fixer, or a transformer writes into a DQL string must follow:
+
+| Classic (do not emit) | Smartscape (emit) | Notes |
+|---|---|---|
+| `dt.entity.<type>` in `by:` / `filter` / `fieldsAdd` | `dt.smartscape.<type>` | e.g. `dt.entity.host` → `dt.smartscape.host`, `dt.entity.service` → `dt.smartscape.service`, `dt.entity.process_group_instance` → `dt.smartscape.process` |
+| `fetch dt.entity.<type>` (entity list) | `smartscapeNodes <NODE_TYPE>` | e.g. `smartscapeNodes HOST`; field `entity.name` → `name` |
+| `fetch dt.entity.cloud_application_instance` | `smartscapeNodes K8S_POD` | |
+| `fetch dt.entity.cloud_application` | K8s workload node types | 1:N — see `dt-migration/references/entity-cloud-application.md` |
+| `entityName(x)` | `getNodeName(x)` (signal/edge) or `name` (on nodes) | `getNodeName()` takes only an ID — no `type:` arg |
+| `entityAttr(x, "f")` | `getNodeField(x, "f")` or direct node field | |
+| `classicEntitySelector(...)` | raw-dimension filter first; `traverse` / `in [smartscapeNodes ...]` fallback | |
+| `affected_entity_ids` + `affected_entity_types` | `smartscape.affected_entities` | record array of `{id, type, name}` |
+
+No classic mapping exists for host groups, process groups, or container groups — they are fields on `HOST` / `PROCESS` / `CONTAINER`. Classic entity IDs do not carry over. Full tables: `/Users/Shared/GitHub/PROJECTS/CLAUDE/dynatrace-for-ai/skills/dt-migration/references/type-mappings.md`, `dql-function-migration.md`, `special-cases.md`.
+
+**Status:** implemented in the compiler, converter, and fixer (`validators/smartscape_map.py`, `DQLValidator._fix_classic_entity_references`), mirrored in nrql-engine. NRQL `entityName` / `entity.name` emit a raw dimension by context: `service.name` (spans/logs), `host.name` (host samples), `dt.service.name` (Metric), `k8s.workload.name` (K8s, with warning).
+
+**Segment filters:** live Gen3 segments include `dataObject: "_all_entities"` with `type = <NODE_TYPE>` AND (`id = …` | `name = …`) statements; `workload_transformer.py` emits that form. NR GUIDs are not Dynatrace IDs, so they fall back to `name`. The emitted wrapper is still the Settings-style `{schemaId, value.includes.items}` shape, whereas the Platform filter-segments API takes `{name, isPublic, includes: [{dataObject, filter: "<stringified tree>"}]}` — another reason segment import stays SKIPPED.
+
+Events API v2 `entitySelector` strings (`entityId(...)` / `entityName(...)`) in change-event payloads are also not DQL and remain supported on Gen3 — not covered by this rule.
+
+Any change here is a compiler-output change: mirror it in `/Users/Shared/GitHub/PROJECTS/NewRelic/nrql-engine` and extend `tests/unit/test_phase19b_engine_parity.py`.
+
+Audit command:
+
+```bash
+grep -rnE 'dt\.entity\.|entityName\(|entityAttr\(|classicEntitySelector' compiler/ transformers/ validators/ --include='*.py' | grep -v '/legacy/'
+```
+
+## 8. Alerting conventions from Dynatrace guidance [SHOULD — not yet implemented]
+
+Source: `dt-alerting` skill. Accepted by the API today in their current form, so these are improvements, not correctness fixes. Change them together and verify against a live Gen3 tenant first.
+
+- ~~Workflow triggers on problems, not Davis events.~~ Done — see §4a.
+- **Detector input key:** `query.expression` is preferred over `query` for new configs (both accepted).
+- **Routing/grouping:** set `dt.alert_group` (and `dt.source_entity` where known) in `eventTemplate.properties`.
+- **Dashboard content `version`:** `dashboard_transformer.py` emits `13`; current Dynatrace examples use `21`.
+
+## 9. SLOs are Platform SLOs, not `builtin:monitoring.slo` [MUST]
+
+`SLOTransformer`, `KeyTransactionTransformer`, and the converter's auto-create path all emit the Platform SLO API body via `transformers/_slo_utils.py` and push it through `clients/slo_client.py`:
+
+```
+POST /platform/slo/v1/slos            # platform host (.apps.), Bearer, slo:slos:write
+{
+  name, description, tags[], externalId?,
+  criteria: [{target, warning, timeframeFrom: "now-7d", timeframeTo: "now"}],   # warning > target
+  customSli: {indicator: "<DQL producing an `sli` percent series>"}
+}
+```
+
+- The indicator is DQL and must follow §7 (`by: { dt.smartscape.service }`, `getNodeName()`).
+- DELETE and PUT need the current version as query param `optimistic-locking-version` (kebab-case; verified from dtctl's live requests, D22 — the same param applies to Document API deletes). `SloClient.delete_slo` and `SLOAuditor.update_slo` GET the version first.
+- Verified live: the body above is accepted by `POST /platform/slo/v1/slos` (Phase 2 write test).
+- IaC: Monaco `type: slo-v2` (body is the template JSON); Terraform `dynatrace_platform_slo`.
+- Classic metric-selector SLOs (`metricExpression`, `entitySelector("type(service)")`) are not emitted anywhere in the Gen3 path.
+
+Test pattern: `tests/unit/test_dynatrace_client.py::TestPlatformSloWire`.
 
 ---
 

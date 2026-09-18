@@ -21,8 +21,10 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
 from compiler import NRQLCompiler
+from compiler.emitter import DQLEmitter
 from validators import DQLSyntaxValidator
 
+from ._slo_utils import availability_indicator, build_platform_slo, latency_indicator
 from .nrql_mapping_rules import (
     AGG_MAP,
     ATTR_MAP,
@@ -914,11 +916,11 @@ class NRQLtoDQLConverter:
                 "name": "span.name",
                 "transactionName": "span.name",
                 "transactionname": "span.name",
-                "appName": "service.name",
-                "appname": "service.name",
-                "entityName": "entity.name",
-                "entityname": "entity.name",
-                "entityGuid": "dt.entity.service",
+                "appName": "dt.service.name",
+                "appname": "dt.service.name",
+                "entityName": "dt.service.name",
+                "entityname": "dt.service.name",
+                "entityGuid": "dt.smartscape.service",
                 "httpResponseCode": "http.response.status_code",
                 "httpresponsecode": "http.response.status_code",
                 "http.statusCode": "http.response.status_code",
@@ -1413,7 +1415,6 @@ class NRQLtoDQLConverter:
 
         # Get target from NR tags or default
         target = slo_info.get("target", 99.9)
-        warning = min(target + (100 - target) / 2, 99.99)
 
         days = slo_info.get("time_window_days", 7)
         timeframe_from = f"now-{days}d"
@@ -1421,8 +1422,6 @@ class NRQLtoDQLConverter:
         slo_type = slo_info.get("slo_type", "availability")
         service_name = slo_info.get("service_name", "")
 
-        entity_name_step = "\n| fieldsAdd entityName = entityName(dt.entity.service)"
-        service_filter = ""
         if service_name:
             validated_name, entity_warn = self._validate_entity_name(service_name, "SERVICE")
             if entity_warn:
@@ -1430,33 +1429,11 @@ class NRQLtoDQLConverter:
             if validated_name != service_name:
                 logger.info("Service name corrected: '%s' -> '%s'", service_name, validated_name)
                 service_name = validated_name
-            escaped_name = service_name.replace('"', '\\"')
-            service_filter = f'\n| filter contains(entityName, "{escaped_name}")'
 
         if slo_type == "latency":
-            # dt.service.request.response_time is in MICROSECONDS
-            threshold_ms = slo_info.get("latency_threshold_ms", 4000)
-            threshold_us = threshold_ms * 1000
-
-            dql_indicator = (
-                f"timeseries total=avg(dt.service.request.response_time), default:0, "
-                f"by: {{ dt.entity.service }}{entity_name_step}{service_filter}\n"
-                f"| fieldsAdd high=iCollectArray(if(total[] > {threshold_us}, total[]))\n"
-                f"| fieldsAdd low=iCollectArray(if(total[] <= {threshold_us}, total[]))\n"
-                f"| fieldsAdd highRespTimes=iCollectArray(if(isNull(high[]), 0, else: 1))\n"
-                f"| fieldsAdd lowRespTimes=iCollectArray(if(isNull(low[]), 0, else: 1))\n"
-                f"| fieldsAdd sli=100*(lowRespTimes[]/(lowRespTimes[]+highRespTimes[]))\n"
-                f"| fieldsRemove total, high, low, highRespTimes, lowRespTimes"
-            )
+            dql_indicator = latency_indicator(slo_info.get("latency_threshold_ms", 4000), service_name or None)
         else:
-            dql_indicator = (
-                f"timeseries {{\n"
-                f"  total=sum(dt.service.request.count),\n"
-                f"  failures=sum(dt.service.request.failure_count)\n"
-                f"}}, by: {{ dt.entity.service }}{entity_name_step}{service_filter}\n"
-                f"| fieldsAdd sli=(((total[]-failures[])/total[])*(100))\n"
-                f"| fieldsRemove total, failures"
-            )
+            dql_indicator = availability_indicator(service_name or None)
 
         description = slo_info.get("description", "")
         if not description:
@@ -1476,20 +1453,14 @@ class NRQLtoDQLConverter:
 
         description = f"{description}\n\n[Migrated from NR GUID: {guid[:40]}...]"
 
-        payload = {
-            "name": slo_name,
-            "description": description[:1000],
-            "criteria": [
-                {
-                    "target": target,
-                    "warning": round(warning, 2),
-                    "timeframeFrom": timeframe_from,
-                    "timeframeTo": "now",
-                }
-            ],
-            "customSli": {"indicator": dql_indicator},
-            "tags": ["MigratedFromNR:true"],
-        }
+        payload = build_platform_slo(
+            name=slo_name,
+            description=description,
+            target=target,
+            indicator=dql_indicator,
+            timeframe_from=timeframe_from,
+            tags=["MigratedFromNR:true"],
+        )
 
         try:
             base_url = self._dt_url.replace(".live.", ".apps.")
@@ -1631,12 +1602,18 @@ class NRQLtoDQLConverter:
                 if entity_subtype in ("SERVICE_LEVEL",):
                     new_filter = f'slo.name == "{resolved_name}"'
                 elif entity_subtype in ("APM_APPLICATION", "APPLICATION", "SERVICE"):
-                    new_filter = f'service.name == "{resolved_name}"'
+                    new_filter = f'dt.service.name == "{resolved_name}"'
+                elif entity_subtype in ("HOST",):
+                    new_filter = f'host.name == "{resolved_name}"'
                 else:
-                    new_filter = f'dt.entity.name == "{resolved_name}"'
+                    new_filter = f'dt.service.name == "{resolved_name}"'
+                    result.warnings.append(
+                        f"NR entity type {entity_subtype or 'unknown'} resolved to a dt.service.name filter; "
+                        "verify the dimension (e.g. host.name, k8s.workload.name)"
+                    )
 
                 dql = re.sub(
-                    rf'(dt\.entity\.service|dt\.entity\.name|entity\.guid|entityGuid)\s*==\s*"{re.escape(guid)}"',
+                    rf'(dt\.smartscape\.service|dt\.entity\.service|dt\.entity\.name|entity\.guid|entityGuid)\s*==\s*"{re.escape(guid)}"',
                     new_filter,
                     dql,
                 )
@@ -1647,7 +1624,7 @@ class NRQLtoDQLConverter:
             else:
                 result.warnings.append(
                     f"NR GUID detected ({entity_type or 'unknown type'}): {guid[:30]}... "
-                    f"Replace with dt.entity.name or service.name filter"
+                    f"Replace with a dt.service.name / host.name filter"
                 )
 
         return dql
@@ -2981,7 +2958,7 @@ class NRQLtoDQLConverter:
 //
 // If you need raw counts, query the underlying data directly:
 // fetch spans
-// | filter dt.entity.service == "SERVICE-..." // Replace with your service
+// | filter dt.smartscape.service == toSmartscapeId("SERVICE-...") // Replace with your service
 // | summarize total = count(), good = countIf(duration <= 4s)
 // | fieldsAdd sli = 100.0 * good / total'''
             confidence = "LOW"
@@ -2997,7 +2974,7 @@ class NRQLtoDQLConverter:
         self, where_clause: str, facet_clause: str, source: str, title: str
     ) -> Tuple[str, str]:
         """Build a simple count query using fetch + summarize."""
-        parts = [f"fetch {source}"]
+        parts = [source if source.startswith("smartscapeNodes") else f"fetch {source}"]
 
         if where_clause:
             dt_filter = self._convert_where(where_clause)
@@ -3043,19 +3020,13 @@ class NRQLtoDQLConverter:
                 "confidence": "MEDIUM",
             },
             "status": {
-                "dql": (
-                    "fetch dt.entity.cloud_application"
-                    "\n| fields entity.name, status = cloudApplicationStatus"
-                ),
-                "note": "// status -> DT entity property (not a timeseries metric)",
+                "dql": DQLEmitter.K8S_ENTITY_FIELDS["status"]["dql"],
+                "note": DQLEmitter.K8S_ENTITY_FIELDS["status"]["note"],
                 "confidence": "MEDIUM",
             },
             "isscheduled": {
-                "dql": (
-                    "fetch dt.entity.cloud_application_instance"
-                    "\n| fields entity.name, phase = cloudApplicationInstancePhase"
-                ),
-                "note": "// isScheduled -> DT entity phase property",
+                "dql": DQLEmitter.K8S_ENTITY_FIELDS["isscheduled"]["dql"],
+                "note": DQLEmitter.K8S_ENTITY_FIELDS["isscheduled"]["note"],
                 "confidence": "MEDIUM",
             },
         }
@@ -3080,7 +3051,9 @@ class NRQLtoDQLConverter:
         )
 
         if not agg_matches:
-            result_tuple = self._build_count_query(where_clause, facet_clause, "dt.entity.cloud_application", title)
+            result_tuple = self._build_count_query(
+                where_clause, facet_clause, "smartscapeNodes " + DQLEmitter.K8S_WORKLOAD_NODE_TYPES, title
+            )
             if notes:
                 return "\n".join(notes) + "\n" + result_tuple[0], "LOW"
             return result_tuple
@@ -3143,7 +3116,7 @@ class NRQLtoDQLConverter:
             parts_list = notes.copy()
             parts_list.append(f"// NOTE: Unknown K8s metrics: {', '.join(unmapped_metrics)} - need manual mapping")
             parts_list.append("// Suggested: Check builtin:cloud.kubernetes.* metrics in DT Metrics browser")
-            parts_list.append("fetch dt.entity.kubernetes_node")
+            parts_list.append("smartscapeNodes K8S_NODE")
             if where_clause:
                 dt_filter = self._convert_where(where_clause)
                 for pattern in metric_filter_patterns:
@@ -3694,11 +3667,17 @@ class NRQLtoDQLConverter:
                         f'SLO GUID resolved to: {entity_name} -> Use: fetch slo | filter slo.name == "{entity_name}"'
                     )
                 elif entity_type in ("APM_APPLICATION", "APPLICATION", "SERVICE"):
-                    replacement = f'service.name == "{entity_name}"'
+                    replacement = f'dt.service.name == "{entity_name}"'
                     self._current_warnings.append(f"Service GUID resolved to: {entity_name}")
+                elif entity_type == "HOST":
+                    replacement = f'host.name == "{entity_name}"'
+                    self._current_warnings.append(f"Host GUID resolved to: {entity_name}")
                 else:
-                    replacement = f'dt.entity.name == "{entity_name}"'
-                    self._current_warnings.append(f"GUID resolved to: {entity_name}")
+                    replacement = f'dt.service.name == "{entity_name}"'
+                    self._current_warnings.append(
+                        f"GUID resolved to: {entity_name} ({entity_type or 'unknown type'}) -> dt.service.name; "
+                        "verify the dimension"
+                    )
             else:
                 try:
                     import base64
@@ -3715,14 +3694,14 @@ class NRQLtoDQLConverter:
                     else:
                         replacement = "__GUID_PLACEHOLDER__"
                         self._current_warnings.append(
-                            f"GUID filter detected ({entity_type}) - replace with dt.entity filter. "
-                            'Example: dt.entity.name == "your-svc-name"'
+                            f"GUID filter detected ({entity_type}) - replace with a dimension filter. "
+                            'Example: dt.service.name == "your-svc-name"'
                         )
                 except Exception:
                     replacement = "__GUID_PLACEHOLDER__"
                     self._current_warnings.append(
-                        "GUID filter detected - replace with dt.entity filter. "
-                        'Example: dt.entity.name == "your-svc-name"'
+                        "GUID filter detected - replace with a dimension filter. "
+                        'Example: dt.service.name == "your-svc-name"'
                     )
 
             result = re.sub(
@@ -3745,7 +3724,7 @@ class NRQLtoDQLConverter:
                     replacement = f'slo.name == "{entity_name}"'
                     self._current_warnings.append(f"SLO GUID resolved: {entity_name}")
                 else:
-                    replacement = f'service.name == "{entity_name}"'
+                    replacement = f'dt.service.name == "{entity_name}"'
                     self._current_warnings.append(f"GUID resolved to: {entity_name}")
             else:
                 try:
@@ -3890,7 +3869,7 @@ class NRQLtoDQLConverter:
         # Replace GUID placeholder
         result = result.replace(
             "__GUID_PLACEHOLDER__",
-            '/* REPLACE WITH: service.name == "your-service-name" OR dt.entity.service == "SERVICE-XXXXX" */',
+            '/* REPLACE WITH: dt.service.name == "your-service-name" OR dt.smartscape.service == toSmartscapeId("SERVICE-XXXXX") */',
         )
 
         # Duration unit conversions

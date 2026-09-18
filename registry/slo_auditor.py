@@ -3,6 +3,7 @@
 import json
 import re
 import urllib.error
+import urllib.parse
 import urllib.request
 from typing import Dict, List, Optional, Tuple
 
@@ -132,7 +133,7 @@ class SLOAuditor:
             key = match.group(1).strip()
             # Filter out DQL keywords and known non-metrics
             if key not in ('duration', 'timestamp', 'start_time', 'true', 'false', 'null') \
-               and not key.startswith('dt.entity.') \
+               and not key.startswith(('dt.entity.', 'dt.smartscape.')) \
                and ('.' in key):
                 metrics.append(key)
 
@@ -173,9 +174,18 @@ class SLOAuditor:
         url = f"{self.platform_url}/platform/slo/v1/slos/{slo_id}"
         return self._platform_request(url)
 
-    def update_slo(self, slo_id: str, payload: Dict) -> bool:
-        """Update a Gen3 Platform SLO via PUT."""
+    def update_slo(self, slo_id: str, payload: Dict, version: Optional[str] = None) -> bool:
+        """Update a Gen3 Platform SLO via PUT.
+
+        The API requires the current optimistic-locking version (query param
+        ``optimistic-locking-version``, verified live — D22); it is looked up
+        when not supplied.
+        """
+        if not version:
+            version = (self.fetch_slo_detail(slo_id) or {}).get("version")
         url = f"{self.platform_url}/platform/slo/v1/slos/{slo_id}"
+        if version:
+            url += "?" + urllib.parse.urlencode({"optimistic-locking-version": version})
         data = json.dumps(payload).encode('utf-8')
         result = self._platform_request(url, method='PUT', data=data)
         return result is not None
@@ -447,7 +457,7 @@ class SLOAuditor:
                     if detail.get('segments'):
                         update_payload['segments'] = detail['segments']
 
-                    if self.update_slo(slo_id, update_payload):
+                    if self.update_slo(slo_id, update_payload, version=detail.get('version')):
                         logger.info("SLO fixed", slo_id=slo_id)
                         results['fixed'] += 1
 

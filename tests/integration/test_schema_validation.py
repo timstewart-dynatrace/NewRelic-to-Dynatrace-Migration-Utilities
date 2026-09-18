@@ -82,16 +82,6 @@ def test_workload_transformer_schema(schemas):
     _validate_envelope(r.iam_policy, schemas)
 
 
-def test_slo_transformer_schema(schemas):
-    from transformers.slo_transformer import SLOTransformer
-    r = SLOTransformer().transform({
-        "name": "svc-slo",
-        "objectives": [{"target": 99.9, "timeWindow": {"rolling": {"count": 7, "unit": "DAY"}}}],
-        "events": {"validEvents": {"where": "status = 200"}},
-    })
-    _validate_envelope(r.slo, schemas)
-
-
 def test_tag_transformer_schema(schemas):
     from transformers.tag_transformer import TagTransformer
     r = TagTransformer().transform({
